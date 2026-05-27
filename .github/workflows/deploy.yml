@@ -10,10 +10,6 @@ on:
       - 'LICENSE'
   workflow_dispatch:
 
-env:
-  # 强制 GitHub Actions 使用 Node.js 24，消除弃用警告
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -22,19 +18,13 @@ jobs:
       - name: 📥 检出代码
         uses: actions/checkout@v4
 
-      - name: 🔧 设置 Node.js 24（最新稳定版）
+      - name: 🔧 设置 Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '24'
-          cache: 'npm'
+          node-version: '20'
 
-      - name: 📦 安装依赖（自动兼容有无锁定文件）
-        run: |
-          if [ -f package-lock.json ]; then
-            npm ci
-          else
-            npm install
-          fi
+      - name: 📦 安装依赖
+        run: npm install
 
       - name: 📝 创建 wrangler.toml
         run: |
@@ -44,7 +34,6 @@ jobs:
           compatibility_date = "2024-12-01"
           compatibility_flags = ["nodejs_compat"]
           
-          # 每日定时任务（UTC 0点，即北京时间8点）
           [triggers]
           crons = ["0 0 * * *"]
           
@@ -62,7 +51,6 @@ jobs:
           API_USER_NAME = "USER_NAME_PLACEHOLDER"
           WEOF
           
-          # 替换占位符
           sed -i "s|D1_PLACEHOLDER|${{ secrets.D1_DATABASE_ID }}|g" wrangler.toml
           sed -i "s|SECRET_PLACEHOLDER|${{ secrets.API_SECRET }}|g" wrangler.toml
           sed -i "s|USER_NAME_PLACEHOLDER|${{ secrets.API_USER_NAME }}|g" wrangler.toml
@@ -77,8 +65,6 @@ jobs:
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
           wranglerVersion: "4"
           command: deploy
-        env:
-          CF_WRANGLER_LOG_LEVEL: debug
 
       - name: ✅ 部署成功
         if: success()
@@ -91,5 +77,6 @@ jobs:
         if: failure()
         run: |
           echo "==============================================="
-          echo "💥 部署失败！请检查上方Wrangler调试日志"
+          echo "💥 部署失败！请检查上方日志"
           echo "==============================================="
+
