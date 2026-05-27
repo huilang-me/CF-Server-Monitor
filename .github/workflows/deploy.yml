@@ -1,4 +1,4 @@
-name: Deploy to Cloudflare Workers
+name: 部署到 Cloudflare Workers
 
 on:
   push:
@@ -13,20 +13,21 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    name: Deploy
+    name: 部署
     steps:
-      - name: 📥 Checkout code
+      - name: 📥 结账代码
         uses: actions/checkout@v4
 
-      - name: 🔧 Setup Node.js
+      - name: 🔧 设置 Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '20'  # 改用LTS版本，解决与Wrangler v4的兼容问题
+          cache: 'npm'
 
-      - name: 📦 Install dependencies
-        run: npm install
+      - name: 📦 安装依赖项
+        run: npm ci  # 用npm ci替代npm install，保证依赖版本一致性
 
-      - name: 📝 Create wrangler.toml
+      - name: 📝 创建 wrangler.toml
         run: |
           cat > wrangler.toml << 'WEOF'
           name = "server-monitor-pro"
@@ -34,7 +35,7 @@ jobs:
           compatibility_date = "2024-12-01"
           compatibility_flags = ["nodejs_compat"]
           
-          # 每日定时任务（UTC 0点，即北京时间 8点）
+          # 每日定时任务（UTC 0点，即北京时间8点）
           [triggers]
           crons = ["0 0 * * *"]
           
@@ -52,31 +53,34 @@ jobs:
           API_USER_NAME = "USER_NAME_PLACEHOLDER"
           WEOF
           
-          # 替换占位符
+          # 替换占位符（修正变量名与占位符的对应关系）
           sed -i "s|D1_PLACEHOLDER|${{ secrets.D1_DATABASE_ID }}|g" wrangler.toml
           sed -i "s|SECRET_PLACEHOLDER|${{ secrets.API_SECRET }}|g" wrangler.toml
           sed -i "s|USER_NAME_PLACEHOLDER|${{ secrets.API_USER_NAME }}|g" wrangler.toml
           
           echo "✅ wrangler.toml 已生成"
+          cat wrangler.toml  # 输出配置文件内容，方便调试
 
-      - name: 🚀 Deploy to Cloudflare Workers
+      - name: 🚀 部署到 Cloudflare Workers
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
-          wranglerVersion: '4'
+          wranglerVersion: "4"  # 修正引号格式，避免解析错误
           command: deploy
+        env:
+          CF_WRANGLER_LOG_LEVEL: debug  # 开启Wrangler调试日志，方便排查错误
 
-      - name: ✅ Deployment Success
+      - name: ✅ 部署成功
         if: success()
         run: |
-          echo "============================================"
-          echo "  🎉 部署成功！"
-          echo "============================================"
+          echo "==============================================="
+          echo "🎉 部署成功！"
+          echo "==============================================="
 
-      - name: ❌ Deployment Failed
+      - name: ❌ 部署失败
         if: failure()
         run: |
-          echo "============================================"
-          echo "  💥 部署失败！请检查 Actions 日志"
-          echo "============================================"
+          echo "==============================================="
+          echo "💥 部署失败！请检查上方Wrangler调试日志"
+          echo "==============================================="
