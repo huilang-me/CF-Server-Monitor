@@ -10,22 +10,31 @@ on:
       - 'LICENSE'
   workflow_dispatch:
 
+env:
+  # 强制 GitHub Actions 使用 Node.js 24，消除弃用警告
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     name: 部署
     steps:
-      - name: 📥 结账代码
+      - name: 📥 检出代码
         uses: actions/checkout@v4
 
-      - name: 🔧 设置 Node.js
+      - name: 🔧 设置 Node.js 24（最新稳定版）
         uses: actions/setup-node@v4
         with:
-          node-version: '20'  # 改用LTS版本，解决与Wrangler v4的兼容问题
+          node-version: '24'
           cache: 'npm'
 
-      - name: 📦 安装依赖项
-        run: npm ci  # 用npm ci替代npm install，保证依赖版本一致性
+      - name: 📦 安装依赖（自动兼容有无锁定文件）
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
 
       - name: 📝 创建 wrangler.toml
         run: |
@@ -53,23 +62,23 @@ jobs:
           API_USER_NAME = "USER_NAME_PLACEHOLDER"
           WEOF
           
-          # 替换占位符（修正变量名与占位符的对应关系）
+          # 替换占位符
           sed -i "s|D1_PLACEHOLDER|${{ secrets.D1_DATABASE_ID }}|g" wrangler.toml
           sed -i "s|SECRET_PLACEHOLDER|${{ secrets.API_SECRET }}|g" wrangler.toml
           sed -i "s|USER_NAME_PLACEHOLDER|${{ secrets.API_USER_NAME }}|g" wrangler.toml
           
           echo "✅ wrangler.toml 已生成"
-          cat wrangler.toml  # 输出配置文件内容，方便调试
+          cat wrangler.toml
 
       - name: 🚀 部署到 Cloudflare Workers
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
-          wranglerVersion: "4"  # 修正引号格式，避免解析错误
+          wranglerVersion: "4"
           command: deploy
         env:
-          CF_WRANGLER_LOG_LEVEL: debug  # 开启Wrangler调试日志，方便排查错误
+          CF_WRANGLER_LOG_LEVEL: debug
 
       - name: ✅ 部署成功
         if: success()
