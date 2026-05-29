@@ -1,5 +1,6 @@
 let dbInitialized = false;
 const DELETE_RAW_DATA = false; // 是否删除原始数据
+const RETENTION_DAYS = 1; // 数据保留天数（原始数据和聚合数据都保留此天数）
 
 export async function initDatabase(db) {
   if (dbInitialized) return;
@@ -176,35 +177,21 @@ const AGGREGATE_PHASES = [
     minHours: 1,
     maxHours: 3,
     bucketSeconds: 240,
-    sourceBucketSeconds: null
+    sourceBucketSeconds: 120  // ✅ 从2分钟桶聚合
   },
   {
     name: '3-6小时(8分钟桶)',
     minHours: 3,
     maxHours: 6,
     bucketSeconds: 480,
-    sourceBucketSeconds: null
+    sourceBucketSeconds: 240  // ✅ 从4分钟桶聚合
   },
   {
     name: '6-24小时(16分钟桶)',
     minHours: 6,
     maxHours: 24,
     bucketSeconds: 960,
-    sourceBucketSeconds: null
-  },
-  {
-    name: '24-48小时(32分钟桶)',
-    minHours: 24,
-    maxHours: 48,
-    bucketSeconds: 1920,
-    sourceBucketSeconds: null
-  },
-  {
-    name: '48小时及以上(60分钟桶)',
-    minHours: 48,
-    maxHours: 1000,
-    bucketSeconds: 3600,
-    sourceBucketSeconds: null
+    sourceBucketSeconds: 480  // ✅ 从8分钟桶聚合
   }
 ];
 
@@ -266,7 +253,7 @@ async function aggregateFromRaw(db, startTime, endTime, bucketSeconds, phaseName
     )
     SELECT 
       server_id,
-      CAST(timestamp / ? AS INTEGER) * ? AS bucket,
+      CAST((timestamp + ? / 2) / ? AS INTEGER) * ? AS bucket,
       ? AS bucket_size,
       ROUND(AVG(cpu), 2), MAX(cpu),
       ROUND(AVG(ram), 2), MAX(ram),
@@ -283,10 +270,10 @@ async function aggregateFromRaw(db, startTime, endTime, bucketSeconds, phaseName
     WHERE typeof(timestamp) = 'integer'
       AND timestamp >= ?
       AND timestamp < ?
-    GROUP BY server_id, CAST(timestamp / ? AS INTEGER)
+    GROUP BY server_id, CAST((timestamp + ? / 2) / ? AS INTEGER)
   `).bind(
-    bucketMs, bucketMs, bucketSeconds,
-    startTime, endTime, bucketMs
+    bucketMs, bucketMs, bucketMs, bucketSeconds,
+    startTime, endTime, bucketMs, bucketMs
   ).run();
   
   const aggregated = aggregateResult.meta.changes || 0;
@@ -311,7 +298,7 @@ async function aggregateFromRaw(db, startTime, endTime, bucketSeconds, phaseName
   
   const idsToDelete = [];
   for (const row of toDeleteResult.results) {
-    const bucket = Math.floor(row.timestamp / bucketMs) * bucketMs;
+    const bucket = Math.floor((row.timestamp + bucketMs / 2) / bucketMs) * bucketMs;
     const key = `${row.server_id}_${bucket}`;
     if (existingKeys.has(key)) {
       idsToDelete.push(row.id);
@@ -372,7 +359,7 @@ async function aggregateFromAggregated(db, startTime, endTime, targetBucketSecon
     )
     SELECT 
       server_id,
-      CAST(bucket / ? AS INTEGER) * ? AS bucket,
+      CAST((bucket + ? / 2) / ? AS INTEGER) * ? AS bucket,
       ? AS bucket_size,
       ROUND(AVG(cpu_avg), 2), MAX(cpu_max),
       ROUND(AVG(ram_avg), 2), MAX(ram_max),
@@ -389,10 +376,10 @@ async function aggregateFromAggregated(db, startTime, endTime, targetBucketSecon
     WHERE bucket_size = ?
       AND bucket >= ?
       AND bucket < ?
-    GROUP BY server_id, CAST(bucket / ? AS INTEGER)
+    GROUP BY server_id, CAST((bucket + ? / 2) / ? AS INTEGER)
   `).bind(
-    targetBucketMs, targetBucketMs, targetBucketSeconds,
-    sourceBucketSeconds, startTime, endTime, targetBucketMs
+    targetBucketMs, targetBucketMs, targetBucketMs, targetBucketSeconds,
+    sourceBucketSeconds, startTime, endTime, targetBucketMs, targetBucketMs
   ).run();
   
   const aggregated = aggregateResult.meta.changes || 0;
@@ -417,7 +404,7 @@ async function aggregateFromAggregated(db, startTime, endTime, targetBucketSecon
   
   const idsToDelete = [];
   for (const row of sourceToDeleteResult.results) {
-    const targetBucket = Math.floor(row.bucket / targetBucketMs) * targetBucketMs;
+    const targetBucket = Math.floor((row.bucket + targetBucketMs / 2) / targetBucketMs) * targetBucketMs;
     const key = `${row.server_id}_${targetBucket}`;
     if (existingTargetKeys.has(key)) {
       idsToDelete.push(row.id);
@@ -615,7 +602,7 @@ export async function cleanupOldData(db, force = false) {
     const lastClean = await db.prepare(`SELECT value FROM settings WHERE key = 'last_cleanup'`).first();
     const now = Date.now();
     const oneHour = 60 * 60 * 1000;
-    const delDate = 1 * 24 * 60 * 60 * 1000; // 删除1天前的数据
+    const delDate = RETENTION_DAYS * 24 * 60 * 60 * 1000; // 删除N天前的原始数据
     
     const shouldRun = force || !lastClean || (now - parseInt(lastClean.value)) > oneHour;
     
@@ -629,6 +616,7 @@ export async function cleanupOldData(db, force = false) {
       expired: 0,
       aggregated: 0,
       deleted: 0,
+      aggCleaned: 0,
       phases: []
     };
     
@@ -667,14 +655,16 @@ export async function cleanupOldData(db, force = false) {
     stats.expired = intDeleteResult.meta.changes || 0;
     stats.deleted += stats.expired;
     
+    const aggCutoff = now - delDate;
     const aggCleanResult = await db.prepare(
       `DELETE FROM metrics_aggregated WHERE bucket < ?`
-    ).bind(cutoff).run();
+    ).bind(aggCutoff).run();
+    stats.aggCleaned = aggCleanResult.meta.changes || 0;
     
     const oneHourMs = 60 * 60 * 1000;
     const lastAggregatedTo = now - oneHourMs;
     
-    const totalDeleted = stats.oldFormat + stats.deleted;
+    const totalDeleted = stats.oldFormat + stats.deleted + stats.aggCleaned;
     
     if (totalDeleted > 0 || stats.aggregated > 0) {
       await db.prepare(`
@@ -685,7 +675,7 @@ export async function cleanupOldData(db, force = false) {
         INSERT OR REPLACE INTO settings (key, value) VALUES ('last_aggregated_to', ?)
       `).bind(lastAggregatedTo.toString()).run();
       
-      console.log(`[Cleanup] 聚合 ${stats.aggregated} 组, 清理 ${totalDeleted} 条（旧格式:${stats.oldFormat}, 聚合删除:${stats.deleted - stats.expired}, 过期:${stats.expired}）, 聚合完成时间点:${new Date(lastAggregatedTo).toISOString()}`);
+      console.log(`[Cleanup] 聚合 ${stats.aggregated} 组, 清理 ${totalDeleted} 条（旧格式:${stats.oldFormat}, 过期原始:${stats.expired}, 过期聚合:${stats.aggCleaned}）, 聚合完成时间点:${new Date(lastAggregatedTo).toISOString()}`);
     }
     
     return {
@@ -694,6 +684,7 @@ export async function cleanupOldData(db, force = false) {
       deleted: totalDeleted,
       oldFormat: stats.oldFormat,
       expired: stats.expired,
+      aggCleaned: stats.aggCleaned,
       phases: stats.phases,
       forced: force
     };
