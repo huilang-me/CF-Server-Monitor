@@ -735,7 +735,109 @@ const themeStyles = getThemeStyles(sys);
     }
     
     ${themeStyles}
-  </style>
+
+/* 字体整体放大 */
+body {
+  font-size: 16px !important;
+  line-height: 1.65 !important;
+  font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", "JetBrains Mono", monospace !important;
+}
+
+/* 顶部标题 */
+.terminal-title,
+.site-title {
+  font-size: 18px !important;
+}
+
+/* 视图切换按钮、后台入口 */
+.toggle-btn,
+.admin-link,
+.filter-tag {
+  font-size: 14px !important;
+}
+
+/* 统计区域 */
+.stat-label {
+  font-size: 13px !important;
+}
+
+.stat-main-value {
+  font-size: 22px !important;
+}
+
+.stat-sub-info {
+  font-size: 14px !important;
+}
+
+/* 分组标题 */
+.group-header {
+  font-size: 16px !important;
+}
+
+.group-count {
+  font-size: 13px !important;
+}
+
+/* 服务器卡片 */
+.server-name {
+  font-size: 16px !important;
+}
+
+.server-meta,
+.card-meta {
+  font-size: 14px !important;
+}
+
+.status-label {
+  font-size: 12px !important;
+}
+
+/* CPU / RAM / DISK / NET / TRF */
+.stat-key {
+  font-size: 13px !important;
+  width: 46px !important;
+}
+
+.stat-value,
+.net-down,
+.net-up {
+  font-size: 14px !important;
+}
+
+/* Ping 区域 */
+.ping-label {
+  font-size: 12px !important;
+}
+
+.ping-value {
+  font-size: 13px !important;
+}
+
+/* 表格 */
+.terminal-table {
+  font-size: 15px !important;
+}
+
+.terminal-table th {
+  font-size: 13px !important;
+}
+
+.terminal-table td {
+  font-size: 15px !important;
+}
+
+.os-label,
+.update-time {
+  font-size: 14px !important;
+}
+
+/* 空状态、加载状态 */
+.empty-state,
+.loading-state {
+  font-size: 15px !important;
+}
+
+</style>
 </head>
 <body class="${sys.theme || 'theme1'}">
   <div class="container">
