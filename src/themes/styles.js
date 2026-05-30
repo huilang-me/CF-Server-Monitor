@@ -816,7 +816,7 @@ export function getThemeStyles(sys) {
 export function getFooterHtml() {
   return `
   <div style="text-align: center; margin-top: 40px; padding-bottom: 20px; font-size: 13px; color: inherit; opacity: 0.8;">
-        <span style="font-weight: 600;">V1.3</span> | Powered by <a href="https://github.com/huilang-me/CF-Server-Monitor" target="_blank" style="color: #3b82f6; text-decoration: none; font-weight: 600;">CF-Server-Monitor</a>
+        <span style="font-weight: 600;">V1.3</span> | Powered by <a href="https://github.com/buxingjun/CF-Server-Monitor" target="_blank" style="color: #3b82f6; text-decoration: none; font-weight: 600;">CF-Server-Monitor</a>
       </div>
   `;
 }
