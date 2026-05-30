@@ -10,6 +10,7 @@ export async function handleAdminUI(request, env, sys) {
   
   const url = new URL(request.url);
   const host = url.origin;
+  const lang = sys.lang === 'en' ? 'en' : 'zh';
   
   // 获取所有服务器信息（按 sort_order 排序）
   const { results } = await env.DB.prepare(
@@ -973,6 +974,13 @@ export async function handleAdminUI(request, env, sys) {
               </select>
             </div>
 
+           <div class="form-group">
+  <label class="form-label">Language / 语言</label>
+  <select id="cfg_lang" class="form-select">
+    <option value="zh" ${lang === 'zh' ? 'selected' : ''}>中文</option>
+    <option value="en" ${lang === 'en' ? 'selected' : ''}>English</option>
+  </select>
+</div>
             <div class="form-group" id="custom_css_group" style="display: ${sys.theme === 'theme6' ? 'block' : 'none'};">
               <label class="form-label">Custom CSS</label>
               <textarea id="cfg_custom_css" class="form-textarea" rows="5" placeholder="body.theme6 { background: #000; }">${sys.custom_css || ''}</textarea>
@@ -981,7 +989,7 @@ export async function handleAdminUI(request, env, sys) {
             <div class="form-group">
               <label class="form-label">Background Image</label>
               <div style="display:flex; gap:8px;">
-                <input type="text" id="cfg_custom_bg" class="form-input" value="${sys.custom_css || ''}" placeholder="https://..." style="flex:1;">
+                <input type="text" id="cfg_custom_bg" class="form-input" value="${sys.custom_bg || ''}" placeholder="https://..." style="flex:1;">
                 <div class="upload-btn-wrapper">
                   <button class="btn" style="margin:0;">📁 UPLOAD</button>
                   <input type="file" id="bg_file" accept="image/*" onchange="uploadBg(this)">
@@ -1183,6 +1191,168 @@ export async function handleAdminUI(request, env, sys) {
     ${getFooterHtml()}
 
   <script>
+   const ADMIN_LANG = '${lang}';
+
+  const I18N_MAP = {
+    zh: {
+      'REFRESH': '刷新',
+      'DASHBOARD': '前台面板',
+      'Total Servers': '服务器总数',
+      'Online': '在线',
+      'Offline': '离线',
+      'Avg CPU': '平均 CPU',
+      'Servers': '服务器',
+      'Settings': '设置',
+      'Enter server name...': '输入服务器名称...',
+      'ADD SERVER': '添加服务器',
+      'BATCH DELETE': '批量删除',
+      'TOGGLE ALL': '全选/反选',
+      'HOSTNAME': '主机名',
+      'GROUP': '分组',
+      'PRICE': '价格',
+      'EXPIRE': '到期',
+      'BANDWIDTH': '带宽',
+      'TRAFFIC': '流量',
+      'STATUS': '状态',
+      'ACTIONS': '操作',
+      'No servers configured': '暂无服务器配置',
+      'Appearance': '外观',
+      'Theme': '主题',
+      '[Default] Dark Terminal': '[默认] 深色终端',
+      '[White] Light Terminal': '[白色] 浅色终端',
+      '[Custom] Custom CSS': '[自定义] 自定义 CSS',
+      'Custom CSS': '自定义 CSS',
+      'Background Image': '背景图片',
+      'UPLOAD': '上传',
+      'Site Title': '站点标题',
+      'Admin Title': '后台标题',
+      'Display Options': '显示选项',
+      'Public Access': '公开访问',
+      'Show Price': '显示价格',
+      'Show Expiration': '显示到期时间',
+      'Show Bandwidth': '显示带宽',
+      'Show Traffic Quota': '显示流量额度',
+      'Notifications': '通知',
+      'Offline Alert': '离线告警',
+      '[OFF] Disabled': '[关] 禁用',
+      '[ON] Notify after 5min offline': '[开] 离线 5 分钟后通知',
+      'Telegram Token / WeChat Webhook': 'Telegram Token / 微信 Webhook',
+      'Chat ID': 'Chat ID',
+      'Custom Injection': '自定义注入',
+      'Custom <head>': '自定义 <head>',
+      'Custom Script (footer)': '自定义脚本（页脚）',
+      'SAVE CONFIGURATION': '保存配置',
+      'Hostname': '主机名',
+      'Group Name': '分组名称',
+      'Price': '价格',
+      'Expiration Date': '到期日期',
+      'Bandwidth': '带宽',
+      'Traffic Limit': '流量限制',
+      'Hide from Public': '对外隐藏',
+      'Hide this server from non-logged-in users (dashboard & detail page)': '对未登录用户隐藏此服务器（前台面板和详情页）',
+      'CANCEL': '取消',
+      'SAVE': '保存'
+    },
+    en: {
+      '刷新': 'REFRESH',
+      '前台面板': 'DASHBOARD',
+      '服务器总数': 'Total Servers',
+      '在线': 'Online',
+      '离线': 'Offline',
+      '平均 CPU': 'Avg CPU',
+      '服务器': 'Servers',
+      '设置': 'Settings',
+      '添加服务器': 'ADD SERVER',
+      '批量删除': 'BATCH DELETE',
+      '全选/反选': 'TOGGLE ALL',
+      '主机名': 'HOSTNAME',
+      '分组': 'GROUP',
+      '价格': 'PRICE',
+      '到期': 'EXPIRE',
+      '带宽': 'BANDWIDTH',
+      '流量': 'TRAFFIC',
+      '状态': 'STATUS',
+      '操作': 'ACTIONS',
+      '暂无服务器配置': 'No servers configured',
+      '外观': 'Appearance',
+      '主题': 'Theme',
+      '[默认] 深色终端': '[Default] Dark Terminal',
+      '[白色] 浅色终端': '[White] Light Terminal',
+      '[自定义] 自定义 CSS': '[Custom] Custom CSS',
+      '自定义 CSS': 'Custom CSS',
+      '背景图片': 'Background Image',
+      '上传': 'UPLOAD',
+      '站点标题': 'Site Title',
+      '后台标题': 'Admin Title',
+      '显示选项': 'Display Options',
+      '公开访问': 'Public Access',
+      '显示价格': 'Show Price',
+      '显示到期时间': 'Show Expiration',
+      '显示带宽': 'Show Bandwidth',
+      '显示流量额度': 'Show Traffic Quota',
+      '通知': 'Notifications',
+      '离线告警': 'Offline Alert',
+      '[关] 禁用': '[OFF] Disabled',
+      '[开] 离线 5 分钟后通知': '[ON] Notify after 5min offline',
+      '自定义注入': 'Custom Injection',
+      '自定义脚本（页脚）': 'Custom Script (footer)',
+      '保存配置': 'SAVE CONFIGURATION',
+      '分组名称': 'Group Name',
+      '到期日期': 'Expiration Date',
+      '流量限制': 'Traffic Limit',
+      '对外隐藏': 'Hide from Public',
+      '对未登录用户隐藏此服务器（前台面板和详情页）': 'Hide this server from non-logged-in users (dashboard & detail page)',
+      '取消': 'CANCEL',
+      '保存': 'SAVE'
+    }
+  };
+
+  function translateAdminUI() {
+    const map = I18N_MAP[ADMIN_LANG] || I18N_MAP.zh;
+
+    const walker = document.createTreeWalker(
+      document.body,
+      NodeFilter.SHOW_TEXT,
+      {
+        acceptNode(node) {
+          if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+          if (node.parentElement && ['SCRIPT', 'STYLE', 'TEXTAREA'].includes(node.parentElement.tagName)) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      }
+    );
+
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+
+    nodes.forEach(node => {
+      let text = node.nodeValue;
+      Object.entries(map).forEach(([from, to]) => {
+        text = text.replaceAll(from, to);
+      });
+      node.nodeValue = text;
+    });
+
+    document.querySelectorAll('input[placeholder], textarea[placeholder]').forEach(el => {
+      let text = el.getAttribute('placeholder') || '';
+      Object.entries(map).forEach(([from, to]) => {
+        text = text.replaceAll(from, to);
+      });
+      el.setAttribute('placeholder', text);
+    });
+
+    document.querySelectorAll('[title]').forEach(el => {
+      let text = el.getAttribute('title') || '';
+      Object.entries(map).forEach(([from, to]) => {
+        text = text.replaceAll(from, to);
+      });
+      el.setAttribute('title', text);
+    });
+  }
+
+  document.addEventListener('DOMContentLoaded', translateAdminUI);
     const HOST = '${host}';
     
     // Tab 切换
@@ -1223,8 +1393,8 @@ export async function handleAdminUI(request, env, sys) {
         action: 'save_settings',
         settings: {
           theme: document.getElementById('cfg_theme').value,
+          lang: document.getElementById('cfg_lang').value,
           custom_bg: document.getElementById('cfg_custom_bg').value,
-          custom_css: document.getElementById('cfg_custom_css').value,
           custom_head: document.getElementById('cfg_custom_head').value,
           custom_script: document.getElementById('cfg_custom_script').value,
           site_title: document.getElementById('cfg_site_title').value,
