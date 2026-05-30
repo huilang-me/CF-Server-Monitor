@@ -736,6 +736,96 @@ const themeStyles = getThemeStyles(sys);
     
     ${themeStyles}
 
+/* 前台首页透明化 */
+body {
+  background-attachment: fixed !important;
+}
+
+/* 顶部终端栏 */
+.terminal-header {
+  background: rgba(255, 255, 255, 0.50) !important;
+  backdrop-filter: blur(3px) !important;
+  border-color: rgba(80, 80, 80, 0.18) !important;
+}
+
+/* 顶部导航区域 */
+.nav-area {
+  background: rgba(255, 255, 255, 0.48) !important;
+  backdrop-filter: blur(3px) !important;
+  border-color: rgba(80, 80, 80, 0.16) !important;
+}
+
+/* 统计总栏 */
+.global-stats {
+  background: rgba(255, 255, 255, 0.18) !important;
+  border-color: rgba(80, 80, 80, 0.14) !important;
+}
+
+.stat-item {
+  background: rgba(255, 255, 255, 0.52) !important;
+  backdrop-filter: blur(3px) !important;
+}
+
+/* 分组标题线 */
+.group-header {
+  border-bottom-color: rgba(255, 255, 255, 0.45) !important;
+}
+
+/* 服务器卡片 */
+.server-card {
+  background: rgba(255, 255, 255, 0.55) !important;
+  backdrop-filter: blur(3px) !important;
+  border-color: rgba(80, 80, 80, 0.18) !important;
+}
+
+.server-card:hover {
+  background: rgba(255, 255, 255, 0.68) !important;
+  border-color: rgba(0, 140, 120, 0.45) !important;
+}
+
+/* 卡片里的延迟框 */
+.ping-panel {
+  background: rgba(255, 255, 255, 0.35) !important;
+  border-color: rgba(80, 80, 80, 0.16) !important;
+}
+
+/* 顶部按钮、过滤按钮 */
+.view-toggle,
+.admin-link,
+.filter-tag {
+  background: rgba(255, 255, 255, 0.58) !important;
+  backdrop-filter: blur(2px) !important;
+  border-color: rgba(80, 80, 80, 0.18) !important;
+}
+
+.toggle-btn.active,
+.filter-tag.active {
+  background: rgba(0, 120, 90, 0.88) !important;
+  color: #fff !important;
+}
+
+/* 表格视图 */
+.table-container {
+  background: rgba(255, 255, 255, 0.55) !important;
+  backdrop-filter: blur(3px) !important;
+  border-color: rgba(80, 80, 80, 0.18) !important;
+}
+
+.terminal-table th {
+  background: rgba(255, 255, 255, 0.42) !important;
+}
+
+.terminal-table tr:hover {
+  background: rgba(255, 255, 255, 0.35) !important;
+}
+
+/* 地图外框 */
+.map-wrapper {
+  background: rgba(255, 255, 255, 0.45) !important;
+  backdrop-filter: blur(3px) !important;
+  border-color: rgba(80, 80, 80, 0.18) !important;
+}
+
 /* 前台字体整体加大版 */
 body {
   font-size: 18px !important;
