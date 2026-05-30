@@ -156,7 +156,8 @@ export async function handleDashboard(request, env, sys) {
     return authResponse(sys.site_title);
   }
 
-  const themeStyles = getThemeStyles(sys);
+  const lang = sys.lang === 'en' ? 'en' : 'zh';
+const themeStyles = getThemeStyles(sys);
   
   const html = `<!DOCTYPE html>
 <html>
@@ -847,7 +848,94 @@ export async function handleDashboard(request, env, sys) {
     show_bw: sys.show_bw === 'true',
     show_tf: sys.show_tf === 'true'
   })}</script>
-  <script>
+ <script>
+    const DASHBOARD_LANG = '${lang}';
+
+    const DASHBOARD_I18N = {
+      zh: {
+        'CARDS': '卡片',
+        'TABLE': '表格',
+        'MAP': '地图',
+        '[All]': '[全部]',
+        'All': '全部',
+
+        'Total Servers': '服务器总数',
+        'Total Traffic': '总流量',
+        'Real-time Speed': '实时速度',
+
+        'ONLINE': '在线',
+        'OFFLINE': '离线',
+        'ON:': '在线:',
+        'OFF:': '离线:',
+
+        'STAT': '状态',
+        'HOSTNAME': '主机名',
+        'REGION': '地区',
+        'ARCH/OS': '架构/系统',
+        'UPDATE': '更新',
+
+        'Loading data...': '正在加载数据...',
+        'No data available': '暂无数据',
+        'TIMEOUT': '超时',
+        'EXPIRED': '已过期',
+        's ago': '秒前',
+
+        'Default': '默认'
+      },
+      en: {}
+    };
+
+    function translateDashboardText(text) {
+      const map = DASHBOARD_I18N[DASHBOARD_LANG] || {};
+      let result = text;
+
+      Object.entries(map)
+        .sort((a, b) => b[0].length - a[0].length)
+        .forEach(([from, to]) => {
+          result = result.replaceAll(from, to);
+        });
+
+      return result;
+    }
+
+    function translateDashboardUI() {
+      if (DASHBOARD_LANG !== 'zh') return;
+
+      const walker = document.createTreeWalker(
+        document.body,
+        NodeFilter.SHOW_TEXT,
+        {
+          acceptNode(node) {
+            if (!node.nodeValue || !node.nodeValue.trim()) {
+              return NodeFilter.FILTER_REJECT;
+            }
+
+            if (
+              node.parentElement &&
+              ['SCRIPT', 'STYLE', 'TEXTAREA'].includes(node.parentElement.tagName)
+            ) {
+              return NodeFilter.FILTER_REJECT;
+            }
+
+            return NodeFilter.FILTER_ACCEPT;
+          }
+        }
+      );
+
+      const nodes = [];
+      while (walker.nextNode()) {
+        nodes.push(walker.currentNode);
+      }
+
+      nodes.forEach(node => {
+        node.nodeValue = translateDashboardText(node.nodeValue);
+      });
+
+      document.querySelectorAll('[title]').forEach(el => {
+        el.setAttribute('title', translateDashboardText(el.getAttribute('title') || ''));
+      });
+    }
+
     let mapInitialized = false;
     let currentFilter = 'all';
     const sysConfig = JSON.parse(document.getElementById('sys-config').textContent);
@@ -1176,12 +1264,14 @@ export async function handleDashboard(request, env, sys) {
       });
     }
 
-    document.addEventListener('DOMContentLoaded', () => {
-      const savedView = localStorage.getItem('monitor_preferred_view') || 'card';
-      switchView(savedView);
-      bindFilterEvents();
-      refreshData();
-    });
+   document.addEventListener('DOMContentLoaded', () => {
+   translateDashboardUI();
+
+   const savedView = localStorage.getItem('monitor_preferred_view') || 'card';
+   switchView(savedView);
+   bindFilterEvents();
+   refreshData();
+ });
 
     async function refreshData() {
       try {
@@ -1196,9 +1286,10 @@ export async function handleDashboard(request, env, sys) {
         document.getElementById('ajax-filters').innerHTML = renderFilters(data.countryStats, data.stats.total);
         document.getElementById('map-data').textContent = JSON.stringify(data.countryStats);
         
-        bindFilterEvents();
-        applyFilter();
-        drawMarkers();
+      bindFilterEvents();
+      applyFilter();
+      drawMarkers();
+      translateDashboardUI();
       } catch (e) {
         console.log('[INFO] Refresh pending...', e);
       }
