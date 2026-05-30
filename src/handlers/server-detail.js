@@ -1040,7 +1040,7 @@ export async function handleServerDetail(request, env, sys, viewId) {
     // Chart.js 终端风格全局配置
     // =============================================
     Chart.defaults.font.family = "'JetBrains Mono', 'Courier New', monospace";
-    Chart.defaults.font.size = 14;
+    Chart.defaults.font.size = 16;
     Chart.defaults.color = '#8999af';
     Chart.defaults.plugins.tooltip.backgroundColor = 'rgba(10, 14, 20, 0.95)';
     Chart.defaults.plugins.tooltip.titleColor = '#00d4aa';
