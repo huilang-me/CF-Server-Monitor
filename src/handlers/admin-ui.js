@@ -845,7 +845,227 @@ export async function handleAdminUI(request, env, sys) {
     }
     /* 主题样式保留 */
     ${themeStyles}
-  </style>
+
+/* 后台字体整体放大 */
+body {
+  font-size: 18px !important;
+  line-height: 1.75 !important;
+  font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", "JetBrains Mono", monospace !important;
+}
+
+/* 页面宽度加大，避免字体变大后太挤 */
+.container {
+  max-width: 1700px !important;
+}
+
+/* 顶部栏 */
+.terminal-header {
+  font-size: 16px !important;
+  padding: 14px 20px !important;
+}
+
+.terminal-title {
+  font-size: 18px !important;
+}
+
+/* 主面板 */
+.main-panel {
+  padding: 24px !important;
+}
+
+.panel-title {
+  font-size: 22px !important;
+}
+
+/* 顶部按钮、普通按钮 */
+.btn,
+.tab-btn {
+  font-size: 16px !important;
+  padding: 10px 18px !important;
+}
+
+/* 统计卡片 */
+.stat-card {
+  padding: 20px !important;
+}
+
+.stat-value {
+  font-size: 30px !important;
+}
+
+.stat-label {
+  font-size: 15px !important;
+}
+
+/* 提示文字 */
+.alert {
+  font-size: 16px !important;
+  line-height: 1.7 !important;
+}
+
+.alert .alert-icon {
+  font-size: 18px !important;
+}
+
+/* 工具栏输入框、选择框 */
+.toolbar-input,
+.toolbar-select {
+  font-size: 16px !important;
+  padding: 11px 14px !important;
+}
+
+/* 表格 */
+.terminal-table {
+  font-size: 16px !important;
+}
+
+.terminal-table th {
+  font-size: 15px !important;
+  padding: 14px 16px !important;
+}
+
+.terminal-table td {
+  font-size: 16px !important;
+  padding: 14px 16px !important;
+}
+
+/* 分组、价格、日期、规格 */
+.group-tag,
+.price-tag {
+  font-size: 14px !important;
+  padding: 4px 10px !important;
+}
+
+.date-text,
+.spec-text {
+  font-size: 15px !important;
+}
+
+/* 命令框 */
+.cmd-input-wrapper {
+  padding: 8px 10px !important;
+}
+
+.cmd-prompt {
+  font-size: 15px !important;
+}
+
+.cmd-input {
+  font-size: 14px !important;
+  min-width: 260px !important;
+}
+
+/* 设置区域 */
+.settings-section {
+  padding: 20px !important;
+}
+
+.section-title {
+  font-size: 18px !important;
+}
+
+.form-label {
+  font-size: 15px !important;
+}
+
+.form-input,
+.form-select {
+  font-size: 16px !important;
+  padding: 11px 14px !important;
+}
+
+.form-textarea {
+  font-size: 15px !important;
+  line-height: 1.7 !important;
+  min-height: 120px !important;
+  padding: 12px 14px !important;
+}
+
+/* 勾选项 */
+.checkbox-item {
+  padding: 14px 16px !important;
+}
+
+.checkbox-item input[type="checkbox"] {
+  width: 20px !important;
+  height: 20px !important;
+}
+
+.checkbox-item label {
+  font-size: 16px !important;
+}
+
+.checkbox-item .checkbox-badge {
+  font-size: 13px !important;
+}
+
+/* 弹窗 */
+.modal-dialog {
+  width: 560px !important;
+  padding: 28px !important;
+}
+
+.modal-title {
+  font-size: 18px !important;
+}
+
+.modal-close {
+  font-size: 24px !important;
+}
+
+/* 拖拽提示 */
+.drag-handle {
+  font-size: 18px !important;
+}
+
+.drag-info {
+  font-size: 16px !important;
+  padding: 12px 22px !important;
+}
+
+/* 空状态 */
+.empty-state {
+  font-size: 17px !important;
+}
+
+/* 手机端防止撑爆 */
+@media (max-width: 768px) {
+  body {
+    font-size: 16px !important;
+  }
+
+  .container {
+    padding: 8px !important;
+  }
+
+  .panel-title {
+    font-size: 19px !important;
+  }
+
+  .btn,
+  .tab-btn {
+    font-size: 14px !important;
+    padding: 8px 12px !important;
+  }
+
+  .terminal-table {
+    font-size: 14px !important;
+  }
+
+  .terminal-table th,
+  .terminal-table td {
+    font-size: 14px !important;
+    padding: 10px 12px !important;
+  }
+
+  .form-input,
+  .form-select,
+  .form-textarea {
+    font-size: 15px !important;
+  }
+}
+
+</style>
 </head>
 <body class="${sys.theme || 'theme1'}">
   <div class="container">
