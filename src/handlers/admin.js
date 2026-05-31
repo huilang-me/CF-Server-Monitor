@@ -1,4 +1,14 @@
 import { checkAuth, authResponse } from '../middleware/auth.js';
+import { clearNotificationSettingsCache } from '../services/notification.js';
+import { getLatestMetricsForAllServers } from '../database/schema.js';
+
+function isValidUUID(id) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+}
+
+function isValidName(name) {
+  return name && typeof name === 'string' && name.trim().length > 0 && name.length <= 100;
+}
 
 export async function handleAdminAPI(request, env, sys) {
   if (!checkAuth(request, env)) {
@@ -7,23 +17,58 @@ export async function handleAdminAPI(request, env, sys) {
 
   try {
     const data = await request.json();
-    
-    if (data.action === 'save_settings') {
-      // 保存全局设置
+
+    if (data.action === 'get_settings') {
+      return new Response(JSON.stringify({
+        success: true,
+        settings: sys,
+        api_secret: env.API_SECRET
+      }), {
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    else if (data.action === 'list') {
+      const { results: servers } = await env.DB.prepare(
+        'SELECT id, name, last_updated, server_group, price, expire_date, bandwidth, traffic_limit, country, is_hidden, sort_order FROM servers ORDER BY sort_order ASC'
+      ).all();
+
+      const latestMetricsMap = await getLatestMetricsForAllServers(env.DB);
+
+      return new Response(JSON.stringify({
+        success: true,
+        servers: servers,
+        latestMetricsMap: Object.fromEntries(latestMetricsMap)
+      }), {
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    else if (data.action === 'save_settings') {
       for (const [k, v] of Object.entries(data.settings)) {
         await env.DB.prepare(
           'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
         ).bind(k, v).run();
+      }
+      if (data.settings && ('tg_notify' in data.settings || 'tg_bot_token' in data.settings || 'tg_chat_id' in data.settings)) {
+        clearNotificationSettingsCache();
       }
       return new Response(JSON.stringify({ success: true, message: '设置已保存' }), {
         headers: { 'Content-Type': 'application/json' }
       });
     } 
     else if (data.action === 'add') {
-      // 添加新服务器
-      const id = crypto.randomUUID();
       const name = data.name || 'New Server';
-      const group = data.server_group || '默认分组';
+      if (!isValidName(name)) {
+        return new Response(JSON.stringify({ error: '服务器名称无效' }), { 
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      
+      const id = crypto.randomUUID();
+      const group = data.server_group || 'Default';
+      
+      const { max_order } = await env.DB.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_order FROM servers').first();
+      const sortOrder = (max_order || 0) + 1;
       
       await env.DB.prepare(`
         INSERT INTO servers 
@@ -33,15 +78,15 @@ export async function handleAdminAPI(request, env, sys) {
          disk_total, disk_used, processes, tcp_conn, udp_conn, 
          country, ip_v4, ip_v6, server_group, price, expire_date, 
          bandwidth, traffic_limit, ping_ct, ping_cu, ping_cm, ping_bd, 
-         monthly_rx, monthly_tx, last_rx, last_tx, reset_month) 
+         sort_order) 
         VALUES (?, ?, '0', '0', '0', '0', '0', 0, 
                 '0', '0', '0', '0', '0', 
                 '', '', '', '', '0', '0', '0', 
                 '0', '0', '0', '0', '0', 
-                'XX', '0', '0', ?, '免费', '', 
+                'XX', '0', '0', ?, '', '', 
                 '', '', '0', '0', '0', '0', 
-                '0', '0', '0', '0', '')
-      `).bind(id, name, group).run();
+                ?)
+      `).bind(id, name, group, sortOrder).run();
       
       return new Response(JSON.stringify({ 
         success: true, 
@@ -52,52 +97,90 @@ export async function handleAdminAPI(request, env, sys) {
       });
     } 
     else if (data.action === 'delete') {
-      // 删除服务器
       const { id } = data;
-      if (!id) {
-        return new Response(JSON.stringify({ error: '缺少服务器 ID' }), { 
+      if (!id || !isValidUUID(id)) {
+        return new Response(JSON.stringify({ error: '服务器 ID 无效' }), { 
           status: 400,
           headers: { 'Content-Type': 'application/json' }
         });
       }
       
-      // 同时删除历史数据
       await env.DB.prepare('DELETE FROM metrics_history WHERE server_id = ?').bind(id).run();
+      await env.DB.prepare('DELETE FROM metrics_aggregated WHERE server_id = ?').bind(id).run();
       await env.DB.prepare('DELETE FROM servers WHERE id = ?').bind(id).run();
       
       return new Response(JSON.stringify({ success: true, message: '服务器已删除' }), {
         headers: { 'Content-Type': 'application/json' }
       });
     } 
-    else if (data.action === 'edit') {
-      // 编辑服务器信息
-      const { id, server_group, price, expire_date, bandwidth, traffic_limit } = data;
-      if (!id) {
-        return new Response(JSON.stringify({ error: '缺少服务器 ID' }), { 
+    else if (data.action === 'save_order') {
+      const { orders } = data;
+      if (!orders || !Array.isArray(orders) || orders.length === 0) {
+        return new Response(JSON.stringify({ error: '缺少排序数据' }), { 
           status: 400,
           headers: { 'Content-Type': 'application/json' }
         });
       }
       
-      await env.DB.prepare(`
-        UPDATE servers 
-        SET server_group = ?, price = ?, expire_date = ?, bandwidth = ?, traffic_limit = ? 
-        WHERE id = ?
-      `).bind(
-        server_group || '默认分组', 
-        price || '免费', 
-        expire_date || '', 
-        bandwidth || '', 
-        traffic_limit || '', 
-        id
-      ).run();
+      for (let i = 0; i < orders.length; i++) {
+        if (!isValidUUID(orders[i])) {
+          return new Response(JSON.stringify({ error: '排序数据包含无效 ID' }), { 
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        await env.DB.prepare('UPDATE servers SET sort_order = ? WHERE id = ?').bind(i, orders[i]).run();
+      }
+      
+      return new Response(JSON.stringify({ success: true, message: '排序已保存' }), {
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    else if (data.action === 'edit') {
+      const { id, name, server_group, price, expire_date, bandwidth, traffic_limit, is_hidden } = data;
+      if (!id || !isValidUUID(id)) {
+        return new Response(JSON.stringify({ error: '服务器 ID 无效' }), { 
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      
+      if (name && typeof name === 'string' && name.trim().length > 0 && name.length <= 100) {
+        await env.DB.prepare(`
+          UPDATE servers 
+          SET name = ?, server_group = ?, price = ?, expire_date = ?, bandwidth = ?, traffic_limit = ?, is_hidden = ? 
+          WHERE id = ?
+        `).bind(
+          name,
+          server_group || 'Default', 
+          price || '', 
+          expire_date || '', 
+          bandwidth || '', 
+          traffic_limit || '',
+          is_hidden || '0',
+          id
+        ).run();
+      } else {
+        await env.DB.prepare(`
+          UPDATE servers 
+          SET server_group = ?, price = ?, expire_date = ?, bandwidth = ?, traffic_limit = ?, is_hidden = ? 
+          WHERE id = ?
+        `).bind(
+          server_group || 'Default', 
+          price || '', 
+          expire_date || '', 
+          bandwidth || '', 
+          traffic_limit || '',
+          is_hidden || '0',
+          id
+        ).run();
+      }
       
       return new Response(JSON.stringify({ success: true, message: '服务器信息已更新' }), {
         headers: { 'Content-Type': 'application/json' }
       });
     }
     else if (data.action === 'batch_delete') {
-      // 批量删除服务器
       const { ids } = data;
       if (!ids || !Array.isArray(ids) || ids.length === 0) {
         return new Response(JSON.stringify({ error: '请选择要删除的服务器' }), { 
@@ -107,9 +190,18 @@ export async function handleAdminAPI(request, env, sys) {
       }
       
       for (const id of ids) {
-        await env.DB.prepare('DELETE FROM metrics_history WHERE server_id = ?').bind(id).run();
-        await env.DB.prepare('DELETE FROM servers WHERE id = ?').bind(id).run();
+        if (!isValidUUID(id)) {
+          return new Response(JSON.stringify({ error: '包含无效的服务器 ID' }), { 
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
       }
+      
+      const placeholders = ids.map(() => '?').join(',');
+      await env.DB.prepare(`DELETE FROM metrics_history WHERE server_id IN (${placeholders})`).bind(...ids).run();
+      await env.DB.prepare(`DELETE FROM metrics_aggregated WHERE server_id IN (${placeholders})`).bind(...ids).run();
+      await env.DB.prepare(`DELETE FROM servers WHERE id IN (${placeholders})`).bind(...ids).run();
       
       return new Response(JSON.stringify({ 
         success: true, 
@@ -119,12 +211,15 @@ export async function handleAdminAPI(request, env, sys) {
       });
     }
     else if (data.action === 'get_stats') {
-      // 获取统计数据
       const { results: servers } = await env.DB.prepare(
         'SELECT id, name, last_updated, country, cpu, ram, disk, net_in_speed, net_out_speed FROM servers'
       ).all();
       
+      // 获取所有服务器的最新指标（用于判断在线状态和获取最新数据）
+      const latestMetricsMap = await getLatestMetricsForAllServers(env.DB);
+      
       const now = Date.now();
+      const ONLINE_THRESHOLD = 300000;
       const stats = {
         total: servers.length,
         online: 0,
@@ -137,14 +232,34 @@ export async function handleAdminAPI(request, env, sys) {
       };
       
       servers.forEach(s => {
-        const lastUpdated = new Date(s.last_updated).getTime();
-        if ((now - lastUpdated) < 300000) {
+        const latestMetrics = latestMetricsMap.get(s.id);
+        
+        let lastUpdated = 0;
+        let cpu = 0, ram = 0, disk = 0, netInSpeed = 0, netOutSpeed = 0;
+        
+        if (latestMetrics) {
+          lastUpdated = latestMetrics.timestamp;
+          cpu = latestMetrics.cpu || 0;
+          ram = latestMetrics.ram || 0;
+          disk = latestMetrics.disk || 0;
+          netInSpeed = latestMetrics.net_in_speed || 0;
+          netOutSpeed = latestMetrics.net_out_speed || 0;
+        } else {
+          lastUpdated = new Date(s.last_updated).getTime();
+          cpu = parseFloat(s.cpu) || 0;
+          ram = parseFloat(s.ram) || 0;
+          disk = parseFloat(s.disk) || 0;
+          netInSpeed = parseFloat(s.net_in_speed) || 0;
+          netOutSpeed = parseFloat(s.net_out_speed) || 0;
+        }
+        
+        if ((now - lastUpdated) < ONLINE_THRESHOLD) {
           stats.online++;
-          stats.total_cpu += parseFloat(s.cpu) || 0;
-          stats.total_ram += parseFloat(s.ram) || 0;
-          stats.total_disk += parseFloat(s.disk) || 0;
-          stats.total_net_in += parseFloat(s.net_in_speed) || 0;
-          stats.total_net_out += parseFloat(s.net_out_speed) || 0;
+          stats.total_cpu += cpu;
+          stats.total_ram += ram;
+          stats.total_disk += disk;
+          stats.total_net_in += netInSpeed;
+          stats.total_net_out += netOutSpeed;
         } else {
           stats.offline++;
         }
@@ -161,8 +276,14 @@ export async function handleAdminAPI(request, env, sys) {
       });
     }
     else if (data.action === 'clean_history') {
-      // 手动清理历史数据
       const days = data.days || 7;
+      if (typeof days !== 'number' || days < 1 || days > 365) {
+        return new Response(JSON.stringify({ error: '天数参数无效' }), { 
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      
       await env.DB.prepare(
         `DELETE FROM metrics_history WHERE timestamp < datetime('now', '-' || ? || ' days')`
       ).bind(days).run();

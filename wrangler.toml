@@ -1,20 +1,28 @@
-name = "server-monitor-pro"  # 这就是 CF_WORKER_SUBDOMAIN
+# Cloudflare Workers 配置，线上已由deploy.yml接管，这里仅供本地测试
+name = "server-monitor-pro"
 main = "src/index.js"
 compatibility_date = "2024-12-01"
 compatibility_flags = ["nodejs_compat"]
 
-# 每日定时任务（UTC 0点，即北京时间 8点）
+# 每小时定时任务（UTC 每小时第 10 分钟）
 [triggers]
-crons = ["0 0 * * *"]
+crons = ["10 * * * *"]
 
-# 静态资源目录
 [assets]
-directory = "./public"
+directory = "./dist"
 binding = "ASSETS"
 
-# D1 数据库绑定（通过名称自动匹配，无需 database_id）
+[vars]
+API_SECRET = "admin"
+API_USER_NAME = "admin"
+LONG_RETENTION = "false"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "server-monitor-db"
+database_id = "local"  # 本地开发时用 "local" 即可
 
-[vars]
+# 开发服务器配置
+[dev]
+port = 8787
+local_protocol = "http"

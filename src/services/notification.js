@@ -1,14 +1,83 @@
-export async function sendTelegramNotification(sys, msg) {
-  if (sys.tg_notify !== 'true' || !sys.tg_bot_token || !sys.tg_chat_id) return;
+const MAX_RETRIES = 3;
+const RETRY_DELAY = 1000;
+
+let cachedSettings = null;
+let cacheExpiry = 0;
+const CACHE_TTL = 60 * 1000;
+
+async function fetchWithRetry(url, options, retries = MAX_RETRIES) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const response = await fetch(url, options);
+      if (response.ok) return response;
+      
+      if (i < retries - 1) {
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+      }
+    } catch (e) {
+      if (i < retries - 1) {
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+      } else {
+        throw e;
+      }
+    }
+  }
+  throw new Error('Max retries exceeded');
+}
+
+async function loadNotificationSettings(db) {
+  const now = Date.now();
+  if (cachedSettings && now < cacheExpiry) {
+    return cachedSettings;
+  }
+
+  const tgNotifyRes = await db.prepare(
+    "SELECT value FROM settings WHERE key = 'tg_notify'"
+  ).first();
+
+  if (!tgNotifyRes || tgNotifyRes.value !== 'true') {
+    cachedSettings = { tg_notify: 'false', tg_bot_token: '', tg_chat_id: '' };
+    cacheExpiry = now + CACHE_TTL;
+    return cachedSettings;
+  }
+
+  const { results } = await db.prepare(
+    "SELECT key, value FROM settings WHERE key IN ('tg_bot_token', 'tg_chat_id')"
+  ).all();
+
+  const settings = {
+    tg_notify: 'true',
+    tg_bot_token: '',
+    tg_chat_id: ''
+  };
+
+  if (results) {
+    results.forEach(r => {
+      settings[r.key] = r.value;
+    });
+  }
+
+  cachedSettings = settings;
+  cacheExpiry = now + CACHE_TTL;
+  return settings;
+}
+
+export function clearNotificationSettingsCache() {
+  cachedSettings = null;
+  cacheExpiry = 0;
+}
+
+export async function sendTelegramNotification(settings, msg) {
+  if (settings.tg_notify !== 'true' || !settings.tg_bot_token || !settings.tg_chat_id) return;
   
   try {
-    await fetch(`https://api.telegram.org/bot${sys.tg_bot_token}/sendMessage`, {
+    await fetchWithRetry(`https://api.telegram.org/bot${settings.tg_bot_token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        chat_id: sys.tg_chat_id,
+        chat_id: settings.tg_chat_id,
         text: msg,
-        parse_mode: 'Markdown'  // 改为 Markdown
+        parse_mode: 'Markdown'
       })
     });
   } catch (e) {
@@ -16,16 +85,16 @@ export async function sendTelegramNotification(sys, msg) {
   }
 }
 
-export async function sendWeworkNotification(sys, msg) {
-  if (sys.tg_notify !== 'true' || !sys.tg_bot_token) return;
+export async function sendWeworkNotification(settings, msg) {
+  if (settings.tg_notify !== 'true' || !settings.tg_bot_token) return;
 
   try {
-    await fetch(sys.tg_bot_token, {
+    await fetchWithRetry(settings.tg_bot_token, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        msgtype: "markdown",  // 改为 markdown
-        markdown: { content: msg }  // 改为 markdown 字段
+        msgtype: "markdown",
+        markdown: { content: msg }
       })
     });
   } catch (e) {
@@ -33,13 +102,40 @@ export async function sendWeworkNotification(sys, msg) {
   }
 }
 
-export async function checkOfflineNodes(db, sys) {
-  if (sys.tg_notify !== 'true') return;
+async function getLatestMetricsForAllServers(db) {
+  try {
+    const { results } = await db.prepare(`
+      SELECT mh.*
+      FROM metrics_history mh
+      INNER JOIN (
+        SELECT server_id, MAX(timestamp) as max_ts
+        FROM metrics_history
+        GROUP BY server_id
+      ) latest ON mh.server_id = latest.server_id AND mh.timestamp = latest.max_ts
+    `).all();
+    
+    const map = new Map();
+    for (const row of results) {
+      map.set(row.server_id, row);
+    }
+    
+    return map;
+  } catch (e) {
+    console.error('获取所有服务器最新指标数据失败:', e);
+    return new Map();
+  }
+}
+
+export async function checkOfflineNodes(db) {
+  const notifySettings = await loadNotificationSettings(db);
+  if (notifySettings.tg_notify !== 'true') return;
   
   try {
     const { results: allServers } = await db.prepare(
       'SELECT id, name, last_updated FROM servers'
     ).all();
+    
+    const latestMetricsMap = await getLatestMetricsForAllServers(db);
     
     let alertState = {};
     const stateRes = await db.prepare(
@@ -58,7 +154,15 @@ export async function checkOfflineNodes(db, sys) {
     const now = Date.now();
 
     for (const s of allServers) {
-      const lastUpdated = new Date(s.last_updated).getTime();
+      const latestMetrics = latestMetricsMap.get(s.id);
+      
+      let lastUpdated;
+      if (latestMetrics) {
+        lastUpdated = latestMetrics.timestamp;
+      } else {
+        lastUpdated = new Date(s.last_updated).getTime();
+      }
+      
       const diff = now - lastUpdated;
       const isOffline = diff > 300000;
 
@@ -68,8 +172,8 @@ export async function checkOfflineNodes(db, sys) {
           `**状态:** 离线 (超过5分钟未上报)\n` +
           `**时间:** ${new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}`;
         
-        await sendTelegramNotification(sys, msg);
-        await sendWeworkNotification(sys, msg);
+        await sendTelegramNotification(notifySettings, msg);
+        await sendWeworkNotification(notifySettings, msg);
         
         alertState[s.id] = true;
         stateChanged = true;
@@ -79,8 +183,8 @@ export async function checkOfflineNodes(db, sys) {
           `**状态:** 恢复在线\n` +
           `**时间:** ${new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}`;
         
-        await sendTelegramNotification(sys, msg);
-        await sendWeworkNotification(sys, msg);
+        await sendTelegramNotification(notifySettings, msg);
+        await sendWeworkNotification(notifySettings, msg);
         
         delete alertState[s.id];
         stateChanged = true;

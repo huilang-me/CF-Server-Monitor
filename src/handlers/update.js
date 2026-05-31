@@ -1,6 +1,29 @@
 import { saveMetricsHistory } from '../database/schema.js';
 import { checkOfflineNodes } from '../services/notification.js';
 
+const SERVERS_UPDATE_PERCENTAGE = 5; // 5% 更新服务器信息
+
+const serverExistenceCache = new Map();
+const CACHE_TTL = 5 * 60 * 1000;
+
+async function checkServerExists(db, id) {
+  const now = Date.now();
+  const cached = serverExistenceCache.get(id);
+
+  if (cached && now - cached.timestamp < CACHE_TTL) {
+    return cached.exists;
+  }
+
+  const result = await db.prepare(
+    'SELECT 1 FROM servers WHERE id = ?'
+  ).bind(id).first();
+
+  const exists = !!result;
+  serverExistenceCache.set(id, { exists, timestamp: now });
+
+  return exists;
+}
+
 export async function handleUpdate(request, env, ctx) {
   try {
     const data = await request.json();
@@ -13,93 +36,38 @@ export async function handleUpdate(request, env, ctx) {
     let countryCode = request.cf?.country || 'XX';
     if (countryCode.toUpperCase() === 'TW') countryCode = 'CN';
 
-    // 检查服务器是否存在
-    const serverExists = await env.DB.prepare(
-      'SELECT * FROM servers WHERE id = ?'
-    ).bind(id).first();
+    const serverExists = await checkServerExists(env.DB, id);
     
     if (!serverExists) {
       return new Response('Server not found', { status: 404 });
     }
 
-    // 流量累加逻辑
-    const nowTime = new Date();
-    const tzOffset = 8 * 60 * 60000;
-    const localNow = new Date(nowTime.getTime() + tzOffset);
-    const currentMonthStr = `${localNow.getFullYear()}-${localNow.getMonth() + 1}`;
-    
-    let monthly_rx = parseFloat(serverExists.monthly_rx || '0');
-    let monthly_tx = parseFloat(serverExists.monthly_tx || '0');
-    let last_rx = parseFloat(serverExists.last_rx || '0');
-    let last_tx = parseFloat(serverExists.last_tx || '0');
-    let reset_month = serverExists.reset_month || currentMonthStr;
-
-    // 加载设置检查是否需要重置流量
-    const sysSettings = await env.DB.prepare(
-      "SELECT value FROM settings WHERE key = 'auto_reset_traffic'"
-    ).first();
-    
-    if (sysSettings?.value === 'true' && currentMonthStr !== reset_month) {
-      monthly_rx = 0;
-      monthly_tx = 0;
-      reset_month = currentMonthStr;
-    }
-
-    const current_rx = parseFloat(metrics.net_rx || '0');
-    const current_tx = parseFloat(metrics.net_tx || '0');
-
-    if (current_rx >= last_rx) {
-      monthly_rx += (current_rx - last_rx);
-    } else {
-      monthly_rx += current_rx;
-    }
-
-    if (current_tx >= last_tx) {
-      monthly_tx += (current_tx - last_tx);
-    } else {
-      monthly_tx += current_tx;
-    }
-
-    last_rx = current_rx;
-    last_tx = current_tx;
-
-    // 更新服务器最新状态
-    await env.DB.prepare(`
-      UPDATE servers 
-      SET cpu = ?, ram = ?, disk = ?, load_avg = ?, uptime = ?, last_updated = ?,
-          ram_total = ?, net_rx = ?, net_tx = ?, net_in_speed = ?, net_out_speed = ?,
-          os = ?, cpu_info = ?, cpu_cores = ?, arch = ?, boot_time = ?, ram_used = ?, swap_total = ?, 
-          swap_used = ?, disk_total = ?, disk_used = ?, processes = ?, tcp_conn = ?, udp_conn = ?, 
-          country = ?, ip_v4 = ?, ip_v6 = ?, ping_ct = ?, ping_cu = ?, ping_cm = ?, ping_bd = ?,
-          monthly_rx = ?, monthly_tx = ?, last_rx = ?, last_tx = ?, reset_month = ?
-      WHERE id = ?
-    `).bind(
-      metrics.cpu, metrics.ram, metrics.disk, metrics.load, metrics.uptime, Date.now(),
-      metrics.ram_total || '0', metrics.net_rx || '0', metrics.net_tx || '0',
-      metrics.net_in_speed || '0', metrics.net_out_speed || '0',
-      metrics.os || '', metrics.cpu_info || '', metrics.cpu_cores || '0', metrics.arch || '', metrics.boot_time || '',
-      metrics.ram_used || '0', metrics.swap_total || '0', metrics.swap_used || '0',
-      metrics.disk_total || '0', metrics.disk_used || '0', metrics.processes || '0',
-      metrics.tcp_conn || '0', metrics.udp_conn || '0', countryCode,
-      metrics.ip_v4 || '0', metrics.ip_v6 || '0',
-      metrics.ping_ct || '0', metrics.ping_cu || '0', metrics.ping_cm || '0', metrics.ping_bd || '0',
-      monthly_rx.toString(), monthly_tx.toString(), last_rx.toString(), last_tx.toString(), reset_month,
-      id
-    ).run();
-
-    // ========== 新增：保存历史数据 ==========
     await saveMetricsHistory(env.DB, id, metrics);
 
-    // 异步检查离线节点
-    ctx.waitUntil(checkOfflineNodes(env.DB, {
-      tg_notify: 'true',
-      tg_bot_token: (await env.DB.prepare(
-        "SELECT value FROM settings WHERE key = 'tg_bot_token'"
-      ).first())?.value || '',
-      tg_chat_id: (await env.DB.prepare(
-        "SELECT value FROM settings WHERE key = 'tg_chat_id'"
-      ).first())?.value || ''
-    }));
+    if (Math.random() * 100 < SERVERS_UPDATE_PERCENTAGE) {
+      await env.DB.prepare(`
+        UPDATE servers 
+        SET cpu = ?, ram = ?, disk = ?, load_avg = ?, uptime = ?, last_updated = ?,
+            ram_total = ?, net_rx = ?, net_tx = ?, net_in_speed = ?, net_out_speed = ?,
+            os = ?, cpu_info = ?, cpu_cores = ?, arch = ?, boot_time = ?, ram_used = ?, swap_total = ?, 
+            swap_used = ?, disk_total = ?, disk_used = ?, processes = ?, tcp_conn = ?, udp_conn = ?, 
+            country = ?, ip_v4 = ?, ip_v6 = ?, ping_ct = ?, ping_cu = ?, ping_cm = ?, ping_bd = ?
+        WHERE id = ?
+      `).bind(
+        metrics.cpu, metrics.ram, metrics.disk, metrics.load, metrics.uptime, Date.now(),
+        metrics.ram_total || '0', metrics.net_rx || '0', metrics.net_tx || '0',
+        metrics.net_in_speed || '0', metrics.net_out_speed || '0',
+        metrics.os || '', metrics.cpu_info || '', metrics.cpu_cores || '0', metrics.arch || '', metrics.boot_time || '',
+        metrics.ram_used || '0', metrics.swap_total || '0', metrics.swap_used || '0',
+        metrics.disk_total || '0', metrics.disk_used || '0', metrics.processes || '0',
+        metrics.tcp_conn || '0', metrics.udp_conn || '0', countryCode,
+        metrics.ip_v4 || '0', metrics.ip_v6 || '0',
+        metrics.ping_ct || '0', metrics.ping_cu || '0', metrics.ping_cm || '0', metrics.ping_bd || '0',
+        id
+      ).run();
+    }
+
+    ctx.waitUntil(checkOfflineNodes(env.DB));
 
     return new Response('OK', { status: 200 });
   } catch (e) {

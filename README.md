@@ -1,10 +1,18 @@
 # CF-Server-Monitor-Pro
 
-**版本：V1.2**
+**版本：V2.0**
 
-一个基于 Cloudflare Workers + D1 的多服务器监控探针系统，支持实时监控、历史数据查看、延迟追踪、地图展示等功能。
+一个基于 Cloudflare Workers + D1 的多服务器监控探针系统，支持实时监控、历史数据查看、延迟追踪、地图展示等功能。基于 [CF-Server-Monitor-Pro V1.3](https://github.com/a63414262/CF-Server-Monitor-Pro) 深度二次开发
 
-本项目基于[CF-Server-Monitor-Pro](https://github.com/a63414262/CF-Server-Monitor-Pro)深度二次开发
+## 🔄 V2.0 版本升级说明
+
+本次版本更新带来了以下重大改进：
+
+- **🎨 Vue 前后端分离**：采用 Vue 3 + Vite 重构前端架构，实现前后端完全分离，提升开发效率和代码可维护性
+- **🧪 本地测试模拟数据**：新增本地测试数据生成功能，无需部署即可在本地进行完整的功能测试和调试
+- **🌐 双语支持**：全面支持中文和英文界面，可在设置中自由切换，方便国际化使用
+- **⚡ 功能优化与修复**：全面优化性能，提升响应速度，修复多项已知问题，提供更稳定的使用体验
+
 
 ## ✨ 功能特点
 
@@ -12,37 +20,62 @@
 - 📈 **历史图表**：支持 1/3/6/12/24 小时历史数据查看
 - 🌍 **全球地图**：可视化展示服务器分布
 - 🔔 **离线告警**：支持 Telegram 和企业微信通知
-- 🎨 **多主题**：2 种预设主题 + 自定义 CSS
 - 📱 **响应式**：支持桌面端和移动端
 - 🔄 **自动部署**：GitHub Actions 一键部署
 - 🗺️ **延迟追踪**：国内电信/联通/移动/字节延迟监测
+- 🔒 **服务器隐藏**：可设置特定服务器对非登录用户隐藏
+- ↕️ **拖拽排序**：后台拖拽调整服务器显示顺序
+- 🌐 **双语支持**：支持中文和英文界面自由切换
+- 🧪 **本地测试**：支持本地模拟数据生成，方便开发和测试
 
 ## 📁 项目结构
 
 ```
-server-monitor/
+CF-Server-Monitor/
 ├── public/
-│   └── install.sh              # 一键安装脚本（含卸载）
+│   ├── themes/
+│   │   └── light.css           # 白色主题样式
+│   ├── install.sh              # 一键安装脚本（含卸载）
+│   ├── logo.svg                # Logo
+│   └── style.css               # 全局样式
 ├── src/
-│   ├── index.js                # 主入口 - 路由分发
+│   ├── index.js                # 后端主入口 - 路由分发
 │   ├── database/
 │   │   └── schema.js           # 数据库初始化、历史数据存储
 │   ├── middleware/
 │   │   └── auth.js             # 认证中间件
 │   ├── handlers/
 │   │   ├── admin.js            # 后台管理 API
-│   │   ├── admin-ui.js         # 后台管理界面
-│   │   ├── update.js           # 数据上报处理
-│   │   ├── dashboard.js        # 前台大盘首页
-│   │   └── server-detail.js    # 服务器详情页（24h历史）
+│   │   ├── dashboard.js        # 前台大盘 API
+│   │   ├── frontend.js          # 前端资源服务
+│   │   └── update.js           # 数据上报处理
 │   ├── services/
 │   │   └── notification.js     # 通知服务
 │   ├── utils/
 │   │   ├── format.js           # 格式化工具
 │   │   └── settings.js         # 设置管理
-│   └── themes/
-│       └── styles.js           # 主题样式
+│   └── frontend/               # Vue 3 前端应用
+│       ├── components/         # Vue 组件
+│       │   ├── ServerCard.vue
+│       │   ├── TerminalHeader.vue
+│       │   └── Footer.vue
+│       ├── views/             # 页面视图
+│       │   ├── Dashboard.vue
+│       │   ├── ServerDetail.vue
+│       │   └── Admin.vue
+│       ├── router/
+│       │   └── index.js        # Vue Router 配置
+│       ├── utils/
+│       │   ├── api.js          # API 请求封装
+│       │   └── i18n.js         # 国际化配置
+│       ├── App.vue             # 根组件
+│       └── main.js             # 前端入口
+├── scripts/
+│   └── build.js                # 前端构建脚本
+├── test/
+│   └── generate-sql.js         # 测试数据生成工具
 ├── package.json
+├── vite.config.js              # Vite 配置
 ├── wrangler.toml
 └── .github/
     └── workflows/
@@ -90,7 +123,7 @@ server-monitor/
 1. 打开 [API Tokens 页面](https://dash.cloudflare.com/profile/api-tokens)
 2. 点击 **Create Token/创建令牌**
 3. 选择（ **Edit Cloudflare Workers/编辑 Cloudflare Workers** ）模板
-4. 在 **Account Resources/**帐户资源 选择你的账户
+4. 在 **Account Resources/帐户资源** 选择你的账户
 5. 点击 **Continue to summary/继续以显示摘要**→ **Create Token/创建令牌**
 6. 复制生成的 Token（只显示一次！）
 
@@ -107,6 +140,7 @@ server-monitor/
 | `API_USER_NAME`  | 自定义用户名（如 `admin`）         | 管理后台用户名           |
 | `API_SECRET`     | 自定义密码（如 `MyMonitor2024!`） | 探针认证密钥 & 管理后台密码   |
 | `D1_DATABASE_ID` | 第二步获取的 Database ID        | D1 数据库 ID         |
+| `LONG_RETENTION` | `true` 或 `false`（可选，默认 false） | 是否启用24小时长期数据保留 |
 
 ### 第五步：部署
 
@@ -203,6 +237,14 @@ curl -sL https://你的项目.你的子域.workers.dev/install.sh | bash -s unin
 
 ## 📊 使用说明
 
+### 语言切换
+
+V2.0 版本支持中文和英文界面切换：
+
+1. 点击界面右上角的语言切换按钮
+2. 可实时在中文和英文之间切换
+3. 语言设置会保存在浏览器本地
+
 ### 前台大盘
 
 访问 `https://你的项目.你的子域.workers.dev/` 查看：
@@ -219,7 +261,7 @@ curl -sL https://你的项目.你的子域.workers.dev/install.sh | bash -s unin
 - 实时 CPU/内存/磁盘/网络
 - 1/3/6/12/24 小时历史趋势图
 - 鼠标悬停查看具体时间点的数值
-- 国内四大运营商延迟追踪
+- 国内三大运营商延迟追踪
 
 ### 主题切换
 
@@ -228,6 +270,33 @@ curl -sL https://你的项目.你的子域.workers.dev/install.sh | bash -s unin
 1. 默认黑色终端
 2. 白色终端
 3. 完全自定义 CSS
+
+### 拖拽排序
+
+在管理后台的服务器列表中，可以通过拖拽调整服务器的显示顺序：
+
+1. 进入管理后台 `/admin`
+2. 找到服务器列表最左侧的 `⋮⋮` 拖拽手柄
+3. 按住拖拽手柄上下拖动调整顺序
+4. 松开鼠标后自动保存排序
+5. 首页会按此排序显示服务器
+
+> **分组排序**：分组的顺序由该分组内第一个出现的服务器位置决定。
+
+### 服务器隐藏
+
+可以将特定服务器设置为对非登录用户隐藏：
+
+1. 进入管理后台 `/admin`
+2. 点击服务器行右侧的 **✏️ 编辑** 按钮
+3. 勾选 **Hide from Public** 选项
+4. 点击 **保存**
+
+> **隐藏效果**：
+> - 非登录状态下，首页不显示该服务器
+> - 非登录状态下，直接访问该服务器详情页返回 404
+> - 非登录状态下，所有相关 API 接口也无法访问该服务器数据
+> - 登录管理员后可正常查看所有服务器
 
 ## 🔔 离线告警配置
 
@@ -246,26 +315,65 @@ curl -sL https://你的项目.你的子域.workers.dev/install.sh | bash -s unin
 2. 填入 Bot Token 字段
 3. Chat ID 留空
 
+## 📸 界面预览
+
+<img width="1903" height="1341" alt="image" src="https://github.com/user-attachments/assets/77344b37-c7ce-4bff-b820-cbd0b4b26579" />
+<img width="1907" height="683" alt="image" src="https://github.com/user-attachments/assets/48cf2f27-66d2-4b39-a5d3-ea9c5d5bb908" />
+<img width="1788" height="876" alt="image" src="https://github.com/user-attachments/assets/658e68e9-f858-408b-a603-537e55625701" />
+<img width="1788" height="1724" alt="image" src="https://github.com/user-attachments/assets/f2c1fc38-ecd9-48be-8fea-fbb5ff3aad51" />
+<img width="1788" height="1126" alt="image" src="https://github.com/user-attachments/assets/e28da6fb-915b-4417-a25c-faa7b3b11656" />
+<img width="1788" height="1480" alt="image" src="https://github.com/user-attachments/assets/4069d509-6ac9-4fa1-ade2-8eac43dbf6db" />
+<img width="1875" height="723" alt="image" src="https://github.com/user-attachments/assets/a806179f-8cb0-4713-b774-2741cb094a6f" />
+
+白色主题
+
+<img width="1788" height="1268" alt="image" src="https://github.com/user-attachments/assets/a229d14e-6099-4863-ad3d-3202fe2add58" />
+<img width="1904" height="671" alt="image" src="https://github.com/user-attachments/assets/48767b1b-f85e-48af-bd4f-cbe61c01d020" />
+<img width="1788" height="876" alt="image" src="https://github.com/user-attachments/assets/d8abbeb3-bb66-4be6-9d56-5cb42a579950" />
+<img width="1788" height="1126" alt="image" src="https://github.com/user-attachments/assets/9b4b9f4a-0e62-4ae6-87dc-e8c5a5306975" />
+<img width="1904" height="788" alt="image" src="https://github.com/user-attachments/assets/d0d53cf2-1d3d-4463-8b11-b92ca4eef8a3" />
+<img width="1903" height="705" alt="image" src="https://github.com/user-attachments/assets/acc08244-c0f1-438b-88cc-871879be09b7" />
+
+
 ## 🛠️ 本地开发
+
+### 环境要求
+
+- Node.js 18+
+- npm 或 pnpm
+
+### 开发步骤
 
 ```bash
 # 安装依赖
 npm install
-
-# 创建本地配置文件
-echo "API_SECRET=your-dev-secret" > .dev.vars
 
 # 创建 D1 数据库
 npx wrangler d1 create server-monitor-db
 
 # 更新 wrangler.toml 中的 database_id
 
-# 启动本地开发服务器
+# 前端开发模式（热重载）
 npm run dev
 
-# 部署
+# 构建前端生产版本
+npm run build:frontend
+
+# 导入测试数据（可选）
+# 详见 /test/README.md
+
+# 部署到 Cloudflare Workers
 npm run deploy
 ```
+
+### 本地测试数据
+
+V2.0 版本支持生成本地测试数据，方便在部署前进行功能测试：
+
+1. 进入 `test` 目录查看详细说明
+2. 运行测试数据生成脚本
+3. 导入生成的 SQL 数据到本地 D1 数据库
+4. 启动本地开发服务器进行测试
 
 ## 📝 环境变量说明
 
@@ -275,6 +383,7 @@ npm run deploy
 | `D1_DATABASE_ID` | Cloudflare D1 数据库 ID                   | ✅  |
 | `CF_API_TOKEN`   | Cloudflare API Token（仅 GitHub Actions） | ✅  |
 | `CF_ACCOUNT_ID`  | Cloudflare 账户 ID（仅 GitHub Actions）     | ✅  |
+| `LONG_RETENTION` | 开启保留24小时，关闭仅保留1小时数据，默认关闭（true/false） | ❌  |
 
 ## ❓ 常见问题
 
@@ -298,6 +407,8 @@ MIT License
 
 - [CF-Server-Monitor-Pro](https://github.com/a63414262/CF-Server-Monitor-Pro)
 - [Cloudflare Workers](https://workers.cloudflare.com/)
+- [Vue 3](https://vuejs.org/)
+- [Vite](https://vitejs.dev/)
 - [Chart.js](https://www.chartjs.org/)
 - [Leaflet](https://leafletjs.com/)
 

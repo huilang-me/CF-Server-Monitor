@@ -7,18 +7,6 @@ export function formatBytes(bytes) {
   return parseFloat((b / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-export function formatUptime(seconds) {
-  const days = Math.floor(seconds / 86400);
-  const hours = Math.floor((seconds % 86400) / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  
-  let result = '';
-  if (days > 0) result += `${days}天 `;
-  if (hours > 0) result += `${hours}小时 `;
-  result += `${minutes}分钟`;
-  return result;
-}
-
 export function getPingColor(ping) {
   const p = parseInt(ping);
   if (p === 0 || isNaN(p)) return '#9ca3af';

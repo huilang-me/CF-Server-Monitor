@@ -2,9 +2,7 @@ export async function loadSettings(db) {
   const defaults = {
     site_title: 'Cloudflare Server Monitor',
     admin_title: 'Admin Panel',
-    theme: 'theme1',
     custom_bg: '',
-    custom_css: '',
     custom_head: '',
     custom_script: '',
     is_public: 'true',
@@ -14,8 +12,7 @@ export async function loadSettings(db) {
     show_tf: 'true',
     tg_notify: 'false',
     tg_bot_token: '',
-    tg_chat_id: '',
-    auto_reset_traffic: 'false'
+    tg_chat_id: ''
   };
 
   try {
