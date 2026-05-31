@@ -1,4 +1,4 @@
-name: CF-Server-Monitor 部署
+name: 部署到 Cloudflare Workers
 
 on:
   push:
@@ -8,33 +8,27 @@ on:
       - '**.md'
       - '.gitignore'
       - 'LICENSE'
-  workflow_dispatch:  # 支持手动触发部署
+  workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    name: 部署到 Cloudflare Workers
+    name: 部署
     steps:
-      # 1. 检出代码
       - name: 📥 检出代码
         uses: actions/checkout@v4
 
-      # 2. 设置 Node.js 环境
       - name: 🔧 设置 Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
-      # 3. 安装依赖
       - name: 📦 安装依赖
-        run: npm ci
+        run: npm install
 
-      # 4. 构建前端资源
-      - name: 🏗️ 构建前端
+      - name: 🏗️ 构建前端资源
         run: npm run build:frontend
 
-      # 5. 生成 wrangler.toml 配置（和本地配置完全对齐）
       - name: 📝 生成 wrangler.toml
         run: |
           cat > wrangler.toml << 'WEOF'
@@ -43,7 +37,6 @@ jobs:
           compatibility_date = "2024-12-01"
           compatibility_flags = ["nodejs_compat"]
           
-          # 每小时定时任务（UTC 每小时第 10 分钟）
           [triggers]
           crons = ["10 * * * *"]
           
@@ -66,7 +59,6 @@ jobs:
           local_protocol = "http"
           WEOF
           
-          # 替换占位符为 GitHub Secrets
           sed -i "s|D1_PLACEHOLDER|${{ secrets.D1_DATABASE_ID }}|g" wrangler.toml
           sed -i "s|SECRET_PLACEHOLDER|${{ secrets.API_SECRET }}|g" wrangler.toml
           sed -i "s|USER_NAME_PLACEHOLDER|${{ secrets.API_USER_NAME }}|g" wrangler.toml
@@ -75,7 +67,6 @@ jobs:
           echo "✅ wrangler.toml 生成完成"
           cat wrangler.toml
 
-      # 6. 部署到 Cloudflare Workers
       - name: 🚀 部署到 Cloudflare Workers
         uses: cloudflare/wrangler-action@v3
         with:
@@ -84,7 +75,6 @@ jobs:
           wranglerVersion: "4"
           command: deploy
 
-      # 7. 部署成功提示
       - name: ✅ 部署成功
         if: success()
         run: |
@@ -92,7 +82,6 @@ jobs:
           echo "🎉 部署成功！"
           echo "==============================================="
 
-      # 8. 部署失败提示
       - name: ❌ 部署失败
         if: failure()
         run: |
