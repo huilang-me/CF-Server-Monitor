@@ -5,15 +5,16 @@ on:
     branches:
       - main
     paths-ignore:
-      - '**.md'
-      - '.gitignore'
-      - 'LICENSE'
+      - "**.md"
+      - ".gitignore"
+      - "LICENSE"
   workflow_dispatch:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
     name: 部署
+    runs-on: ubuntu-latest
+
     steps:
       - name: 📥 检出代码
         uses: actions/checkout@v4
@@ -21,49 +22,35 @@ jobs:
       - name: 🔧 设置 Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
+          cache: "npm"
 
       - name: 📦 安装依赖
-        run: npm install
+        run: npm ci
 
-      - name: 📝 创建 wrangler.toml
-      - name: 🏗️ Build frontend assets
+      - name: 🏗️ 构建前端资源
         run: npm run build:frontend
 
-      - name: 📝 Create wrangler.toml
+      - name: 🛠️ 注入生产配置
+        env:
+          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
+          API_SECRET: ${{ secrets.API_SECRET }}
+          API_USER_NAME: ${{ secrets.API_USER_NAME }}
+          LONG_RETENTION: ${{ secrets.LONG_RETENTION }}
         run: |
-          cat > wrangler.toml << 'WEOF'
-          name = "server-monitor-pro"
-          main = "src/index.js"
-          compatibility_date = "2024-12-01"
-          compatibility_flags = ["nodejs_compat"]
-          
-          # 每小时定时任务（UTC 每小时第 10 分钟）
-          [triggers]
-          crons = ["10 * * * *"]
-          
-          [assets]
-          directory = "./dist"
-          binding = "ASSETS"
-          
-          [[d1_databases]]
-          binding = "DB"
-          database_name = "server-monitor-db"
-          database_id = "D1_PLACEHOLDER"
-          
-          [vars]
-          API_SECRET = "SECRET_PLACEHOLDER"
-          API_USER_NAME = "USER_NAME_PLACEHOLDER"
-          LONG_RETENTION = "RETENTION_PLACEHOLDER"
-          WEOF
-          
-          sed -i "s|D1_PLACEHOLDER|${{ secrets.D1_DATABASE_ID }}|g" wrangler.toml
-          sed -i "s|SECRET_PLACEHOLDER|${{ secrets.API_SECRET }}|g" wrangler.toml
-          sed -i "s|USER_NAME_PLACEHOLDER|${{ secrets.API_USER_NAME }}|g" wrangler.toml
-          sed -i "s|RETENTION_PLACEHOLDER|${{ secrets.LONG_RETENTION || 'false' }}|g" wrangler.toml
-          
-          echo "✅ wrangler.toml 已生成"
-          cat wrangler.toml
+          if [ -z "$D1_DATABASE_ID" ]; then
+            echo "D1_DATABASE_ID 未配置"
+            exit 1
+          fi
+
+          LONG_RETENTION_VALUE="${LONG_RETENTION:-false}"
+
+          sed -i "s|database_id = \"local\"|database_id = \"$D1_DATABASE_ID\"|g" wrangler.toml
+          sed -i "s|API_SECRET = \".*\"|API_SECRET = \"$API_SECRET\"|g" wrangler.toml
+          sed -i "s|API_USER_NAME = \".*\"|API_USER_NAME = \"$API_USER_NAME\"|g" wrangler.toml
+          sed -i "s|LONG_RETENTION = \".*\"|LONG_RETENTION = \"$LONG_RETENTION_VALUE\"|g" wrangler.toml
+
+          echo "wrangler.toml 已更新"
 
       - name: 🚀 部署到 Cloudflare Workers
         uses: cloudflare/wrangler-action@v3
@@ -75,15 +62,8 @@ jobs:
 
       - name: ✅ 部署成功
         if: success()
-        run: |
-          echo "==============================================="
-          echo "🎉 部署成功！"
-          echo "==============================================="
+        run: echo "部署成功"
 
       - name: ❌ 部署失败
         if: failure()
-        run: |
-          echo "==============================================="
-          echo "💥 部署失败！请检查上方日志"
-          echo "==============================================="
-
+        run: echo "部署失败，请检查日志"
