@@ -1,57 +1,81 @@
-name: 部署到 Cloudflare Workers
+name: CF-Server-Monitor 部署
 
 on:
   push:
     branches:
       - main
     paths-ignore:
-      - "**.md"
-      - ".gitignore"
-      - "LICENSE"
-  workflow_dispatch:
+      - '**.md'
+      - '.gitignore'
+      - 'LICENSE'
+  workflow_dispatch:  # 支持手动触发部署
 
 jobs:
   deploy:
-    name: 部署
     runs-on: ubuntu-latest
-
+    name: 部署到 Cloudflare Workers
     steps:
+      # 1. 检出代码
       - name: 📥 检出代码
         uses: actions/checkout@v4
 
+      # 2. 设置 Node.js 环境
       - name: 🔧 设置 Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "npm"
+          node-version: '20'
+          cache: 'npm'
 
+      # 3. 安装依赖
       - name: 📦 安装依赖
         run: npm ci
 
-      - name: 🏗️ 构建前端资源
+      # 4. 构建前端资源
+      - name: 🏗️ 构建前端
         run: npm run build:frontend
 
-      - name: 🛠️ 注入生产配置
-        env:
-          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
-          API_SECRET: ${{ secrets.API_SECRET }}
-          API_USER_NAME: ${{ secrets.API_USER_NAME }}
-          LONG_RETENTION: ${{ secrets.LONG_RETENTION }}
+      # 5. 生成 wrangler.toml 配置（和本地配置完全对齐）
+      - name: 📝 生成 wrangler.toml
         run: |
-          if [ -z "$D1_DATABASE_ID" ]; then
-            echo "D1_DATABASE_ID 未配置"
-            exit 1
-          fi
+          cat > wrangler.toml << 'WEOF'
+          name = "server-monitor-pro"
+          main = "src/index.js"
+          compatibility_date = "2024-12-01"
+          compatibility_flags = ["nodejs_compat"]
+          
+          # 每小时定时任务（UTC 每小时第 10 分钟）
+          [triggers]
+          crons = ["10 * * * *"]
+          
+          [assets]
+          directory = "./dist"
+          binding = "ASSETS"
+          
+          [[d1_databases]]
+          binding = "DB"
+          database_name = "server-monitor-db"
+          database_id = "D1_PLACEHOLDER"
+          
+          [vars]
+          API_SECRET = "SECRET_PLACEHOLDER"
+          API_USER_NAME = "USER_NAME_PLACEHOLDER"
+          LONG_RETENTION = "RETENTION_PLACEHOLDER"
+          
+          [dev]
+          port = 8787
+          local_protocol = "http"
+          WEOF
+          
+          # 替换占位符为 GitHub Secrets
+          sed -i "s|D1_PLACEHOLDER|${{ secrets.D1_DATABASE_ID }}|g" wrangler.toml
+          sed -i "s|SECRET_PLACEHOLDER|${{ secrets.API_SECRET }}|g" wrangler.toml
+          sed -i "s|USER_NAME_PLACEHOLDER|${{ secrets.API_USER_NAME }}|g" wrangler.toml
+          sed -i "s|RETENTION_PLACEHOLDER|${{ secrets.LONG_RETENTION || 'false' }}|g" wrangler.toml
+          
+          echo "✅ wrangler.toml 生成完成"
+          cat wrangler.toml
 
-          LONG_RETENTION_VALUE="${LONG_RETENTION:-false}"
-
-          sed -i "s|database_id = \"local\"|database_id = \"$D1_DATABASE_ID\"|g" wrangler.toml
-          sed -i "s|API_SECRET = \".*\"|API_SECRET = \"$API_SECRET\"|g" wrangler.toml
-          sed -i "s|API_USER_NAME = \".*\"|API_USER_NAME = \"$API_USER_NAME\"|g" wrangler.toml
-          sed -i "s|LONG_RETENTION = \".*\"|LONG_RETENTION = \"$LONG_RETENTION_VALUE\"|g" wrangler.toml
-
-          echo "wrangler.toml 已更新"
-
+      # 6. 部署到 Cloudflare Workers
       - name: 🚀 部署到 Cloudflare Workers
         uses: cloudflare/wrangler-action@v3
         with:
@@ -60,10 +84,18 @@ jobs:
           wranglerVersion: "4"
           command: deploy
 
+      # 7. 部署成功提示
       - name: ✅ 部署成功
         if: success()
-        run: echo "部署成功"
+        run: |
+          echo "==============================================="
+          echo "🎉 部署成功！"
+          echo "==============================================="
 
+      # 8. 部署失败提示
       - name: ❌ 部署失败
         if: failure()
-        run: echo "部署失败，请检查日志"
+        run: |
+          echo "==============================================="
+          echo "💥 部署失败！请检查上方日志"
+          echo "==============================================="
