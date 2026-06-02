@@ -1,6 +1,6 @@
 # CF-Server-Monitor-Pro
 
-**版本：V2.1**
+**版本：V2.2**
 
 一个基于 Cloudflare Workers + D1 的多服务器监控探针系统，支持实时监控、历史数据查看、延迟追踪、地图展示等功能。基于 [CF-Server-Monitor-Pro](https://github.com/a63414262/CF-Server-Monitor-Pro) 深度二次开发
 
@@ -15,7 +15,7 @@
 
 ## 🔄 数据库更新说明
 
-旧版本用户升级，需要访问 `/updateDatabase` 路径触发数据库更新。
+旧版本用户升级，需要访问后台管理页面，点击升级数据库按钮即可。
 
 ## ✨ 功能特点
 
@@ -142,7 +142,6 @@ CF-Server-Monitor/
 | `API_USER_NAME`  | 自定义用户名（如 `admin`）         | 管理后台用户名           |
 | `API_SECRET`     | 自定义密码（如 `MyMonitor2024!`） | 探针认证密钥 & 管理后台密码   |
 | `D1_DATABASE_ID` | 第二步获取的 Database ID        | D1 数据库 ID         |
-| `LONG_RETENTION` | `true` 或 `false`（可选，默认 false） | 启用24小时数据保留，默认1小时 |
 
 ### 第五步：部署
 
