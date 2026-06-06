@@ -10,7 +10,16 @@ import { checkAuth, simpleAuthResponse } from './middleware/auth.js';
 import { getServerDetail, getMetricsHistoryCache, setMetricsHistoryCache } from './utils/cache.js';
 
 async function getEncryptionKey(env) {
-  const secret = env.TURNSTILE_SECRET_KEY || env.API_SECRET || 'default_secret_key_for_turnstile_encryption';
+  // 优先使用 TURNSTILE_SECRET_KEY，回退到 API_SECRET
+  // 移除硬编码默认值：未配置任一 Secret 时使用调用级随机密钥
+  const secret = env.TURNSTILE_SECRET_KEY || env.API_SECRET;
+  if (!secret) {
+    console.error('[SECURITY] No encryption key configured! Cookie encryption will use per-invocation random key.');
+    // 每次调用生成随机密钥，确保 Cookie 加密在未配置 Secret 时不会使用可预测的默认值
+    const randomKey = crypto.randomUUID() + crypto.randomUUID();
+    const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(randomKey));
+    return await crypto.subtle.importKey('raw', new Uint8Array(hash).slice(0, 32), { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+  }
   const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(secret));
   const keyMaterial = await crypto.subtle.importKey(
     'raw',

@@ -64,10 +64,14 @@ function getJwtSecret(env, sys) {
     return sys.jwt_secret;
   }
   
-  const fallback = env.API_SECRET || 'default_jwt_secret_for_server_monitor';
-  const padded = fallback.padEnd(32, 'x');
+  if (env.API_SECRET) {
+    return env.API_SECRET.padEnd(32, 'x').substring(0, 64);
+  }
   
-  return padded.substring(0, 64);
+  // 未配置 API_SECRET 时使用每次调用随机密钥，确保 JWT 验证必然失败
+  // 这比使用硬编码默认值更安全，因为硬编码默认值可被攻击者从源码中读取
+  console.error('[SECURITY] API_SECRET is not configured! JWT authentication will be unavailable.');
+  return crypto.randomUUID().repeat(2).substring(0, 64);
 }
 
 export async function generateToken(env, sys) {

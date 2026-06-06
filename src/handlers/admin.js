@@ -108,8 +108,7 @@ export async function handleAdminAPI(request, env, sys) {
     if (data.action === 'get_settings') {
       return new Response(JSON.stringify({
         success: true,
-        settings: sys,
-        api_secret: env.API_SECRET
+        settings: sys
       }), {
         headers: { 'Content-Type': 'application/json' }
       });

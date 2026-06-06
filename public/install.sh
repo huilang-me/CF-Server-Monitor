@@ -20,6 +20,8 @@ NC='\033[0m'
 SERVICE_NAME="cf-probe"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 SCRIPT_FILE="/usr/local/bin/${SERVICE_NAME}.sh"
+ENV_DIR="/etc/${SERVICE_NAME}"
+ENV_FILE="${ENV_DIR}/.env"
 
 print_banner() {
     echo -e "${CYAN}╔══════════════════════════════════════════════════╗${NC}"
@@ -101,11 +103,13 @@ create_script() {
 # 激活严格的未定义变量检查与错误即刻退出
 set -eu
 
-SERVER_ID="${1:-}"
-SECRET="${2:-}"
-WORKER_URL="${3:-}"
-REPORT_INTERVAL="${4:-60}"
-PING_TYPE="${5:-PING_TYPE_PLACEHOLDER}"
+# 安全优先：优先读取环境变量（由 systemd EnvironmentFile 提供），
+# 命令行参数作为回退，确保 Secret 不会暴露在 systemd service 文件中
+SERVER_ID="${PROBE_SERVER_ID:-${1:-}}"
+SECRET="${PROBE_SECRET:-${2:-}}"
+WORKER_URL="${PROBE_WORKER_URL:-${3:-}}"
+REPORT_INTERVAL="${PROBE_INTERVAL:-${4:-60}}"
+PING_TYPE="${PROBE_PING_TYPE:-${5:-PING_TYPE_PLACEHOLDER}}"
 
 # 严苛环境下的规范 JSON 字段转义函数
 escape_json() {
@@ -209,17 +213,17 @@ run_network_worker() {
         
         # 10分钟检测一次 IP
         if [ $((now - last_ip)) -ge 600 ] || [ "$last_ip" -eq 0 ]; then
-            (curl -s -m 2 --connect-timeout 2 https://cloudflare.com/cdn-cgi/trace 2>/dev/null | grep -q "ip=" && echo "1" || echo "0") > /dev/shm/.cf_ipv4.tmp && mv /dev/shm/.cf_ipv4.tmp /dev/shm/.cf_ipv4 || true
-            (curl -6 -s -m 2 --connect-timeout 2 https://cloudflare.com/cdn-cgi/trace 2>/dev/null | grep -q "ip=" && echo "1" || echo "0") > /dev/shm/.cf_ipv6.tmp && mv /dev/shm/.cf_ipv6.tmp /dev/shm/.cf_ipv6 || true
+            (curl -s -m 2 --connect-timeout 2 https://cloudflare.com/cdn-cgi/trace 2>/dev/null | grep -q "ip=" && echo "1" || echo "0") > /dev/shm/.cf_ipv4.tmp && mv /dev/shm/.cf_ipv4.tmp /dev/shm/.cf_ipv4 && chmod 600 /dev/shm/.cf_ipv4 || true
+            (curl -6 -s -m 2 --connect-timeout 2 https://cloudflare.com/cdn-cgi/trace 2>/dev/null | grep -q "ip=" && echo "1" || echo "0") > /dev/shm/.cf_ipv6.tmp && mv /dev/shm/.cf_ipv6.tmp /dev/shm/.cf_ipv6 && chmod 600 /dev/shm/.cf_ipv6 || true
             last_ip="$now"
         fi
         
         # 30秒检测一次网络延迟
         if [ $((now - last_ping)) -ge 30 ] || [ "$last_ping" -eq 0 ]; then
-            get_ping "$CT_NODE" > /dev/shm/.cf_ping_ct.tmp && mv /dev/shm/.cf_ping_ct.tmp /dev/shm/.cf_ping_ct || true
-            get_ping "$CU_NODE" > /dev/shm/.cf_ping_cu.tmp && mv /dev/shm/.cf_ping_cu.tmp /dev/shm/.cf_ping_cu || true
-            get_ping "$CM_NODE" > /dev/shm/.cf_ping_cm.tmp && mv /dev/shm/.cf_ping_cm.tmp /dev/shm/.cf_ping_cm || true
-            get_ping "$BD_NODE" > /dev/shm/.cf_ping_bd.tmp && mv /dev/shm/.cf_ping_bd.tmp /dev/shm/.cf_ping_bd || true
+            get_ping "$CT_NODE" > /dev/shm/.cf_ping_ct.tmp && mv /dev/shm/.cf_ping_ct.tmp /dev/shm/.cf_ping_ct && chmod 600 /dev/shm/.cf_ping_ct || true
+            get_ping "$CU_NODE" > /dev/shm/.cf_ping_cu.tmp && mv /dev/shm/.cf_ping_cu.tmp /dev/shm/.cf_ping_cu && chmod 600 /dev/shm/.cf_ping_cu || true
+            get_ping "$CM_NODE" > /dev/shm/.cf_ping_cm.tmp && mv /dev/shm/.cf_ping_cm.tmp /dev/shm/.cf_ping_cm && chmod 600 /dev/shm/.cf_ping_cm || true
+            get_ping "$BD_NODE" > /dev/shm/.cf_ping_bd.tmp && mv /dev/shm/.cf_ping_bd.tmp /dev/shm/.cf_ping_bd && chmod 600 /dev/shm/.cf_ping_bd || true
             last_ping="$now"
         fi
         sleep 5
@@ -374,16 +378,29 @@ PROBE_EOF
     info "探针脚本注入完成: ${SCRIPT_FILE}"
 }
 
+create_env_file() {
+    step "创建安全环境配置文件..."
+    mkdir -p "${ENV_DIR}"
+    
+    cat > "${ENV_FILE}" << EOF
+PROBE_SERVER_ID="${SERVER_ID}"
+PROBE_SECRET="${SECRET}"
+PROBE_WORKER_URL="${WORKER_URL}"
+PROBE_INTERVAL="${REPORT_INTERVAL}"
+PROBE_PING_TYPE="${PING_TYPE}"
+EOF
+    
+    # 严格限制访问权限：仅 root 用户可读写
+    chmod 600 "${ENV_FILE}"
+    chmod 700 "${ENV_DIR}"
+    info "安全配置文件已创建: ${ENV_FILE} (权限: 600)"
+}
+
 create_service() {
     step "构建高兼容、全版本通用的 Systemd 守护配置..."
     
-    local esc_id; esc_id=$(printf '%s' "$SERVER_ID" | sed 's/\\/\\\\/g; s/"/\\"/g')
-    local esc_sec; esc_sec=$(printf '%s' "$SECRET" | sed 's/\\/\\\\/g; s/"/\\"/g')
-    local esc_url; esc_url=$(printf '%s' "$WORKER_URL" | sed 's/\\/\\\\/g; s/"/\\"/g')
-    local esc_ping; esc_ping=$(printf '%s' "$PING_TYPE" | sed 's/\\/\\\\/g; s/"/\\"/g')
-    
-    # 完全剔除 MemoryHigh/MemoryMax/CPUQuota 等低版本 Systemd 会抛错的非泛用特性
-    # 仅使用全版本 Linux 完美兼容的 Nice 权重调配及 IO 闲置调度
+    # 安全重构：Secret 不再写入 ExecStart 命令行参数
+    # 改用 EnvironmentFile 加载受权限保护的环境变量文件 (chmod 600)
     cat > "${SERVICE_FILE}" << EOF
 [Unit]
 Description=CF Server Monitor Probe Agent
@@ -392,7 +409,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/bin/bash "${SCRIPT_FILE}" "${esc_id}" "${esc_sec}" "${esc_url}" "${REPORT_INTERVAL}" "${esc_ping}"
+EnvironmentFile=-${ENV_FILE}
+ExecStart=/bin/bash "${SCRIPT_FILE}"
 Restart=always
 RestartSec=5
 User=root
@@ -411,6 +429,7 @@ SyslogIdentifier=cf-probe
 WantedBy=multi-user.target
 EOF
 
+    chmod 644 "${SERVICE_FILE}"
     info "Systemd 守护配置文件生成成功: ${SERVICE_FILE}"
 }
 
@@ -452,6 +471,7 @@ install_probe() {
     install_deps
     stop_old_service
     create_script "$REPORT_INTERVAL" "$PING_TYPE"
+    create_env_file
     create_service
     start_service
 
@@ -483,6 +503,10 @@ uninstall_probe() {
     rm -f "${SERVICE_FILE}"
     systemctl daemon-reload 2>/dev/null || true
     systemctl reset-failed "${SERVICE_NAME}" 2>/dev/null || true
+
+    step "销毁安全配置文件..."
+    rm -f "${ENV_FILE}"
+    [ -d "${ENV_DIR}" ] && rmdir "${ENV_DIR}" 2>/dev/null || true
 
     step "销毁探针物理可执行代码文件..."
     rm -f "${SCRIPT_FILE}"
