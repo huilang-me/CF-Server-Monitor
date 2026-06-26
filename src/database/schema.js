@@ -33,6 +33,7 @@ export async function initDatabase(db) {
         traffic_limit TEXT DEFAULT '',
         traffic_calc_type TEXT DEFAULT 'total',
         reset_day INTEGER DEFAULT 1,
+        collect_interval INTEGER DEFAULT 1,
         report_interval INTEGER DEFAULT 60,
         ping_mode TEXT DEFAULT 'http',
         is_hidden TEXT DEFAULT '0',
@@ -310,9 +311,12 @@ export async function monthlyCleanup(db) {
   }
 }
 
-export async function saveMetricsHistory(db, serverId, metrics, regionCode = '') {
+export async function saveMetricsHistory(db, serverId, metrics, regionCode = '', timestamp = null) {
   try {
-    const now = Date.now();
+    const rawTimestamp = Number(timestamp);
+    const now = Number.isFinite(rawTimestamp) && rawTimestamp > 0
+      ? (rawTimestamp < 10000000000 ? rawTimestamp * 1000 : rawTimestamp)
+      : Date.now();
     
     const parsePing = (val) => {
       if (val === '' || val === null || val === undefined) return null;

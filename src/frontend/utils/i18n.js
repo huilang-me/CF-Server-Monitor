@@ -184,6 +184,7 @@ const translations = reactive({
     operationFailed: 'Operation failed',
     upgrading: 'Upgrading...',
     rebuilding: 'Rebuilding...',
+    collectInterval: 'Collect Interval (seconds)',
     reportInterval: 'Report Interval (seconds)',
     pingMode: 'Ping Mode',
     targetOs: 'Target System',
@@ -264,6 +265,7 @@ const translations = reactive({
     tgBotTokenRequired: 'Telegram Bot Token is required when notifications are enabled'
   },
   zh: {
+    collectInterval: '采集间隔（秒）',
     theme: '主题',
     themeAuto: '自动',
     themeDark: '深色',

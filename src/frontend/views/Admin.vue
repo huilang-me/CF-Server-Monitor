@@ -548,6 +548,15 @@
 
           <div class="form-row">
             <div class="form-group flex-1">
+              <label class="form-label">{{ trans.collectInterval }}</label>
+              <select v-model="editForm.collect_interval" class="form-select">
+                <option :value="1">1</option>
+                <option :value="2">2</option>
+                <option :value="5">5</option>
+                <option :value="10">10</option>
+              </select>
+            </div>
+            <div class="form-group flex-1">
               <label class="form-label">{{ trans.reportInterval }}</label>
               <select v-model="editForm.report_interval" class="form-select">
                 <option :value="30">30</option>
@@ -662,6 +671,12 @@
           </div>
 
           <div class="form-row">
+            <div class="form-group flex-1">
+              <label class="form-label">{{ trans.collectInterval }}</label>
+              <div class="flex items-center gap-2">
+                <input type="text" readonly :value="collectInterval" class="form-input" style="width: 100px; background-color: var(--bg-secondary);">
+              </div>
+            </div>
             <div class="form-group flex-1">
               <label class="form-label">{{ trans.reportInterval }}</label>
               <div class="flex items-center gap-2">
@@ -982,6 +997,7 @@ const editForm = ref({
   traffic_limit: '',
   traffic_calc_type: 'total',
   reset_day: 1,
+  collect_interval: 1,
   report_interval: 60,
   ping_mode: 'http',
   is_hidden: false
@@ -1005,6 +1021,7 @@ const validationError = ref(null)
 const showCopyModal = ref(false)
 const copyServerId = ref('')
 const targetOs = ref('linux')
+const collectInterval = ref(1)
 const reportInterval = ref(60)
 const pingMode = ref('http')
 const customCt = ref('')
@@ -1315,6 +1332,7 @@ const copyCmd = (serverId) => {
   const server = servers.value.find(s => s.id === serverId)
   copyServerId.value = serverId
   targetOs.value = 'linux'
+  collectInterval.value = server?.collect_interval || 1
   reportInterval.value = server?.report_interval || 60
   pingMode.value = server?.ping_mode || 'http'
   customCt.value = settings.value.custom_ct
@@ -1338,7 +1356,7 @@ const getCustomInstallCommand = () => {
   const script = targetOs.value === 'alpine' ? 'install-alpine.sh'
     : targetOs.value === 'openwrt' ? 'install-openwrt.sh'
     : 'install.sh'
-  let cmd = `curl -sL ${HOST}/${script} | ${shell} -s install -id=${copyServerId.value} -secret='${apiSecret.value}' -url=${HOST}/update -interval=${reportInterval.value} -ping=${pingMode.value} -reset_day=${resetDay.value ?? 1}`
+  let cmd = `curl -sL ${HOST}/${script} | ${shell} -s install -id=${copyServerId.value} -secret='${apiSecret.value}' -url=${HOST}/update -collect_interval=${collectInterval.value} -interval=${reportInterval.value} -ping=${pingMode.value} -reset_day=${resetDay.value ?? 1}`
   if (customCt.value) cmd += ` -ct=${customCt.value}`
   if (customCu.value) cmd += ` -cu=${customCu.value}`
   if (customCm.value) cmd += ` -cm=${customCm.value}`
@@ -1402,6 +1420,7 @@ const openEditModal = (server) => {
     traffic_limit: server.traffic_limit || '',
     traffic_calc_type: server.traffic_calc_type || 'total',
     reset_day: server.reset_day ?? 1,
+    collect_interval: server.collect_interval || 1,
     report_interval: server.report_interval || 60,
     ping_mode: server.ping_mode || 'http',
     is_hidden: server.is_hidden === '1'
@@ -1425,6 +1444,7 @@ const saveEdit = async () => {
       traffic_limit: editForm.value.traffic_limit,
       traffic_calc_type: editForm.value.traffic_calc_type,
       reset_day: editForm.value.reset_day,
+      collect_interval: editForm.value.collect_interval,
       report_interval: editForm.value.report_interval,
       ping_mode: editForm.value.ping_mode,
       is_hidden: editForm.value.is_hidden ? '1' : '0'

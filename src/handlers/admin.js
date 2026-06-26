@@ -19,6 +19,12 @@ const D1_DAILY_READ_LIMIT = 5000000;
 const D1_DAILY_WRITE_LIMIT = 100000;
 const WORKERS_DAILY_REQUEST_LIMIT = 100000;
 
+function normalizeInterval(value, fallback, min = 1, max = 86400) {
+  const num = parseInt(value, 10);
+  if (!Number.isFinite(num)) return fallback;
+  return Math.max(min, Math.min(max, num));
+}
+
 function getUtcTodayRange() {
   const now = new Date();
   const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
@@ -397,16 +403,18 @@ export async function handleAdminAPI(request, env, sys) {
       });
     }
     else if (data.action === 'edit') {
-      const { id, name, server_group, price, expire_date, bandwidth, traffic_limit, traffic_calc_type, reset_day, report_interval, ping_mode, is_hidden } = data;
+      const { id, name, server_group, price, expire_date, bandwidth, traffic_limit, traffic_calc_type, reset_day, collect_interval, report_interval, ping_mode, is_hidden } = data;
       if (!id || !isValidUUID(id)) {
         return createBadRequestResponse('服务器 ID 无效');
       }
+      const normalizedCollectInterval = normalizeInterval(collect_interval, 1);
+      const normalizedReportInterval = Math.max(normalizedCollectInterval, normalizeInterval(report_interval, 60));
       
       try {
         if (name && typeof name === 'string' && name.trim().length > 0 && name.length <= 100) {
           await env.DB.prepare(`
             UPDATE servers 
-            SET name = ?, server_group = ?, price = ?, expire_date = ?, bandwidth = ?, traffic_limit = ?, traffic_calc_type = ?, reset_day = ?, report_interval = ?, ping_mode = ?, is_hidden = ? 
+            SET name = ?, server_group = ?, price = ?, expire_date = ?, bandwidth = ?, traffic_limit = ?, traffic_calc_type = ?, reset_day = ?, collect_interval = ?, report_interval = ?, ping_mode = ?, is_hidden = ?
             WHERE id = ?
           `).bind(
             name,
@@ -417,7 +425,8 @@ export async function handleAdminAPI(request, env, sys) {
             traffic_limit || '',
             traffic_calc_type || 'total',
             reset_day !== undefined && reset_day !== null && reset_day !== '' ? reset_day : 1,
-            report_interval || 60,
+            normalizedCollectInterval,
+            normalizedReportInterval,
             ping_mode || 'http',
             is_hidden || '0',
             id
@@ -425,7 +434,7 @@ export async function handleAdminAPI(request, env, sys) {
         } else {
           await env.DB.prepare(`
             UPDATE servers 
-            SET server_group = ?, price = ?, expire_date = ?, bandwidth = ?, traffic_limit = ?, traffic_calc_type = ?, reset_day = ?, report_interval = ?, ping_mode = ?, is_hidden = ? 
+            SET server_group = ?, price = ?, expire_date = ?, bandwidth = ?, traffic_limit = ?, traffic_calc_type = ?, reset_day = ?, collect_interval = ?, report_interval = ?, ping_mode = ?, is_hidden = ?
             WHERE id = ?
           `).bind(
             server_group || 'Default', 
@@ -435,7 +444,8 @@ export async function handleAdminAPI(request, env, sys) {
             traffic_limit || '',
             traffic_calc_type || 'total',
             reset_day !== undefined && reset_day !== null && reset_day !== '' ? reset_day : 1,
-            report_interval || 60,
+            normalizedCollectInterval,
+            normalizedReportInterval,
             ping_mode || 'http',
             is_hidden || '0',
             id

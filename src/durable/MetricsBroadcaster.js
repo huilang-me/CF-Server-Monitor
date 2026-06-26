@@ -143,14 +143,18 @@ export class MetricsBroadcaster {
         });
       }
 
-      for (const item of updates) {
-        if (item.serverId && item.payload) {
-          this._broadcast(item.serverId, item.payload);
-        }
+      const normalizedUpdates = this._normalizeBatchUpdates(updates);
+      if (normalizedUpdates.length === 0) {
+        return new Response(JSON.stringify({ error: 'missing valid updates' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        });
       }
 
+      this._broadcastBatch(normalizedUpdates);
+
       const count = this.state.getWebSockets().length;
-      return new Response(JSON.stringify({ ok: true, count: updates.length, subscribers: count }), {
+      return new Response(JSON.stringify({ ok: true, count: normalizedUpdates.length, subscribers: count }), {
         headers: { 'Content-Type': 'application/json' }
       });
     }
@@ -190,6 +194,63 @@ export class MetricsBroadcaster {
   }
 
   // WebSocket 收到消息（ping 已被自动响应拦截，不会到达此处）
+  _normalizeBatchUpdates(updates) {
+    const now = Date.now();
+    return updates.map(item => {
+      if (!item || !item.serverId) return null;
+      const serverId = String(item.serverId);
+      const rawSamples = Array.isArray(item.samples)
+        ? item.samples
+        : (item.payload ? [{ ts: now, payload: item.payload }] : []);
+
+      const samples = rawSamples.map(sample => {
+        if (!sample || typeof sample !== 'object') return null;
+        const data = sample.data || sample.payload || sample.metrics;
+        if (!data || typeof data !== 'object') return null;
+        const ts = Number(sample.ts || sample.timestamp || data.last_updated || now) || now;
+        return { ts, data };
+      }).filter(Boolean);
+
+      if (samples.length === 0) return null;
+      samples.sort((a, b) => a.ts - b.ts);
+      return { serverId, samples };
+    }).filter(Boolean);
+  }
+
+  _broadcastBatch(updates) {
+    const ts = Date.now();
+    const websockets = this.state.getWebSockets();
+
+    for (const ws of websockets) {
+      const attachment = ws.deserializeAttachment();
+      if (!attachment) continue;
+
+      const scopedUpdates = updates.filter(item => this._shouldDeliver(attachment.scope, item.serverId));
+      if (scopedUpdates.length === 0) continue;
+
+      const only = scopedUpdates.length === 1 ? scopedUpdates[0] : null;
+      const singleSample = only && only.samples.length === 1 ? only.samples[0] : null;
+      const message = singleSample
+        ? JSON.stringify({
+            type: 'update',
+            serverId: only.serverId,
+            ts,
+            data: singleSample.data
+          })
+        : JSON.stringify({
+            type: 'batchUpdate',
+            ts,
+            updates: scopedUpdates
+          });
+
+      try {
+        ws.send(message);
+      } catch (_) {
+        // WebSocket 宸插紓甯稿叧闂紝DO 浼氳嚜鍔ㄦ竻鐞?
+      }
+    }
+  }
+
   webSocketMessage(ws, message) {
     // 保留处理扩展消息的入口
     try {

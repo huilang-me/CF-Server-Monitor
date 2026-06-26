@@ -251,6 +251,22 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
   }
   ```
 
+  新版探针也可以一次上报多个采集样本，后端兼容旧的单条 `metrics` 格式。批量格式示例：
+
+  ```json
+  {
+    "id": "9b2c4d3e-1a2b-4c5d-9e8f-7a6b5c4d3e2f",
+    "secret": "<API_SECRET>",
+    "metrics": { "...": "latest metrics, kept for compatibility" },
+    "samples": [
+      { "ts": 1737638340000, "metrics": { "...": "metrics at this timestamp" } },
+      { "ts": 1737638341000, "metrics": { "...": "metrics at this timestamp" } }
+    ],
+    "collect_interval": 1,
+    "report_interval": 60
+  }
+  ```
+
 **字段说明（metrics）**：
 
 | 字段               | 类型           | 单位  | 必填 | 说明                                          |
@@ -305,8 +321,8 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 
 **副作用**
 
-1. 插入一行到 `metrics_history`。
-2. 触发 Durable Object `MetricsBroadcaster` 内部广播，WebSocket 订阅者将立即收到 `{type:"update", serverId, ts, data}` 消息。
+1. `metrics_history` 只写入本次请求中最新的一个样本，避免 1 秒采集时放大 D1 写入次数。
+2. 触发 Durable Object `MetricsBroadcaster` 内部广播。单样本会发送 `{type:"update", serverId, ts, data}`；多样本会发送 `{type:"batchUpdate", ts, updates:[...]}`，前端按样本时间逐个回放。
 3. 写入 `request.cf.country`（或 `cf-ipcountry` Header）作为该条记录的 `region` 字段（统一转大写）。
 
 ***
@@ -417,6 +433,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
   "traffic_limit": "1TB",
   "traffic_calc_type": "total",
   "reset_day": 1,
+  "collect_interval": 1,
   "report_interval": 60,
   "ping_mode": "http",
   "is_hidden": "0",
@@ -583,13 +600,25 @@ Sec-WebSocket-Version: 13
      "updates": [
        {
          "serverId": "9b2c...",
-         "ts": 1737638398000,
-         "data": { /* Server 对象 */ }
+         "samples": [
+           {
+             "ts": 1737638398000,
+             "data": { /* Server 对象 */ }
+           },
+           {
+             "ts": 1737638399000,
+             "data": { /* Server 对象 */ }
+           }
+         ]
        },
        {
          "serverId": "a1f3...",
-         "ts": 1737638399000,
-         "data": { /* Server 对象 */ }
+         "samples": [
+           {
+             "ts": 1737638398500,
+             "data": { /* Server 对象 */ }
+           }
+         ]
        }
      ]
    }
@@ -917,6 +946,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
   "traffic_limit": "1TB",
   "traffic_calc_type": "total",       // total | ...
   "reset_day": 1,                     // 1 ~ 31
+  "collect_interval": 1,              // 秒
   "report_interval": 60,              // 秒
   "ping_mode": "http",                // http | tcp
   "is_hidden": "0"                    // "0" | "1"
@@ -1083,6 +1113,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
 | `traffic_limit`                               | string             | 流量上限文本                    |
 | `traffic_calc_type`                           | string             | `total` / 其他              |
 | `reset_day`                                   | number             | 流量重置日 1\~31               |
+| `collect_interval`                            | number             | 采集间隔（秒）                   |
 | `report_interval`                             | number             | 上报间隔（秒）                   |
 | `ping_mode`                                   | string             | `http` / `tcp`            |
 | `is_hidden`                                   | string `"0"`/`"1"` | 是否在前台隐藏                   |

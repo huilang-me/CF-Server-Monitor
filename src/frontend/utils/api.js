@@ -16,7 +16,9 @@ export const createLiveSocket = (subscribe, handlers = {}, apiIndex = 0) => {
   let reconnectAttempts = 0
   const MAX_DELAY = 30000
   const MAX_RECONNECT_ATTEMPTS = 10
+  const MAX_REPLAY_DELAY = 120000
   let isConnected = false
+  const replayTimers = new Set()
 
   const getWsBaseByIndex = (index) => {
     const bases = getApiBases()
@@ -36,6 +38,80 @@ export const createLiveSocket = (subscribe, handlers = {}, apiIndex = 0) => {
     isConnected = connected
     if (typeof onStatus === 'function') {
       onStatus({ connected, reason: reason || '' })
+    }
+  }
+
+  const clearReplayTimers = () => {
+    replayTimers.forEach(timer => clearTimeout(timer))
+    replayTimers.clear()
+  }
+
+  const normalizeReplayTimestamp = (value, fallback = Date.now()) => {
+    const ts = Number(value)
+    if (!Number.isFinite(ts) || ts <= 0) return fallback
+    return ts < 10000000000 ? ts * 1000 : ts
+  }
+
+  const emitUpdate = ({ serverId, data }) => {
+    if (serverId && data && typeof onUpdate === 'function') {
+      const receiveTs = Date.now()
+      onUpdate({
+        serverId,
+        data: {
+          ...data,
+          sample_timestamp: data.last_updated || data.timestamp || null,
+          last_updated: receiveTs,
+          timestamp: receiveTs
+        }
+      })
+    }
+  }
+
+  const collectBatchEventGroups = (msg) => {
+    const groups = []
+    const updates = Array.isArray(msg.updates)
+      ? msg.updates
+      : (msg.serverId ? [{ serverId: msg.serverId, samples: msg.samples, data: msg.data, payload: msg.payload, ts: msg.ts }] : [])
+
+    for (const update of updates) {
+      if (!update || !update.serverId) continue
+      const events = []
+      const samples = Array.isArray(update.samples)
+        ? update.samples
+        : (update.payload || update.data ? [{ ts: update.ts || msg.ts, data: update.data || update.payload }] : [])
+
+      for (const sample of samples) {
+        if (!sample || typeof sample !== 'object') continue
+        const data = sample.data || sample.payload || sample.metrics
+        if (!data) continue
+        events.push({
+          serverId: update.serverId,
+          ts: normalizeReplayTimestamp(sample.ts || sample.timestamp || data.last_updated || msg.ts),
+          data
+        })
+      }
+
+      events.sort((a, b) => a.ts - b.ts)
+      if (events.length > 0) groups.push(events)
+    }
+
+    return groups
+  }
+
+  const replayBatch = (msg) => {
+    const groups = collectBatchEventGroups(msg)
+    if (groups.length === 0) return
+
+    for (const events of groups) {
+      const firstTs = events[0].ts
+      for (const event of events) {
+        const delay = Math.max(0, Math.min(event.ts - firstTs, MAX_REPLAY_DELAY))
+        const timer = setTimeout(() => {
+          replayTimers.delete(timer)
+          emitUpdate(event)
+        }, delay)
+        replayTimers.add(timer)
+      }
     }
   }
 
@@ -61,8 +137,11 @@ export const createLiveSocket = (subscribe, handlers = {}, apiIndex = 0) => {
       } catch (_) { return }
       if (!msg) return
 
-      if (msg.type === 'update' && typeof onUpdate === 'function') {
-        onUpdate({ serverId: msg.serverId, data: msg.data })
+      if (msg.type === 'update') {
+        emitUpdate({ serverId: msg.serverId, data: msg.data })
+      }
+      if (msg.type === 'batchUpdate') {
+        replayBatch(msg)
       }
       if (typeof onMessage === 'function') onMessage(msg)
     })
@@ -101,12 +180,14 @@ export const createLiveSocket = (subscribe, handlers = {}, apiIndex = 0) => {
     close() {
       manualClose = true
       reconnectAttempts = MAX_RECONNECT_ATTEMPTS
+      clearReplayTimers()
       if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
       if (ws) { try { ws.close() } catch (_) {} ws = null }
     },
     reconnect() {
       manualClose = false
       reconnectAttempts = 0
+      clearReplayTimers()
       if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
       if (ws) { try { ws.close() } catch (_) {} ws = null }
       connect()

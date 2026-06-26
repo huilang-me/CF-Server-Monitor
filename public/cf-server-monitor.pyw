@@ -27,6 +27,7 @@ CONFIG_FILE = BASE_DIR / "cf_probe_config.json"
 LOG_FILE = BASE_DIR / "cf_probe.log"
 AGENT_FILE = Path(__file__).resolve()
 
+DEFAULT_COLLECT_INTERVAL = 1
 DEFAULT_INTERVAL = 60
 MAX_LOG_SIZE = 2 * 1024 * 1024
 LOG_BACKUP_COUNT = 3
@@ -35,6 +36,7 @@ DEFAULT_CONFIG = {
     "server_id": "服务器ID",
     "secret": "连接密匙",
     "worker_url": "上传网站",
+    "collect_interval": 1,
     "report_interval": 60,
     "silent_start": False,
     "ping_type": "tcp",
@@ -492,7 +494,16 @@ def probe_loop(status_callback=None):
     server_id = config.get("server_id", "").strip()
     secret = config.get("secret", "").strip()
     worker_url = config.get("worker_url", "").strip()
-    report_interval = int(config.get("report_interval", DEFAULT_INTERVAL))
+    try:
+        collect_interval = int(config.get("collect_interval", DEFAULT_COLLECT_INTERVAL))
+    except Exception:
+        collect_interval = DEFAULT_COLLECT_INTERVAL
+    try:
+        report_interval = int(config.get("report_interval", DEFAULT_INTERVAL))
+    except Exception:
+        report_interval = DEFAULT_INTERVAL
+    collect_interval = max(collect_interval, 1)
+    report_interval = max(report_interval, collect_interval)
     ping_type = config.get("ping_type", "tcp").strip().lower() or "tcp"
 
     if not server_id or not secret or not worker_url:
@@ -513,6 +524,9 @@ def probe_loop(status_callback=None):
 
     last_ip_check = 0
     last_ping_check = 0
+    last_report_time = 0
+    last_report_ok = False
+    samples = []
 
     try:
         psutil.cpu_percent(interval=None)
@@ -549,22 +563,38 @@ def probe_loop(status_callback=None):
             metrics["ping_cm"] = cache["ping_cm"]
             metrics["ping_bd"] = cache["ping_bd"]
 
-            payload = {
-                "id": server_id,
-                "secret": secret,
-                "metrics": metrics,
-            }
+            sample_ts = int(loop_start * 1000)
+            samples.append({
+                "ts": sample_ts,
+                "metrics": dict(metrics),
+            })
 
-            ok = http_post_json(worker_url, payload)
+            should_report = (
+                last_report_time == 0
+                or now - last_report_time >= report_interval
+            )
+
+            if should_report:
+                payload = {
+                    "id": server_id,
+                    "secret": secret,
+                    "metrics": metrics,
+                    "samples": samples,
+                    "collect_interval": collect_interval,
+                    "report_interval": report_interval,
+                }
+                last_report_ok = http_post_json(worker_url, payload)
+                samples = []
+                last_report_time = now
 
             if status_callback:
                 gui_data = dict(metrics)
                 gui_data["public_ipv4"] = cache["public_ipv4"]
                 gui_data["public_ipv6"] = cache["public_ipv6"]
                 gui_data["uptime_text"] = get_uptime_text(psutil)
-                status_callback(gui_data, ok, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                status_callback(gui_data, last_report_ok, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
-            if ok:
+            if should_report and last_report_ok:
                 log("上报成功。")
         except Exception as e:
             log(f"主循环异常: {e}")
@@ -572,7 +602,7 @@ def probe_loop(status_callback=None):
                 status_callback({}, False, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
         used = time.time() - loop_start
-        sleep_time = max(report_interval - used, 1)
+        sleep_time = max(collect_interval - used, 1)
         stop_event.wait(sleep_time)
 
     log("探针已停止。")
@@ -591,6 +621,7 @@ class ProbeGUI:
         self.server_id_var = tk.StringVar(value=self.config.get("server_id", ""))
         self.secret_var = tk.StringVar(value=self.config.get("secret", ""))
         self.url_var = tk.StringVar(value=self.config.get("worker_url", ""))
+        self.collect_interval_var = tk.StringVar(value=str(self.config.get("collect_interval", DEFAULT_COLLECT_INTERVAL)))
         self.interval_var = tk.StringVar(value=str(self.config.get("report_interval", DEFAULT_INTERVAL)))
         self.ping_type_var = tk.StringVar(value=self.config.get("ping_type", "tcp"))
         self.silent_start_var = tk.BooleanVar(value=self.config.get("silent_start", True))
@@ -630,6 +661,9 @@ class ProbeGUI:
         ttk.Label(form, text="上报间隔：").grid(row=3, column=0, sticky=tk.W, pady=5)
         interval_frame = ttk.Frame(form)
         interval_frame.grid(row=3, column=1, sticky=tk.W, pady=5)
+        ttk.Label(interval_frame, text="Collect").pack(side=tk.LEFT)
+        ttk.Entry(interval_frame, textvariable=self.collect_interval_var, width=8).pack(side=tk.LEFT, padx=(6, 10))
+        ttk.Label(interval_frame, text="Report").pack(side=tk.LEFT)
         ttk.Entry(interval_frame, textvariable=self.interval_var, width=12).pack(side=tk.LEFT)
         ttk.Label(interval_frame, text="秒").pack(side=tk.LEFT, padx=(6, 0))
 
@@ -761,10 +795,13 @@ class ProbeGUI:
 
     def save(self, show_msg=False):
         try:
+            collect_interval = int(self.collect_interval_var.get().strip() or DEFAULT_COLLECT_INTERVAL)
             interval = int(self.interval_var.get().strip() or DEFAULT_INTERVAL)
 
-            if interval < 5:
-                interval = 5
+            if collect_interval < 1:
+                collect_interval = 1
+            if interval < collect_interval:
+                interval = collect_interval
 
             ping_type = self.ping_type_var.get().strip().lower()
 
@@ -775,6 +812,7 @@ class ProbeGUI:
                 "server_id": self.server_id_var.get().strip(),
                 "secret": self.secret_var.get().strip(),
                 "worker_url": self.url_var.get().strip(),
+                "collect_interval": collect_interval,
                 "report_interval": interval,
                 "silent_start": bool(self.silent_start_var.get()),
                 "ping_type": ping_type,
@@ -865,6 +903,7 @@ class ProbeGUI:
             self.server_id_var.set(cfg.get("server_id", DEFAULT_CONFIG["server_id"]))
             self.secret_var.set(cfg.get("secret", DEFAULT_CONFIG["secret"]))
             self.url_var.set(cfg.get("worker_url", DEFAULT_CONFIG["worker_url"]))
+            self.collect_interval_var.set(str(cfg.get("collect_interval", DEFAULT_CONFIG["collect_interval"])))
             self.interval_var.set(str(cfg.get("report_interval", DEFAULT_CONFIG["report_interval"])))
             self.silent_start_var.set(bool(cfg.get("silent_start", True)))
             self.ping_type_var.set(cfg.get("ping_type", "tcp"))
@@ -883,7 +922,12 @@ class ProbeGUI:
         if not file_path:
             return
         try:
+            collect_interval = int(self.collect_interval_var.get().strip() or DEFAULT_COLLECT_INTERVAL)
             interval = int(self.interval_var.get().strip() or DEFAULT_INTERVAL)
+            if collect_interval < 1:
+                collect_interval = 1
+            if interval < collect_interval:
+                interval = collect_interval
             ping_type = self.ping_type_var.get().strip().lower()
             if ping_type not in ("tcp", "http"):
                 ping_type = "tcp"
@@ -892,6 +936,7 @@ class ProbeGUI:
                 "server_id": self.server_id_var.get().strip(),
                 "secret": self.secret_var.get().strip(),
                 "worker_url": self.url_var.get().strip(),
+                "collect_interval": collect_interval,
                 "report_interval": interval,
                 "silent_start": bool(self.silent_start_var.get()),
                 "ping_type": ping_type,

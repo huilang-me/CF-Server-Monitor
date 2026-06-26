@@ -261,6 +261,7 @@ while IFS='=' read -r key value; do
         SERVER_ID) SERVER_ID="${value%\"}"; SERVER_ID="${SERVER_ID#\"}" ;;
         SECRET) SECRET="${value%\"}"; SECRET="${SECRET#\"}" ;;
         WORKER_URL) WORKER_URL="${value%\"}"; WORKER_URL="${WORKER_URL#\"}" ;;
+        COLLECT_INTERVAL) COLLECT_INTERVAL="${value%\"}"; COLLECT_INTERVAL="${COLLECT_INTERVAL#\"}" ;;
         REPORT_INTERVAL) REPORT_INTERVAL="${value%\"}"; REPORT_INTERVAL="${REPORT_INTERVAL#\"}" ;;
         PING_TYPE) PING_TYPE="${value%\"}"; PING_TYPE="${PING_TYPE#\"}" ;;
         CT_NODE) CT_NODE="${value%\"}"; CT_NODE="${CT_NODE#\"}" ;;
@@ -271,9 +272,15 @@ while IFS='=' read -r key value; do
     esac
 done < "${CONFIG_FILE}"
 
+COLLECT_INTERVAL=${COLLECT_INTERVAL:-1}
 REPORT_INTERVAL=${REPORT_INTERVAL:-60}
 PING_TYPE=${PING_TYPE:-http}
 [ -z "$RESET_DAY" ] && RESET_DAY=1
+case "$COLLECT_INTERVAL" in ''|*[!0-9]*) COLLECT_INTERVAL=1 ;; esac
+case "$REPORT_INTERVAL" in ''|*[!0-9]*) REPORT_INTERVAL=60 ;; esac
+[ "$COLLECT_INTERVAL" -lt 1 ] && COLLECT_INTERVAL=1
+[ "$REPORT_INTERVAL" -lt 1 ] && REPORT_INTERVAL=60
+[ "$REPORT_INTERVAL" -lt "$COLLECT_INTERVAL" ] && REPORT_INTERVAL="$COLLECT_INTERVAL"
 
 # 严苛环境下的规范 JSON 字段转义函数
 escape_json() {
@@ -591,6 +598,9 @@ echo "[INFO] CF-Server-Monitor Probe Engine Started Successfully."
 # 核心架构升级：在这里脱离主循环，静默启动常驻网络 Worker 协程，无 wait 干扰
 run_network_worker &
 WORKER_PID=$!
+SAMPLES_JSON=""
+SAMPLE_COUNT=0
+LAST_REPORT_TIME=0
 
 while true; do
     LOOP_START_TIME=$(date +%s)
@@ -697,7 +707,7 @@ while true; do
     TX_MONTHLY=$(echo "$MONTHLY_TRAFFIC" | awk '{print $2}')
     
     TIME_DELTA=$((LOOP_START_TIME - PREV_LOOP_TIME))
-    [ "${TIME_DELTA}" -le 0 ] && TIME_DELTA=${REPORT_INTERVAL}
+    [ "${TIME_DELTA}" -le 0 ] && TIME_DELTA=${COLLECT_INTERVAL}
     
     RX_DELTA=$((RX_NOW - RX_PREV))
     TX_DELTA=$((TX_NOW - TX_PREV))
@@ -726,15 +736,33 @@ while true; do
     EARCH=$(escape_json "${ARCH}")
     ECPU=$(escape_json "${CPU_INFO}")
 
-    PAYLOAD=$(cat <<EOF
-{"id":"$SERVER_ID","secret":"$SECRET","metrics":{"cpu":"$CPU","ram_total":"$RAM_TOTAL","ram_used":"$RAM_USED","swap_total":"$SWAP_TOTAL","swap_used":"$SWAP_USED","disk_total":"$DISK_TOTAL","disk_used":"$DISK_USED","load_avg":"$LOAD_AVG","boot_time":"$BOOT_TIME","net_rx":"$RX_NOW","net_tx":"$TX_NOW","net_rx_monthly":"$RX_MONTHLY","net_tx_monthly":"$TX_MONTHLY","net_in_speed":"$RX_SPEED","net_out_speed":"$TX_SPEED","os":"$EOS","arch":"$EARCH","cpu_info":"$ECPU","cpu_cores":"$CPU_CORES","gpu":$GPU,"gpu_info":$GPU_INFO_VALUE,"processes":"$PROCESSES","tcp_conn":"$TCP_CONN","udp_conn":"$UDP_CONN","ip_v4":"$IPV4","ip_v6":"$IPV6","ping_ct":"$PING_CT","ping_cu":"$PING_CU","ping_cm":"$PING_CM","ping_bd":"$PING_BD","loss_ct":"$LOSS_CT","loss_cu":"$LOSS_CU","loss_cm":"$LOSS_CM","loss_bd":"$LOSS_BD"}}
+    METRICS_JSON=$(cat <<EOF
+{"cpu":"$CPU","ram_total":"$RAM_TOTAL","ram_used":"$RAM_USED","swap_total":"$SWAP_TOTAL","swap_used":"$SWAP_USED","disk_total":"$DISK_TOTAL","disk_used":"$DISK_USED","load_avg":"$LOAD_AVG","boot_time":"$BOOT_TIME","net_rx":"$RX_NOW","net_tx":"$TX_NOW","net_rx_monthly":"$RX_MONTHLY","net_tx_monthly":"$TX_MONTHLY","net_in_speed":"$RX_SPEED","net_out_speed":"$TX_SPEED","os":"$EOS","arch":"$EARCH","cpu_info":"$ECPU","cpu_cores":"$CPU_CORES","gpu":$GPU,"gpu_info":$GPU_INFO_VALUE,"processes":"$PROCESSES","tcp_conn":"$TCP_CONN","udp_conn":"$UDP_CONN","ip_v4":"$IPV4","ip_v6":"$IPV6","ping_ct":"$PING_CT","ping_cu":"$PING_CU","ping_cm":"$PING_CM","ping_bd":"$PING_BD","loss_ct":"$LOSS_CT","loss_cu":"$LOSS_CU","loss_cm":"$LOSS_CM","loss_bd":"$LOSS_BD"}
 EOF
 )
-    curl -s -o /dev/null -X POST -H "Content-Type: application/json" -d "$PAYLOAD" -m 4 --connect-timeout 2 "$WORKER_URL" 2>/dev/null || true
+    SAMPLE_TS=$((LOOP_START_TIME * 1000))
+    SAMPLE_JSON="{\"ts\":$SAMPLE_TS,\"metrics\":$METRICS_JSON}"
+    if [ -z "$SAMPLES_JSON" ]; then
+        SAMPLES_JSON="$SAMPLE_JSON"
+    else
+        SAMPLES_JSON="$SAMPLES_JSON,$SAMPLE_JSON"
+    fi
+    SAMPLE_COUNT=$((SAMPLE_COUNT + 1))
+
+    if [ "$LAST_REPORT_TIME" -eq 0 ] || [ $((LOOP_START_TIME - LAST_REPORT_TIME)) -ge "$REPORT_INTERVAL" ]; then
+        PAYLOAD=$(cat <<EOF
+{"id":"$SERVER_ID","secret":"$SECRET","metrics":$METRICS_JSON,"samples":[$SAMPLES_JSON],"collect_interval":$COLLECT_INTERVAL,"report_interval":$REPORT_INTERVAL}
+EOF
+)
+        curl -s -o /dev/null -X POST -H "Content-Type: application/json" -d "$PAYLOAD" -m 4 --connect-timeout 2 "$WORKER_URL" 2>/dev/null || true
+        SAMPLES_JSON=""
+        SAMPLE_COUNT=0
+        LAST_REPORT_TIME=$LOOP_START_TIME
+    fi
 
     LOOP_END_TIME=$(date +%s)
     EXEC_DURATION=$((LOOP_END_TIME - LOOP_START_TIME))
-    SLEEP_TIME=$((REPORT_INTERVAL - EXEC_DURATION))
+    SLEEP_TIME=$((COLLECT_INTERVAL - EXEC_DURATION))
     [ "${SLEEP_TIME}" -le 0 ] && SLEEP_TIME=1
     sleep "${SLEEP_TIME}"
 done
@@ -854,6 +882,7 @@ install_probe() {
     SERVER_ID=""
     SECRET=""
     WORKER_URL=""
+    COLLECT_INTERVAL=""
     REPORT_INTERVAL=""
     PING_TYPE=""
     CT_NODE=""
@@ -881,6 +910,7 @@ install_probe() {
             -id=*) SERVER_ID="${arg#-id=}" ;;
             -secret=*) SECRET="${arg#-secret=}" ;;
             -url=*) WORKER_URL="${arg#-url=}" ;;
+            -collect_interval=*|-collect=*) COLLECT_INTERVAL="${arg#*=}" ;;
             -interval=*) REPORT_INTERVAL="${arg#-interval=}" ;;
             -ping=*) PING_TYPE="${arg#-ping=}" ;;
             -ct=*) CT_NODE="${arg#-ct=}" ;;
@@ -907,6 +937,7 @@ install_probe() {
         step "检测到已有配置文件，执行二次安装..."
         
         if [ -n "${SERVER_ID}" ] && [ -n "${SECRET}" ] && [ -n "${WORKER_URL}" ]; then
+            COLLECT_INTERVAL=${COLLECT_INTERVAL:-1}
             REPORT_INTERVAL=${REPORT_INTERVAL:-60}
             PING_TYPE=${PING_TYPE:-http}
             [ -z "$RESET_DAY" ] && RESET_DAY=1
@@ -916,6 +947,7 @@ install_probe() {
 SERVER_ID="${SERVER_ID}"
 SECRET="${SECRET}"
 WORKER_URL="${WORKER_URL}"
+COLLECT_INTERVAL="${COLLECT_INTERVAL}"
 REPORT_INTERVAL="${REPORT_INTERVAL}"
 PING_TYPE="${PING_TYPE}"
 CT_NODE="${CT_NODE:-}"
@@ -932,6 +964,7 @@ EOF
                     SERVER_ID) SERVER_ID="${value%\"}"; SERVER_ID="${SERVER_ID#\"}" ;;
                     SECRET) SECRET="${value%\"}"; SECRET="${SECRET#\"}" ;;
                     WORKER_URL) WORKER_URL="${value%\"}"; WORKER_URL="${WORKER_URL#\"}" ;;
+                    COLLECT_INTERVAL) COLLECT_INTERVAL="${value%\"}"; COLLECT_INTERVAL="${COLLECT_INTERVAL#\"}" ;;
                     REPORT_INTERVAL) REPORT_INTERVAL="${value%\"}"; REPORT_INTERVAL="${REPORT_INTERVAL#\"}" ;;
                     PING_TYPE) PING_TYPE="${value%\"}"; PING_TYPE="${PING_TYPE#\"}" ;;
                     CT_NODE) CT_NODE="${value%\"}"; CT_NODE="${CT_NODE#\"}" ;;
@@ -963,6 +996,7 @@ EOF
             fi
         fi
 
+        COLLECT_INTERVAL=${COLLECT_INTERVAL:-1}
         REPORT_INTERVAL=${REPORT_INTERVAL:-60}
         PING_TYPE=${PING_TYPE:-http}
         [ -z "$RESET_DAY" ] && RESET_DAY=1
@@ -985,6 +1019,7 @@ EOF
 SERVER_ID="${SERVER_ID}"
 SECRET="${SECRET}"
 WORKER_URL="${WORKER_URL}"
+COLLECT_INTERVAL="${COLLECT_INTERVAL}"
 REPORT_INTERVAL="${REPORT_INTERVAL}"
 PING_TYPE="${PING_TYPE}"
 CT_NODE="${CT_NODE:-}"
@@ -995,6 +1030,9 @@ RESET_DAY="${RESET_DAY}"
 EOF
         info "配置文件已生成: ${CONFIG_FILE}"
     fi
+
+    COLLECT_INTERVAL=${COLLECT_INTERVAL:-1}
+    REPORT_INTERVAL=${REPORT_INTERVAL:-60}
 
     if [ -n "${RX_CORRECTION}" ] || [ -n "${TX_CORRECTION}" ]; then
         step "应用流量校正..."
