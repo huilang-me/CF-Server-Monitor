@@ -323,7 +323,6 @@ const getTrafficUsagePercent = (server) => {
 const PLAYBACK_TICK_MS = 1000
 const MAX_BUFFER_SAMPLES_PER_SERVER = 600
 const playbackBuffers = new Map()
-let playbackCursorTs = null
 
 const normalizeMetricTimestamp = (value, fallback = null) => {
   const ts = Number(value)
@@ -334,54 +333,89 @@ const normalizeMetricTimestamp = (value, fallback = null) => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
 }
 
+const getServerReportTimestamp = (server, fallback = null) => {
+  return normalizeMetricTimestamp(server?.report_timestamp ?? server?.last_updated, fallback)
+}
+
 const getServerSampleTimestamp = (server) => {
   return normalizeMetricTimestamp(server?.sample_timestamp ?? server?.timestamp ?? server?.last_updated, null)
 }
 
-const withDisplayTiming = (server, displayTs = Date.now()) => {
-  const sampleTs = getServerSampleTimestamp(server) || displayTs
-  return {
+const getServerDisplayTimestamp = (server) => {
+  return normalizeMetricTimestamp(server?.display_timestamp, null)
+}
+
+const withDisplayTiming = (server, displayTs = null, currentTs = Date.now()) => {
+  const reportTs = getServerReportTimestamp(server, null)
+  const sampleTs = getServerSampleTimestamp(server) || displayTs || reportTs
+  const ownTs = normalizeMetricTimestamp(displayTs, getServerDisplayTimestamp(server) || sampleTs || reportTs)
+  const timed = {
     ...server,
+    current_timestamp: currentTs
+  }
+  if (reportTs) {
+    timed.report_timestamp = reportTs
+    timed.last_updated = reportTs
+  }
+  if (!sampleTs || !ownTs) return timed
+  return {
+    ...timed,
     sample_timestamp: sampleTs,
-    display_timestamp: displayTs,
-    sample_lag_seconds: Math.max(0, Math.floor((displayTs - sampleTs) / 1000))
+    display_timestamp: ownTs,
+    sample_lag_seconds: Math.max(0, Math.floor((ownTs - sampleTs) / 1000))
   }
 }
 
-const getEarliestPendingTimestamp = () => {
-  let minTs = null
-  for (const samples of playbackBuffers.values()) {
-    if (samples.length === 0) continue
-    const ts = samples[0].ts
-    if (minTs === null || ts < minTs) minTs = ts
-  }
-  return minTs
-}
-
-const hasPendingSamples = () => {
-  for (const samples of playbackBuffers.values()) {
-    if (samples.length > 0) return true
-  }
-  return false
-}
-
-const queueLiveSample = (serverId, data, timestamp) => {
+const toLiveSample = (serverId, data, timestamp, reportTs) => {
   if (!serverId || !data) return
   const ts = normalizeMetricTimestamp(timestamp ?? data.sample_timestamp ?? data.last_updated ?? data.timestamp, null)
-  if (!ts) return
+  if (!ts) return null
+  return {
+    serverId,
+    ts,
+    data,
+    reportTs
+  }
+}
+
+const queueLiveSamples = (serverId, samples, reportTs) => {
+  if (!serverId || !Array.isArray(samples) || samples.length === 0) return
+
+  const normalized = samples
+    .map(sample => toLiveSample(serverId, sample.data, sample.ts, reportTs))
+    .filter(Boolean)
+    .sort((a, b) => a.ts - b.ts)
+
+  if (normalized.length === 0) return
+
   const current = servers.value.find(s => s.id === serverId)
   const currentTs = getServerSampleTimestamp(current)
-  if (currentTs && ts <= currentTs) return
+  const incoming = normalized.filter(sample => !currentTs || sample.ts > currentTs)
+  if (incoming.length === 0) return
 
-  const samples = playbackBuffers.get(serverId) || []
-  if (samples.some(sample => sample.ts === ts)) return
-  samples.push({ serverId, ts, data })
-  samples.sort((a, b) => a.ts - b.ts)
-  playbackBuffers.set(serverId, samples.slice(-MAX_BUFFER_SAMPLES_PER_SERVER))
+  if (incoming.length === 1) {
+    playbackBuffers.delete(serverId)
+    const sample = incoming[0]
+    applyServerSample(serverId, sample.data, sample.ts, sample.ts, reportTs)
+    return
+  }
+
+  const firstTs = incoming[0].ts
+  const unique = []
+  const seen = new Set()
+  for (const sample of incoming) {
+    if (seen.has(sample.ts)) continue
+    seen.add(sample.ts)
+    unique.push(sample)
+  }
+  playbackBuffers.set(serverId, unique.slice(-MAX_BUFFER_SAMPLES_PER_SERVER))
+  applyPlaybackSamplesForServer(serverId, firstTs)
 }
 
 const queueLiveMessage = (msg) => {
   if (!msg || (msg.type !== 'update' && msg.type !== 'batchUpdate')) return
+
+  const reportTs = normalizeMetricTimestamp(msg.ts, Date.now())
 
   const updates = Array.isArray(msg.updates)
     ? msg.updates
@@ -398,26 +432,34 @@ const queueLiveMessage = (msg) => {
             }]
           : [])
 
+    const liveSamples = []
     for (const sample of samples) {
       if (!sample || typeof sample !== 'object') continue
       const data = sample.data || sample.payload || sample.metrics
       if (!data) continue
-      queueLiveSample(update.serverId, data, sample.ts ?? sample.timestamp ?? data.sample_timestamp ?? data.last_updated ?? data.timestamp ?? update.ts ?? msg.ts)
+      liveSamples.push({
+        ts: sample.ts ?? sample.timestamp ?? data.sample_timestamp ?? data.last_updated ?? data.timestamp ?? update.ts ?? msg.ts,
+        data
+      })
     }
+    queueLiveSamples(update.serverId, liveSamples, reportTs)
   }
 }
 
-const applyServerSample = (serverId, data, sampleTs, displayTs) => {
+const applyServerSample = (serverId, data, sampleTs, displayTs, reportTs = null) => {
   if (!serverId || !data) return
   const idx = servers.value.findIndex(s => s.id === serverId)
-  const wallTs = now.value
+  const existing = idx >= 0 ? servers.value[idx] : null
+  const currentReportTs = getServerReportTimestamp(existing, null)
+  const nextReportTs = normalizeMetricTimestamp(reportTs, currentReportTs || now.value)
   const merged = withDisplayTiming({
     ...data,
     id: serverId,
+    report_timestamp: nextReportTs,
+    last_updated: nextReportTs,
     sample_timestamp: sampleTs,
-    last_updated: wallTs,
-    timestamp: wallTs
-  }, displayTs)
+    timestamp: sampleTs
+  }, displayTs, now.value)
 
   if (idx >= 0) {
     servers.value[idx] = { ...servers.value[idx], ...merged }
@@ -426,36 +468,39 @@ const applyServerSample = (serverId, data, sampleTs, displayTs) => {
   }
 }
 
-const applyPlaybackSamples = (displayTs) => {
-  for (const [serverId, samples] of playbackBuffers) {
-    let selected = null
-    while (samples.length > 0 && samples[0].ts <= displayTs) {
-      selected = samples.shift()
-    }
-    if (selected) {
-      applyServerSample(serverId, selected.data, selected.ts, displayTs)
-    }
-    if (samples.length === 0) playbackBuffers.delete(serverId)
+const applyPlaybackSamplesForServer = (serverId, displayTs = null) => {
+  const samples = playbackBuffers.get(serverId)
+  if (!samples || samples.length === 0) return
+  const server = servers.value.find(s => s.id === serverId)
+  const ownTs = normalizeMetricTimestamp(displayTs, getServerDisplayTimestamp(server))
+  if (!ownTs) return
+
+  let selected = null
+  while (samples.length > 0 && samples[0].ts <= ownTs) {
+    selected = samples.shift()
+  }
+  if (selected) {
+    applyServerSample(serverId, selected.data, selected.ts, ownTs, selected.reportTs)
+  }
+  if (samples.length === 0) playbackBuffers.delete(serverId)
+}
+
+const applyPlaybackSamples = () => {
+  for (const serverId of Array.from(playbackBuffers.keys())) {
+    applyPlaybackSamplesForServer(serverId)
   }
 }
 
-const updateDisplayLag = (displayTs) => {
-  servers.value = servers.value.map(server => withDisplayTiming(server, displayTs))
-}
-
-const advancePlaybackClock = () => {
-  if (playbackCursorTs === null) {
-    playbackCursorTs = getEarliestPendingTimestamp()
-  } else if (hasPendingSamples()) {
-    playbackCursorTs += PLAYBACK_TICK_MS
-  }
-
-  const displayTs = playbackCursorTs || now.value
-  if (playbackCursorTs !== null) {
-    applyPlaybackSamples(displayTs)
-    if (!hasPendingSamples()) playbackCursorTs = null
-  }
-  updateDisplayLag(displayTs)
+const advanceServerClocks = () => {
+  const currentTs = now.value
+  servers.value = servers.value.map(server => {
+    const reportTs = getServerReportTimestamp(server, null)
+    const isOnline = reportTs && (currentTs - reportTs) < TIME.ONLINE_THRESHOLD_MS
+    const currentDisplayTs = getServerDisplayTimestamp(server) || getServerSampleTimestamp(server) || reportTs
+    const nextDisplayTs = isOnline && currentDisplayTs ? currentDisplayTs + PLAYBACK_TICK_MS : currentDisplayTs
+    return withDisplayTiming(server, nextDisplayTs, currentTs)
+  })
+  applyPlaybackSamples()
 }
 
 const recomputeStats = (currentTs = Date.now()) => {
@@ -496,7 +541,7 @@ const recomputeStats = (currentTs = Date.now()) => {
 
 const runDashboardTick = () => {
   now.value = Date.now()
-  advancePlaybackClock()
+  advanceServerClocks()
   recomputeStats(now.value)
   if (currentView.value === 'map') drawMarkers()
 }
@@ -515,7 +560,8 @@ const refreshData = async () => {
     const nextList = rawServers.map(s => {
       const prev = existingById.get(s.id)
       const sampleTs = normalizeMetricTimestamp(s.sample_timestamp ?? s.timestamp ?? s.last_updated, getServerSampleTimestamp(prev))
-      return withDisplayTiming({ ...prev, ...s, sample_timestamp: sampleTs }, now.value)
+      const reportTs = normalizeMetricTimestamp(s.report_timestamp ?? s.last_updated, getServerReportTimestamp(prev, null))
+      return withDisplayTiming({ ...prev, ...s, sample_timestamp: sampleTs, report_timestamp: reportTs }, sampleTs, now.value)
     })
     servers.value = nextList
 

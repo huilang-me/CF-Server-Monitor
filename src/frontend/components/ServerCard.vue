@@ -118,7 +118,7 @@ const props = defineProps({
 const trans = computed(() => translations[currentLang.value] || translations.en)
 
 const currentTime = computed(() => {
-  const ts = Number(props.server.display_timestamp)
+  const ts = Number(props.server.current_timestamp)
   if (Number.isFinite(ts) && ts > 0) {
     return ts < 10000000000 ? ts * 1000 : ts
   }
@@ -128,7 +128,8 @@ const currentTime = computed(() => {
 const regionCode = computed(() => getFlagRegionCode(props.server.region))
 
 const isOnline = computed(() => {
-  const lastUpdated = new Date(props.server.last_updated).getTime()
+  const lastUpdated = normalizeTimestamp(props.server.report_timestamp ?? props.server.last_updated)
+  if (!lastUpdated) return false
   return (currentTime.value - lastUpdated) < TIME.ONLINE_THRESHOLD_MS
 })
 
@@ -192,11 +193,19 @@ const formatDateTime = (timestamp) => {
 }
 
 const dataTimeText = computed(() => {
-  const timestamp = normalizeTimestamp(
-    props.server.sample_timestamp ?? props.server.timestamp ?? props.server.last_updated
+  const reportTimestamp = normalizeTimestamp(props.server.report_timestamp ?? props.server.last_updated)
+  if (!isOnline.value) return formatDateTime(reportTimestamp)
+
+  const displayTimestamp = normalizeTimestamp(
+    props.server.display_timestamp ?? props.server.sample_timestamp ?? props.server.timestamp ?? reportTimestamp
   )
-  const lagSeconds = parseInt(props.server.sample_lag_seconds) || 0
-  return `${formatDateTime(timestamp)}${lagSeconds > 0 ? ` (+${lagSeconds}s)` : ''}`
+  const sampleTimestamp = normalizeTimestamp(
+    props.server.sample_timestamp ?? props.server.timestamp ?? displayTimestamp
+  )
+  const lagSeconds = displayTimestamp && sampleTimestamp
+    ? Math.max(0, Math.floor((displayTimestamp - sampleTimestamp) / 1000))
+    : 0
+  return `${formatDateTime(sampleTimestamp)}${lagSeconds > 0 ? ` (+${lagSeconds}s)` : ''}`
 })
 
 const isExpired = computed(() => {
