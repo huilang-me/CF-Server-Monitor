@@ -550,6 +550,7 @@
             <div class="form-group flex-1">
               <label class="form-label">{{ trans.collectInterval }}</label>
               <select v-model="editForm.collect_interval" class="form-select">
+                <option :value="0">0</option>
                 <option :value="1">1</option>
                 <option :value="2">2</option>
                 <option :value="5">5</option>
@@ -997,7 +998,7 @@ const editForm = ref({
   traffic_limit: '',
   traffic_calc_type: 'total',
   reset_day: 1,
-  collect_interval: 1,
+  collect_interval: 0,
   report_interval: 60,
   ping_mode: 'http',
   is_hidden: false
@@ -1021,7 +1022,7 @@ const validationError = ref(null)
 const showCopyModal = ref(false)
 const copyServerId = ref('')
 const targetOs = ref('linux')
-const collectInterval = ref(1)
+const collectInterval = ref(0)
 const reportInterval = ref(60)
 const pingMode = ref('http')
 const customCt = ref('')
@@ -1332,7 +1333,7 @@ const copyCmd = (serverId) => {
   const server = servers.value.find(s => s.id === serverId)
   copyServerId.value = serverId
   targetOs.value = 'linux'
-  collectInterval.value = server?.collect_interval || 1
+  collectInterval.value = server?.collect_interval ?? 0
   reportInterval.value = server?.report_interval || 60
   pingMode.value = server?.ping_mode || 'http'
   customCt.value = settings.value.custom_ct
@@ -1420,7 +1421,7 @@ const openEditModal = (server) => {
     traffic_limit: server.traffic_limit || '',
     traffic_calc_type: server.traffic_calc_type || 'total',
     reset_day: server.reset_day ?? 1,
-    collect_interval: server.collect_interval || 1,
+    collect_interval: server.collect_interval ?? 0,
     report_interval: server.report_interval || 60,
     ping_mode: server.ping_mode || 'http',
     is_hidden: server.is_hidden === '1'

@@ -407,7 +407,7 @@ export async function handleAdminAPI(request, env, sys) {
       if (!id || !isValidUUID(id)) {
         return createBadRequestResponse('服务器 ID 无效');
       }
-      const normalizedCollectInterval = normalizeInterval(collect_interval, 1);
+      const normalizedCollectInterval = normalizeInterval(collect_interval, 0, 0);
       const normalizedReportInterval = Math.max(normalizedCollectInterval, normalizeInterval(report_interval, 60));
       
       try {

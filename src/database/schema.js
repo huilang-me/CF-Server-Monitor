@@ -33,7 +33,7 @@ export async function initDatabase(db) {
         traffic_limit TEXT DEFAULT '',
         traffic_calc_type TEXT DEFAULT 'total',
         reset_day INTEGER DEFAULT 1,
-        collect_interval INTEGER DEFAULT 1,
+        collect_interval INTEGER DEFAULT 0,
         report_interval INTEGER DEFAULT 60,
         ping_mode TEXT DEFAULT 'http',
         is_hidden TEXT DEFAULT '0',

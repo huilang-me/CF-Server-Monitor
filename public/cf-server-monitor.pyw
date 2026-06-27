@@ -27,7 +27,7 @@ CONFIG_FILE = BASE_DIR / "cf_probe_config.json"
 LOG_FILE = BASE_DIR / "cf_probe.log"
 AGENT_FILE = Path(__file__).resolve()
 
-DEFAULT_COLLECT_INTERVAL = 1
+DEFAULT_COLLECT_INTERVAL = 0
 DEFAULT_INTERVAL = 60
 MAX_LOG_SIZE = 2 * 1024 * 1024
 LOG_BACKUP_COUNT = 3
@@ -36,7 +36,7 @@ DEFAULT_CONFIG = {
     "server_id": "服务器ID",
     "secret": "连接密匙",
     "worker_url": "上传网站",
-    "collect_interval": 1,
+    "collect_interval": 0,
     "report_interval": 60,
     "silent_start": False,
     "ping_type": "tcp",
@@ -502,8 +502,11 @@ def probe_loop(status_callback=None):
         report_interval = int(config.get("report_interval", DEFAULT_INTERVAL))
     except Exception:
         report_interval = DEFAULT_INTERVAL
-    collect_interval = max(collect_interval, 1)
-    report_interval = max(report_interval, collect_interval)
+    collect_interval = max(collect_interval, 0)
+    report_interval = max(report_interval, 1)
+    if collect_interval > 0:
+        report_interval = max(report_interval, collect_interval)
+    active_interval = collect_interval if collect_interval > 0 else report_interval
     ping_type = config.get("ping_type", "tcp").strip().lower() or "tcp"
 
     if not server_id or not secret or not worker_url:
@@ -523,10 +526,22 @@ def probe_loop(status_callback=None):
     }
 
     last_ip_check = 0
+    cache_lock = threading.Lock()
     last_ping_check = 0
+    ping_thread = None
     last_report_time = 0
     last_report_ok = False
     samples = []
+
+    def refresh_ping_cache():
+        values = {
+            "ping_ct": get_ping(CT_NODE, ping_type),
+            "ping_cu": get_ping(CU_NODE, ping_type),
+            "ping_cm": get_ping(CM_NODE, ping_type),
+            "ping_bd": get_ping(BD_NODE, ping_type),
+        }
+        with cache_lock:
+            cache.update(values)
 
     try:
         psutil.cpu_percent(interval=None)
@@ -548,26 +563,27 @@ def probe_loop(status_callback=None):
                 cache["ip_v6"] = "1" if cache["public_ipv6"] else "0"
                 last_ip_check = now
 
-            if now - last_ping_check >= 30 or last_ping_check == 0:
-                cache["ping_ct"] = get_ping(CT_NODE, ping_type)
-                cache["ping_cu"] = get_ping(CU_NODE, ping_type)
-                cache["ping_cm"] = get_ping(CM_NODE, ping_type)
-                cache["ping_bd"] = get_ping(BD_NODE, ping_type)
+            if (now - last_ping_check >= 30 or last_ping_check == 0) and (ping_thread is None or not ping_thread.is_alive()):
                 last_ping_check = now
+                ping_thread = threading.Thread(target=refresh_ping_cache, daemon=True)
+                ping_thread.start()
 
             metrics = collect_metrics(psutil, previous_net)
-            metrics["ip_v4"] = cache["ip_v4"]
-            metrics["ip_v6"] = cache["ip_v6"]
-            metrics["ping_ct"] = cache["ping_ct"]
-            metrics["ping_cu"] = cache["ping_cu"]
-            metrics["ping_cm"] = cache["ping_cm"]
-            metrics["ping_bd"] = cache["ping_bd"]
+            with cache_lock:
+                cache_snapshot = dict(cache)
+            metrics["ip_v4"] = cache_snapshot["ip_v4"]
+            metrics["ip_v6"] = cache_snapshot["ip_v6"]
+            metrics["ping_ct"] = cache_snapshot["ping_ct"]
+            metrics["ping_cu"] = cache_snapshot["ping_cu"]
+            metrics["ping_cm"] = cache_snapshot["ping_cm"]
+            metrics["ping_bd"] = cache_snapshot["ping_bd"]
 
             sample_ts = int(loop_start * 1000)
-            samples.append({
-                "ts": sample_ts,
-                "metrics": dict(metrics),
-            })
+            if collect_interval > 0:
+                samples.append({
+                    "ts": sample_ts,
+                    "metrics": dict(metrics),
+                })
 
             should_report = (
                 last_report_time == 0
@@ -579,18 +595,19 @@ def probe_loop(status_callback=None):
                     "id": server_id,
                     "secret": secret,
                     "metrics": metrics,
-                    "samples": samples,
                     "collect_interval": collect_interval,
                     "report_interval": report_interval,
                 }
+                if collect_interval > 0:
+                    payload["samples"] = samples
                 last_report_ok = http_post_json(worker_url, payload)
                 samples = []
                 last_report_time = now
 
             if status_callback:
                 gui_data = dict(metrics)
-                gui_data["public_ipv4"] = cache["public_ipv4"]
-                gui_data["public_ipv6"] = cache["public_ipv6"]
+                gui_data["public_ipv4"] = cache_snapshot["public_ipv4"]
+                gui_data["public_ipv6"] = cache_snapshot["public_ipv6"]
                 gui_data["uptime_text"] = get_uptime_text(psutil)
                 status_callback(gui_data, last_report_ok, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
@@ -602,7 +619,7 @@ def probe_loop(status_callback=None):
                 status_callback({}, False, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
         used = time.time() - loop_start
-        sleep_time = max(collect_interval - used, 1)
+        sleep_time = max(active_interval - used, 1)
         stop_event.wait(sleep_time)
 
     log("探针已停止。")
@@ -798,9 +815,9 @@ class ProbeGUI:
             collect_interval = int(self.collect_interval_var.get().strip() or DEFAULT_COLLECT_INTERVAL)
             interval = int(self.interval_var.get().strip() or DEFAULT_INTERVAL)
 
-            if collect_interval < 1:
-                collect_interval = 1
-            if interval < collect_interval:
+            if collect_interval < 0:
+                collect_interval = 0
+            if collect_interval > 0 and interval < collect_interval:
                 interval = collect_interval
 
             ping_type = self.ping_type_var.get().strip().lower()
@@ -924,9 +941,9 @@ class ProbeGUI:
         try:
             collect_interval = int(self.collect_interval_var.get().strip() or DEFAULT_COLLECT_INTERVAL)
             interval = int(self.interval_var.get().strip() or DEFAULT_INTERVAL)
-            if collect_interval < 1:
-                collect_interval = 1
-            if interval < collect_interval:
+            if collect_interval < 0:
+                collect_interval = 0
+            if collect_interval > 0 and interval < collect_interval:
                 interval = collect_interval
             ping_type = self.ping_type_var.get().strip().lower()
             if ping_type not in ("tcp", "http"):

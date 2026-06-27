@@ -238,19 +238,19 @@ https://你的项目名.你的子域.workers.dev/#admin
 Ubuntu / Debian / CentOS / RHEL / Fedora / Rocky / AlmaLinux 系统
 
 ```bash
-curl -sL https://你的项目.你的子域.workers.dev/install.sh | bash -s install -id=<SERVER_ID> -secret=<SECRET> -url=<WORKER_URL> [-collect_interval=1] [-interval=60] [-ping=http] [-ct=xxx] [-cu=xxx] [-cm=xxx] [-bd=xxx] [-reset_day=1] [-rx_correction=N] [-tx_correction=N]
+curl -sL https://你的项目.你的子域.workers.dev/install.sh | bash -s install -id=<SERVER_ID> -secret=<SECRET> -url=<WORKER_URL> [-collect_interval=0] [-interval=60] [-ping=http] [-ct=xxx] [-cu=xxx] [-cm=xxx] [-bd=xxx] [-reset_day=1] [-rx_correction=N] [-tx_correction=N]
 ```
 
 Alpine 系统
 
 ```bash
-curl -sL https://你的项目.你的子域.workers.dev/install-alpine.sh | sh -s install -id=<SERVER_ID> -secret=<SECRET> -url=<WORKER_URL> [-collect_interval=1] [-interval=60] [-ping=http] [-ct=xxx] [-cu=xxx] [-cm=xxx] [-bd=xxx] [-reset_day=1] [-rx_correction=N] [-tx_correction=N]
+curl -sL https://你的项目.你的子域.workers.dev/install-alpine.sh | sh -s install -id=<SERVER_ID> -secret=<SECRET> -url=<WORKER_URL> [-collect_interval=0] [-interval=60] [-ping=http] [-ct=xxx] [-cu=xxx] [-cm=xxx] [-bd=xxx] [-reset_day=1] [-rx_correction=N] [-tx_correction=N]
 ```
 
 OpenWrt / LEDE / ImmortalWrt 系统
 
 ```bash
-curl -sL https://你的项目.你的子域.workers.dev/install-openwrt.sh | sh -s install -id=<SERVER_ID> -secret=<SECRET> -url=<WORKER_URL> [-collect_interval=1] [-interval=60] [-ping=http] [-ct=xxx] [-cu=xxx] [-cm=xxx] [-bd=xxx] [-reset_day=1] [-rx_correction=N] [-tx_correction=N]
+curl -sL https://你的项目.你的子域.workers.dev/install-openwrt.sh | sh -s install -id=<SERVER_ID> -secret=<SECRET> -url=<WORKER_URL> [-collect_interval=0] [-interval=60] [-ping=http] [-ct=xxx] [-cu=xxx] [-cm=xxx] [-bd=xxx] [-reset_day=1] [-rx_correction=N] [-tx_correction=N]
 ```
 
 ### Windows 系统安装
@@ -276,7 +276,7 @@ curl -sL https://你的项目.你的子域.workers.dev/install-openwrt.sh | sh -
 | `-id`            | 服务器唯一标识符（必填）            | -      |
 | `-secret`        | API 认证密钥（必填）            | -      |
 | `-url`           | Worker 上报地址（必填）         | -      |
-| `-collect_interval` | 数据采集间隔（秒）            | `1`    |
+| `-collect_interval` | 数据采集间隔（秒），`0` 表示不额外采集并使用单条上报 | `0`    |
 | `-interval`      | 数据上报间隔（秒）               | `60`   |
 | `-ping`          | Ping 检测类型（`http`/`tcp`） | `http` |
 | `-ct`            | 自定义CT测试节点               | 默认节点   |
@@ -287,7 +287,7 @@ curl -sL https://你的项目.你的子域.workers.dev/install-openwrt.sh | sh -
 | `-rx_correction` | 下行流量校正（GB，直接设置当月下行数据）   | -      |
 | `-tx_correction` | 上行流量校正（GB，直接设置当月上行数据）   | -      |
 
-> **注意**：`-collect_interval` 控制本机采集频率，`-interval` 控制向 Worker 上报频率。默认 1 秒采集、60 秒上报；上报间隔越短，API 调用和数据库写入越多。
+> **注意**：`-collect_interval` 控制本机额外采集频率，`-interval` 控制向 Worker 上报频率。默认 `0` 为兼容模式：不额外采集，只按上报间隔发送单条数据；设置为 `1` 时才会 1 秒采集、按上报间隔批量发送。上报间隔越短，API 调用和数据库写入越多。
 
 </details>
 
