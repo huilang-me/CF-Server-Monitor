@@ -391,13 +391,18 @@ const queueLiveMessage = (msg) => {
     if (!update || !update.serverId) continue
     const samples = Array.isArray(update.samples)
       ? update.samples
-      : (update.payload || update.data ? [{ ts: update.ts || msg.ts, data: update.data || update.payload }] : [])
+      : (update.payload || update.data
+          ? [{
+              ts: (update.data || update.payload).sample_timestamp || (update.data || update.payload).last_updated || (update.data || update.payload).timestamp || update.ts || msg.ts,
+              data: update.data || update.payload
+            }]
+          : [])
 
     for (const sample of samples) {
       if (!sample || typeof sample !== 'object') continue
       const data = sample.data || sample.payload || sample.metrics
       if (!data) continue
-      queueLiveSample(update.serverId, data, sample.ts ?? sample.timestamp ?? data.last_updated ?? update.ts ?? msg.ts)
+      queueLiveSample(update.serverId, data, sample.ts ?? sample.timestamp ?? data.sample_timestamp ?? data.last_updated ?? data.timestamp ?? update.ts ?? msg.ts)
     }
   }
 }

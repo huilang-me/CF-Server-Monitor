@@ -912,8 +912,6 @@ body::before {
 
 .stat-time-value {
     color: var(--text-secondary);
-    font-size: 10px;
-    line-height: 1.4;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

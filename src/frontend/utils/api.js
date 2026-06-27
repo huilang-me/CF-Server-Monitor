@@ -56,7 +56,7 @@ export const createLiveSocket = (subscribe, handlers = {}, apiIndex = 0) => {
   const emitUpdate = ({ serverId, data, ts }) => {
     if (serverId && data && typeof onUpdate === 'function') {
       const receiveTs = Date.now()
-      const sampleTs = normalizeReplayTimestamp(ts || data.sample_timestamp || data.last_updated || data.timestamp, receiveTs)
+      const sampleTs = normalizeReplayTimestamp(data.sample_timestamp || data.last_updated || data.timestamp || ts, receiveTs)
       onUpdate({
         serverId,
         data: {
@@ -80,7 +80,12 @@ export const createLiveSocket = (subscribe, handlers = {}, apiIndex = 0) => {
       const events = []
       const samples = Array.isArray(update.samples)
         ? update.samples
-        : (update.payload || update.data ? [{ ts: update.ts || msg.ts, data: update.data || update.payload }] : [])
+        : (update.payload || update.data
+            ? [{
+                ts: (update.data || update.payload).sample_timestamp || (update.data || update.payload).last_updated || (update.data || update.payload).timestamp || update.ts || msg.ts,
+                data: update.data || update.payload
+              }]
+            : [])
 
       for (const sample of samples) {
         if (!sample || typeof sample !== 'object') continue
@@ -140,7 +145,11 @@ export const createLiveSocket = (subscribe, handlers = {}, apiIndex = 0) => {
       if (!msg) return
 
       if (shouldReplay && msg.type === 'update') {
-        emitUpdate({ serverId: msg.serverId, data: msg.data, ts: msg.ts || msg.data?.last_updated })
+        emitUpdate({
+          serverId: msg.serverId,
+          data: msg.data,
+          ts: msg.data?.sample_timestamp || msg.data?.last_updated || msg.data?.timestamp || msg.ts
+        })
       }
       if (shouldReplay && msg.type === 'batchUpdate') {
         replayBatch(msg)
