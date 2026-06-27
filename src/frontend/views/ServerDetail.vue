@@ -1138,7 +1138,6 @@ const goToLogin = () => {
   router.push('/admin')
 }
 
-let statusTimer = null
 let liveSocket = null
 
 const initChartsOnMount = async () => {
@@ -1163,6 +1162,15 @@ const initChartsOnMount = async () => {
   }
 }
 
+const handleVisibility = () => {
+  if (!liveSocket) return
+  if (document.hidden) {
+    liveSocket.close()
+  } else {
+    liveSocket.reconnect()
+  }
+}
+
 const init = async () => {
   await initChartsOnMount()
 
@@ -1177,14 +1185,10 @@ const init = async () => {
       if (String(sid) !== String(serverId)) return
       fetchCurrentStatus(data)
     },
-    onStatus: ({ connected }) => {
-      if (connected) {
-        if (statusTimer) { clearInterval(statusTimer); statusTimer = null }
-      } else if (!statusTimer) {
-        statusTimer = setInterval(() => fetchCurrentStatus(), TIME.POLL_INTERVAL_MS)
-      }
-    }
+    onStatus: ({ connected }) => {}
   }, apiIndex.value)
+
+  document.addEventListener('visibilitychange', handleVisibility)
 }
 
 watch([cpuChartRef, gpuChartRef, ramChartRef, diskChartRef, netChartRef, procChartRef, connChartRef, pingChartRef, lossChartRef, loadChartRef], () => {
@@ -1198,7 +1202,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  if (statusTimer) clearInterval(statusTimer)
+  document.removeEventListener('visibilitychange', handleVisibility)
   if (liveSocket) liveSocket.close()
   safeDestroyCharts()
 })

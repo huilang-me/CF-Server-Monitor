@@ -588,10 +588,8 @@ const refreshData = async () => {
 // -------------------------------------------------------------------------
 // 实时推送：
 //   - 订阅 "all"，收到任何服务器的更新都会合并对应 server 的指标
-//   - WS 连上后关闭 60s 兜底轮询；断开后临时开启作为降级（WS 重连成功后再次清除）
 // -------------------------------------------------------------------------
 let liveSockets = []
-let refreshInterval = null
 let themeObserver = null
 let timeUpdateInterval = null
 
@@ -605,11 +603,6 @@ const startLiveSocket = () => {
       onMessage: queueLiveMessage,
       onStatus: ({ connected }) => {
         liveConnected.value = !!connected
-        if (connected) {
-          if (refreshInterval) { clearInterval(refreshInterval); refreshInterval = null }
-        } else if (!refreshInterval) {
-          refreshInterval = setInterval(refreshData, 60000)
-        }
       }
     })]
     return
@@ -621,16 +614,8 @@ const startLiveSocket = () => {
       replay: false,
       onMessage: queueLiveMessage,
       onStatus: ({ connected }) => {
-        // 只要有一个连接成功，就认为实时推送可用
         const anyConnected = liveSockets.some(s => s && s.isConnected)
         liveConnected.value = anyConnected
-
-        if (anyConnected) {
-          if (refreshInterval) { clearInterval(refreshInterval); refreshInterval = null }
-        } else if (!refreshInterval) {
-          // 所有连接都断开时，启用降级轮询
-          refreshInterval = setInterval(refreshData, 60000)
-        }
       }
     }, index)
   })
@@ -793,7 +778,6 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  if (refreshInterval) clearInterval(refreshInterval)
   if (timeUpdateInterval) clearInterval(timeUpdateInterval)
   if (liveSockets.length > 0) {
     liveSockets.forEach(socket => {

@@ -1,8 +1,8 @@
 待办事项：
-- [ ] 验证Websocket修改后的DO占用效果（daily Durable Objects free tier limit of 101562500000 duration）
 - [ ] 新增一个仓库，用于纯前端项目开发，制作演示主题
 - [ ] 远程模式，访问后台多一个下拉选择，用于选择不同的 API 基础 URL，登录框以及登录后右上角选择，切换后清空登录信息刷新页面
 - [x] 前端项目config.json，新增title,backgroundImage字段，前端根据配置标题和背景图片。
+- [x] 验证Websocket修改后的DO占用效果（daily Durable Objects free tier limit of 101562500000 duration）
 - [x] build去掉根据.env自动生成config.json文件，而且不能删除config.json文件
 - [x] metrics_history删除ram字段，前端修改采用ram_used/ram_total计算ram占用率,保留两位小数百分比。
 - [x] metrics_history删除disk字段，前端应该已修改。

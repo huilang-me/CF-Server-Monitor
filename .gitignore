@@ -23,6 +23,7 @@ pnpm-lock.yaml
 *.swo
 *~
 .trae/
+.mimocode/
 
 # 日志
 *.log
