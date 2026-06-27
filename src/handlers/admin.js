@@ -6,6 +6,7 @@ import { clearSiteSettingsCache, saveSiteOptions } from '../utils/settings.js';
 import { mergeMetricsIntoServer } from '../utils/metrics.js';
 import { verifyTurnstileToken, md5Hash } from '../utils/common.js';
 import { AppError, createSuccessResponse, createBadRequestResponse, createUnauthorizedResponse, createErrorResponse } from '../utils/errors.js';
+import { addServerColumns } from '../database/updateDatabase.js';
 
 function isValidUUID(id) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
@@ -452,8 +453,14 @@ export async function handleAdminAPI(request, env, sys) {
           ).run();
         }
       } catch (e) {
-        console.error('Edit server error:', e);
-        return createErrorResponse(new Error('Update failed. Please go to Database Management and click "Upgrade Database" to migrate the new field.'));
+        if (e.message && /no such column/i.test(e.message)) {
+          console.warn('检测到数据库字段缺失，尝试添加缺失字段...');
+          await addServerColumns(env.DB);
+          return createBadRequestResponse('数据库字段缺失，已添加缺失字段,请再次点击保存');
+        }else{
+          const errMsg = e?.message || String(e);
+          return createBadRequestResponse(errMsg || '保存失败');
+        }
       }
       
       clearServersListCache();

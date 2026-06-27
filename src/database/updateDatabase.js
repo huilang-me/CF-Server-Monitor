@@ -74,7 +74,7 @@ async function migrateLoadToLoadAvg(db) {
   }
 }
 
-async function addServerColumns(db) {
+export async function addServerColumns(db) {
   try {
     const { results: columns } = await db.prepare(`PRAGMA table_info(servers)`).all();
     const existingCols = columns.map(c => c.name);
