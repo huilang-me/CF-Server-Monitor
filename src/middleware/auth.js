@@ -1,5 +1,5 @@
 const ALGORITHM = { name: 'HMAC', hash: 'SHA-256' };
-import { md5Hash } from '../utils/common.js';
+import { verifyPasswordHash } from '../utils/common.js';
 
 async function generateKeyFromSecret(secret) {
   const encoder = new TextEncoder();
@@ -111,7 +111,7 @@ export async function validateCredentials(request, env, sys) {
   try {
     const authHeader = request.headers.get('Authorization');
     if (!authHeader) {
-      return false;
+      return { valid: false, needsPasswordUpgrade: false };
     }
 
     const parts = authHeader.trim().split(/\s+/);
@@ -119,19 +119,19 @@ export async function validateCredentials(request, env, sys) {
     const encoded = parts[1];
 
     if (scheme !== 'Basic' || !encoded) {
-      return false;
+      return { valid: false, needsPasswordUpgrade: false };
     }
 
     let decoded;
     try {
       decoded = atob(encoded);
     } catch (e) {
-      return false;
+      return { valid: false, needsPasswordUpgrade: false };
     }
 
     const idx = decoded.indexOf(':');
     if (idx === -1) {
-      return false;
+      return { valid: false, needsPasswordUpgrade: false };
     }
 
     const username = decoded.slice(0, idx);
@@ -144,19 +144,27 @@ export async function validateCredentials(request, env, sys) {
         : 'admin';
 
     if (sys && sys.password && sys.password.length > 0) {
-      const hashedPassword = await md5Hash(password);
-      return username === validUsername && hashedPassword === sys.password;
+      if (username !== validUsername) {
+        return { valid: false, needsPasswordUpgrade: false };
+      }
+
+      const result = await verifyPasswordHash(password, sys.password);
+      return {
+        valid: result.valid,
+        needsPasswordUpgrade: result.needsRehash === true
+      };
     }
 
-    return (
+    const valid = (
       typeof env.API_SECRET === 'string' &&
       env.API_SECRET.length > 0 &&
       username === validUsername &&
       password === env.API_SECRET
     );
+    return { valid, needsPasswordUpgrade: false };
   } catch (e) {
     console.error('Credential validation error:', e);
-    return false;
+    return { valid: false, needsPasswordUpgrade: false };
   }
 }
 

@@ -40,6 +40,34 @@ function tryParseJSON(str) {
   }
 }
 
+function copyFields(target, source, fields) {
+  if (!source || typeof source !== 'object') return;
+  for (const field of fields) {
+    if (source[field] !== undefined) {
+      target[field] = source[field];
+    }
+  }
+}
+
+function hasMissingFields(source, fields) {
+  if (!source || typeof source !== 'object') return true;
+  return fields.some(field => source[field] === undefined);
+}
+
+async function loadLegacySettings(db, fields) {
+  const legacy = {};
+  const fieldSet = new Set(fields);
+  const { results } = await db.prepare('SELECT * FROM settings').all();
+  if (results && results.length > 0) {
+    results.forEach(r => {
+      if (fieldSet.has(r.key)) {
+        legacy[r.key] = r.value;
+      }
+    });
+  }
+  return legacy;
+}
+
 const SITE_SETTINGS_TTL = 60 * 1000;
 let cachedSiteSettings = null;
 let siteSettingsCacheExpiry = 0;
@@ -53,7 +81,7 @@ export async function loadSiteSettings(db) {
   debug('从数据库加载site settings');
 
   const result = { ...defaults };
-  let hasSite = false;
+  let siteOptions = null;
 
   try {
     const siteRow = await db.prepare(
@@ -62,25 +90,14 @@ export async function loadSiteSettings(db) {
     if (siteRow) {
       const parsed = tryParseJSON(siteRow.value);
       if (parsed) {
-        hasSite = true;
-        for (const field of SITE_FIELDS) {
-          if (parsed[field] !== undefined) {
-            result[field] = parsed[field];
-          }
-        }
+        siteOptions = parsed;
       }
     }
 
-    if (!hasSite) {
-      const { results } = await db.prepare('SELECT * FROM settings').all();
-      if (results && results.length > 0) {
-        results.forEach(r => {
-          if (SITE_FIELDS.includes(r.key)) {
-            result[r.key] = r.value;
-          }
-        });
-      }
+    if (hasMissingFields(siteOptions, SITE_FIELDS)) {
+      copyFields(result, await loadLegacySettings(db, SITE_FIELDS), SITE_FIELDS);
     }
+    copyFields(result, siteOptions, SITE_FIELDS);
   } catch (e) {
     console.error('加载站点设置失败:', e);
   }
@@ -97,8 +114,8 @@ export function clearSiteSettingsCache() {
 
 export async function loadSettings(db) {
   const result = { ...defaults };
-  let hasAppearance = false;
-  let hasSite = false;
+  let appearanceOptions = null;
+  let siteOptions = null;
 
   try {
     const appearanceRow = await db.prepare(
@@ -107,12 +124,7 @@ export async function loadSettings(db) {
     if (appearanceRow) {
       const parsed = tryParseJSON(appearanceRow.value);
       if (parsed) {
-        hasAppearance = true;
-        for (const field of APPEARANCE_FIELDS) {
-          if (parsed[field] !== undefined) {
-            result[field] = parsed[field];
-          }
-        }
+        appearanceOptions = parsed;
       }
     }
 
@@ -122,28 +134,24 @@ export async function loadSettings(db) {
     if (siteRow) {
       const parsed = tryParseJSON(siteRow.value);
       if (parsed) {
-        hasSite = true;
-        for (const field of SITE_FIELDS) {
-          if (parsed[field] !== undefined) {
-            result[field] = parsed[field];
-          }
-        }
+        siteOptions = parsed;
       }
     }
 
-    if (!hasAppearance || !hasSite) {
-      const { results } = await db.prepare('SELECT * FROM settings').all();
-      if (results && results.length > 0) {
-        results.forEach(r => {
-          if (!hasAppearance && APPEARANCE_FIELDS.includes(r.key)) {
-            result[r.key] = r.value;
-          }
-          if (!hasSite && SITE_FIELDS.includes(r.key)) {
-            result[r.key] = r.value;
-          }
-        });
+    const needsLegacyAppearance = hasMissingFields(appearanceOptions, APPEARANCE_FIELDS);
+    const needsLegacySite = hasMissingFields(siteOptions, SITE_FIELDS);
+    if (needsLegacyAppearance || needsLegacySite) {
+      const legacySettings = await loadLegacySettings(db, [...APPEARANCE_FIELDS, ...SITE_FIELDS]);
+      if (needsLegacyAppearance) {
+        copyFields(result, legacySettings, APPEARANCE_FIELDS);
+      }
+      if (needsLegacySite) {
+        copyFields(result, legacySettings, SITE_FIELDS);
       }
     }
+
+    copyFields(result, appearanceOptions, APPEARANCE_FIELDS);
+    copyFields(result, siteOptions, SITE_FIELDS);
   } catch (e) {
     console.error('加载设置失败:', e);
   }
@@ -159,8 +167,11 @@ export async function saveSiteOptions(db, updates) {
   const existingSiteOptions = siteRow && siteRow.value
     ? tryParseJSON(siteRow.value) || {}
     : {};
+  const legacySiteOptions = hasMissingFields(existingSiteOptions, SITE_FIELDS)
+    ? await loadLegacySettings(db, SITE_FIELDS)
+    : {};
   
-  const siteOptions = { ...existingSiteOptions, ...updates };
+  const siteOptions = { ...legacySiteOptions, ...existingSiteOptions, ...updates };
   
   await db.prepare(
     'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'

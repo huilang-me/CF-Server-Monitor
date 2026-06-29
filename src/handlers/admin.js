@@ -4,7 +4,7 @@ import { getAllServers } from '../utils/cache.js';
 import { clearServersListCache, clearServerDetailCache } from '../utils/cache.js';
 import { clearSiteSettingsCache, saveSiteOptions } from '../utils/settings.js';
 import { mergeMetricsIntoServer } from '../utils/metrics.js';
-import { verifyTurnstileToken, md5Hash } from '../utils/common.js';
+import { verifyTurnstileToken, hashPassword } from '../utils/common.js';
 import { AppError, createSuccessResponse, createBadRequestResponse, createUnauthorizedResponse, createErrorResponse } from '../utils/errors.js';
 import { addServerColumns } from '../database/updateDatabase.js';
 
@@ -164,10 +164,22 @@ export async function handleAdminAPI(request, env, sys) {
         }
       };
 
-      const isValid = await validateCredentials(mockRequest, env, sys);
+      const credentialResult = await validateCredentials(mockRequest, env, sys);
       
-      if (!isValid) {
+      if (!credentialResult.valid) {
         return createUnauthorizedResponse('Invalid username or password');
+      }
+
+      if (credentialResult.needsPasswordUpgrade) {
+        try {
+          const upgradedPasswordHash = await hashPassword(password);
+          await saveSiteOptions(env.DB, { password: upgradedPasswordHash });
+          if (sys) {
+            sys.password = upgradedPasswordHash;
+          }
+        } catch (e) {
+          console.error('Password hash upgrade failed:', e);
+        }
       }
 
       try {
@@ -311,7 +323,7 @@ export async function handleAdminAPI(request, env, sys) {
         if (settings[field] !== undefined) {
           if (field === 'password') {
             if (settings[field] && settings[field].length > 0) {
-              siteOptions[field] = await md5Hash(settings[field]);
+              siteOptions[field] = await hashPassword(settings[field]);
             }
           } else {
             siteOptions[field] = settings[field];

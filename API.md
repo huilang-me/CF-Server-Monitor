@@ -77,9 +77,10 @@
 - **使用位置**：`POST /admin/api` 的 `action: login`
 - **方式**：请求体字段 `username` / `password`（后端内部组装 `Basic base64(user:pass)` 进行校验）
 - **校验顺序**：
-  1. 若 `site_options.password` 已设置 → 与其 MD5 比对
-  2. 否则 → 与 `API_SECRET` 直接比对
-  3. 用户名：若 `site_options.username` 已设置则用之，否则使用 `API_USER_NAME` 环境变量，最终回退为 `admin`
+  1. 若 `site_options.password` 已设置为 PBKDF2 格式 → 按 `pbkdf2_sha256$iterations$salt$hash` 校验
+  2. 若 `site_options.password` 为旧版 32 位 MD5 → 按 MD5 兼容校验，成功后自动升级为 PBKDF2
+  3. 若 `site_options.password` 未设置或为空 → 与 `API_SECRET` 直接比对
+  4. 用户名：若 `site_options.username` 已设置则用之，否则使用 `API_USER_NAME` 环境变量，最终回退为 `admin`
 - **失败返回**：`401 { "error": "Invalid username or password", "code": 401 }`
 
 #### C. JWT Bearer（管理操作 → 后续管理请求）
@@ -871,7 +872,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
     "turnstile_secret_key": "",
     "jwt_secret": "",
     "username": "admin",
-    "password": "<plain text, will be MD5-hashed before save>",
+    "password": "<plain text, will be PBKDF2-hashed before save>",
     "cloudflare_account_id": "",
     "cloudflare_token": "",
     "custom_ct": "gd-ct-dualstack.ip.zstaticcdn.com",
@@ -892,7 +893,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
 
 **特殊处理**：
 
-- `password`：以**明文**传入；后端用 `crypto.subtle.digest('MD5', ...)` 计算后保存；如传空字符串则**不更新**密码
+- `password`：以**明文**传入；后端用 PBKDF2-HMAC-SHA-256（50,000 iterations、16 字节 salt、32 字节 hash）计算后保存为 `pbkdf2_sha256$50000$<salt hex>$<hash hex>`；如传空字符串则**不更新**密码；旧版 32 位 MD5 哈希仍可登录并会在成功登录后自动升级
 
 **Response 200**
 
@@ -1183,7 +1184,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
   turnstile_secret_key: string,
   jwt_secret: string,            // 长度 ≥ 32 才会被用于签 JWT
   username: string,
-  password: string,              // MD5 哈希值
+  password: string,              // PBKDF2 哈希值；旧版 MD5 哈希会在成功登录后自动升级
   cloudflare_account_id: string,
   cloudflare_token: string,
   custom_ct: string,             // 电信测速节点域名
@@ -1402,4 +1403,3 @@ wscat -c "wss://status.example.com/api/ws?subscribe=9b2c4d3e-1a2b-4c5d-9e8f-7a6b
 ***
 
 > 文档同步：与源码 `src/index.js`、`src/handlers/{admin,dashboard,frontend,update}.js`、`src/durable/MetricsBroadcaster.js`、`src/utils/{auth,settings,errors,cors,cache,metrics,common}.js`、`src/database/{schema,updateDatabase}.js` 一一对应；后续修改任一文件时，请同步更新本文件。
-
