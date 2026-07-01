@@ -1,7 +1,12 @@
 import { checkAuth, simpleAuthResponse, validateCredentials, generateToken } from '../middleware/auth.js';
 import { getLatestMetricsForAllServers } from '../database/schema.js';
-import { getAllServers } from '../utils/cache.js';
-import { clearServersListCache, clearServerDetailCache } from '../utils/cache.js';
+import {
+  getAllServers,
+  clearServersListCache,
+  clearServerDetailCache,
+  clearLatestMetricsCache,
+  clearMetricsHistoryCache
+} from '../utils/cache.js';
 import { clearSiteSettingsCache, saveSiteOptions } from '../utils/settings.js';
 import { mergeMetricsIntoServer } from '../utils/metrics.js';
 import { verifyTurnstileToken, hashPassword } from '../utils/common.js';
@@ -14,6 +19,34 @@ function isValidUUID(id) {
 
 function isValidName(name) {
   return name && typeof name === 'string' && name.trim().length > 0 && name.length <= 100;
+}
+
+async function tableExists(db, tableName) {
+  const result = await db.prepare(
+    `SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`
+  ).bind(tableName).first();
+  return !!result;
+}
+
+async function deleteServersWithHistory(db, ids) {
+  const uniqueIds = Array.from(new Set(ids));
+  if (uniqueIds.length === 0) return;
+
+  const placeholders = uniqueIds.map(() => '?').join(',');
+  const statements = [];
+
+  if (await tableExists(db, 'metrics_history_old')) {
+    statements.push(
+      db.prepare(`DELETE FROM metrics_history_old WHERE server_id IN (${placeholders})`).bind(...uniqueIds)
+    );
+  }
+
+  statements.push(
+    db.prepare(`DELETE FROM metrics_history WHERE server_id IN (${placeholders})`).bind(...uniqueIds),
+    db.prepare(`DELETE FROM servers WHERE id IN (${placeholders})`).bind(...uniqueIds)
+  );
+
+  await db.batch(statements);
 }
 
 const D1_DAILY_READ_LIMIT = 5000000;
@@ -369,11 +402,12 @@ export async function handleAdminAPI(request, env, sys) {
         return createBadRequestResponse('invalidServerId');
       }
       
-      await env.DB.prepare('DELETE FROM metrics_history WHERE server_id = ?').bind(id).run();
-      await env.DB.prepare('DELETE FROM servers WHERE id = ?').bind(id).run();
+      await deleteServersWithHistory(env.DB, [id]);
       
       clearServersListCache();
       clearServerDetailCache(id);
+      clearMetricsHistoryCache(id);
+      clearLatestMetricsCache();
       
       return createSuccessResponse({ 
         success: true, 
@@ -459,14 +493,14 @@ export async function handleAdminAPI(request, env, sys) {
         }
       }
       
-      const placeholders = ids.map(() => '?').join(',');
-      await env.DB.prepare(`DELETE FROM metrics_history WHERE server_id IN (${placeholders})`).bind(...ids).run();
-      await env.DB.prepare(`DELETE FROM servers WHERE id IN (${placeholders})`).bind(...ids).run();
+      await deleteServersWithHistory(env.DB, ids);
       
       clearServersListCache();
       for (const id of ids) {
         clearServerDetailCache(id);
+        clearMetricsHistoryCache(id);
       }
+      clearLatestMetricsCache();
       
       return createSuccessResponse({ 
         success: true, 
