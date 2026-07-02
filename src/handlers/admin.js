@@ -1,7 +1,6 @@
 import { checkAuth, simpleAuthResponse, validateCredentials, generateToken } from '../middleware/auth.js';
 import { getLatestMetricsForAllServers } from '../database/schema.js';
-import { getAllServers } from '../utils/cache.js';
-import { clearServersListCache, clearServerDetailCache } from '../utils/cache.js';
+import { getAllServers,clearServersListCache, clearServerDetailCache } from '../utils/cache.js';
 import { clearSiteSettingsCache, saveSiteOptions } from '../utils/settings.js';
 import { mergeMetricsIntoServer } from '../utils/metrics.js';
 import { verifyTurnstileToken, hashPassword } from '../utils/common.js';
@@ -15,10 +14,6 @@ function isValidUUID(id) {
 function isValidName(name) {
   return name && typeof name === 'string' && name.trim().length > 0 && name.length <= 100;
 }
-
-const D1_DAILY_READ_LIMIT = 5000000;
-const D1_DAILY_WRITE_LIMIT = 100000;
-const WORKERS_DAILY_REQUEST_LIMIT = 100000;
 
 function normalizeInterval(value, fallback, min = 1, max = 86400) {
   const num = parseInt(value, 10);
@@ -370,7 +365,6 @@ export async function handleAdminAPI(request, env, sys) {
         return createBadRequestResponse('invalidServerId');
       }
       
-      await env.DB.prepare('DELETE FROM metrics_history WHERE server_id = ?').bind(id).run();
       await env.DB.prepare('DELETE FROM servers WHERE id = ?').bind(id).run();
       
       clearServersListCache();
@@ -461,7 +455,6 @@ export async function handleAdminAPI(request, env, sys) {
       }
       
       const placeholders = ids.map(() => '?').join(',');
-      await env.DB.prepare(`DELETE FROM metrics_history WHERE server_id IN (${placeholders})`).bind(...ids).run();
       await env.DB.prepare(`DELETE FROM servers WHERE id IN (${placeholders})`).bind(...ids).run();
       
       clearServersListCache();
