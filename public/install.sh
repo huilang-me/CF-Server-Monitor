@@ -563,10 +563,11 @@ while true; do
     # 统计所有数据分区的总容量和使用量（排除引导、光驱、Snap等）
     DISK_TOTAL=0; DISK_USED=0
     DISK_STATS=$(df -kP 2>/dev/null | awk '
-        NR>1 && 
-        $1 ~ /^\/dev\/(sd|vd|hd|xvd|nvme)/ &&
+        NR>1 &&
         $1 !~ /^\/dev\/loop/ &&
-        $6 !~ /^(\/boot|\/boot\/efi|\/snap|\/var\/snap)/ { 
+        $6 !~ /^(\/boot|\/boot\/efi|\/snap|\/var\/snap)/ &&
+        $1 !~ /^(tmpfs|devtmpfs|overlay|squashfs)/ &&
+        $1 ~ /^\/dev\// { 
             total+=$2; used+=$3
         } 
         END {print total, used}
