@@ -42,6 +42,23 @@ export async function sendNotification(settings, msg) {
     } catch (e) {
       return "Telegram 通知发送失败: " + e.message;
     }
+  }else if(settings.tg_bot_token.includes("open.feishu.cn")) {
+    try {
+      await fetchWithRetry(settings.tg_bot_token, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        body: JSON.stringify({
+          msg_type: "interactive",
+          card: {
+            schema: "2.0",
+            header: { template: "blue",  title: { content: "💌 Cloudflare Server Monitor", tag: "plain_text" } },
+            body: { elements: [{tag: "markdown", content: msg}] }
+          }
+        })
+      });
+    } catch (e) {
+      return "飞书机器人通知发送失败: " + e.message;
+    }
   }else{
     try {
       await fetchWithRetry(settings.tg_bot_token, {
