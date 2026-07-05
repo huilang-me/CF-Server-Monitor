@@ -1,7 +1,6 @@
-export const HISTORY_ID_SEPARATOR = '0';
-export const HISTORY_TIME_DIGITS = 14;
-export const HISTORY_MIN_TIME_KEY = '19700101000000';
-export const HISTORY_MAX_TIME_KEY = '9'.repeat(HISTORY_TIME_DIGITS);
+export const HISTORY_PARTITION_MULTIPLIER = 10000000000;
+export const HISTORY_MIN_TIME_KEY = 0;
+export const HISTORY_MAX_TIME_KEY = HISTORY_PARTITION_MULTIPLIER - 1;
 export const HISTORY_MAX_PARTITION_ID = 9223;
 export const SERVER_HISTORY_PARTITION_COLUMN = 'history_partition_id';
 export const HISTORY_ID_OPTIMIZED_ENV = 'HISTORY_ID_OPTIMIZED';
@@ -80,23 +79,11 @@ export function normalizeHistoryTimestamp(value, fallback = Date.now()) {
   return ts < 10000000000 ? ts * 1000 : ts;
 }
 
-function pad(value, length = 2) {
-  return String(value).padStart(length, '0');
-}
-
 export function formatHistoryTimeKey(timestamp) {
   const normalized = normalizeHistoryTimestamp(timestamp, 0);
-  const date = new Date(normalized);
-  if (!Number.isFinite(date.getTime())) return HISTORY_MIN_TIME_KEY;
-
-  return [
-    pad(date.getUTCFullYear(), 4),
-    pad(date.getUTCMonth() + 1),
-    pad(date.getUTCDate()),
-    pad(date.getUTCHours()),
-    pad(date.getUTCMinutes()),
-    pad(date.getUTCSeconds())
-  ].join('');
+  const seconds = Math.floor(normalized / 1000);
+  if (!Number.isFinite(seconds) || seconds < HISTORY_MIN_TIME_KEY) return HISTORY_MIN_TIME_KEY;
+  return Math.min(seconds, HISTORY_MAX_TIME_KEY);
 }
 
 export function buildHistoryId(partitionId, timestamp) {
@@ -104,7 +91,7 @@ export function buildHistoryId(partitionId, timestamp) {
   if (!normalizedPartitionId) {
     throw new Error('Invalid history partition id');
   }
-  return `${normalizedPartitionId}${HISTORY_ID_SEPARATOR}${formatHistoryTimeKey(timestamp)}`;
+  return normalizedPartitionId * HISTORY_PARTITION_MULTIPLIER + formatHistoryTimeKey(timestamp);
 }
 
 export function getHistoryIdRange(partitionId, startTimestamp = null, endTimestamp = null) {
@@ -113,7 +100,7 @@ export function getHistoryIdRange(partitionId, startTimestamp = null, endTimesta
     throw new Error('Invalid history partition id');
   }
 
-  const prefix = `${normalizedPartitionId}${HISTORY_ID_SEPARATOR}`;
+  const prefix = normalizedPartitionId * HISTORY_PARTITION_MULTIPLIER;
   return {
     startId: prefix + (startTimestamp === null || startTimestamp === undefined
       ? HISTORY_MIN_TIME_KEY

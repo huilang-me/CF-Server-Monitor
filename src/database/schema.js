@@ -30,10 +30,8 @@ function buildHistorySource(tableName, useHistoryId, serverId, partitionId, cuto
           SELECT timestamp, ${columns} FROM ${quoteIdentifier(tableName)}
           WHERE id >= ?
             AND id <= ?
-            AND server_id = ?
-            AND timestamp >= ?
         `,
-      bindings: [startId, endId, serverId, cutoff]
+      bindings: [startId, endId]
     };
   }
 
@@ -409,10 +407,9 @@ export async function getLatestMetrics(db, serverId, env = {}) {
         SELECT * FROM metrics_history
         WHERE id >= ?
           AND id <= ?
-          AND server_id = ?
         ORDER BY id DESC
         LIMIT 1
-      `).bind(startId, endId, serverId).first();
+      `).bind(startId, endId).first();
     } else {
       result = await db.prepare(`
         SELECT * FROM metrics_history
@@ -468,10 +465,9 @@ async function getLatestMetricsWithMode(db, serverId, useHistoryId) {
       SELECT * FROM metrics_history
       WHERE id >= ?
         AND id <= ?
-        AND server_id = ?
       ORDER BY id DESC
       LIMIT 1
-    `).bind(startId, endId, serverId).first();
+    `).bind(startId, endId).first();
   }
 
   return await db.prepare(`
@@ -497,8 +493,7 @@ export async function deleteMetricsHistoryForServer(db, serverId, tableName = 'm
       DELETE FROM ${quoteIdentifier(tableName)}
       WHERE id >= ?
         AND id <= ?
-        AND server_id = ?
-    `).bind(startId, endId, serverId).run();
+    `).bind(startId, endId).run();
   } else {
     result = await db.prepare(`
       DELETE FROM ${quoteIdentifier(tableName)}

@@ -196,7 +196,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 环境变量 `HISTORY_ID_OPTIMIZED` 默认关闭。只有设置为 `1` / `true` / `yes` / `on` 时，后端才会启用整数历史 ID 优化。
 
 - 关闭时：使用原来的 `server_id + timestamp` 查询方式，并确保 `metrics_history(server_id, timestamp)` 联合索引存在。
-- 开启时：为 `servers` 分配 `history_partition_id`，写入 `history_partition_id + "0" + UTC yyyyMMddHHmmss` 形式的整数 `id`，删除 `metrics_history` 上的二级索引，并按 `id` 范围查询。
+- 开启时：为 `servers` 分配 `history_partition_id`，写入 `history_partition_id * 10000000000 + unix_seconds` 形式的安全整数 `id`，删除 `metrics_history` 上的二级索引，并按 `id` 范围查询。
 - 开启后不迁移旧历史数据，历史图表只展示开启后新写入的数据；`metrics_history_old` 也不参与优化模式查询。
 - 修改该环境变量并重新部署后，建议调用一次 `POST /updateDatabase` 或在后台点击“升级数据库”。
 
@@ -333,7 +333,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 **副作用**
 
 1. `metrics_history` 只写入本次请求中最新的一个样本，避免 1 秒采集时放大 D1 写入次数。
-2. 默认使用 SQLite 自增 `id`，并通过 `server_id + timestamp` 索引查询历史。设置 `HISTORY_ID_OPTIMIZED=1` 后，使用 `servers.history_partition_id + "0" + UTC yyyyMMddHHmmss` 作为整数 `id` 主键，例如分区 `1` 在 `2026-07-05T11:46:50Z` 写入 `1020260705114650`。
+2. 默认使用 SQLite 自增 `id`，并通过 `server_id + timestamp` 索引查询历史。设置 `HISTORY_ID_OPTIMIZED=1` 后，使用 `history_partition_id * 10000000000 + unix_seconds` 作为整数 `id` 主键，例如分区 `1` 在 `2026-07-05T11:46:50Z` 写入 `11783252010`。
 3. 触发 Durable Object `MetricsBroadcaster` 内部广播，统一发送 `{type:"batchUpdate", ts, updates:[...]}` 格式，前端按样本时间逐个回放。
 4. 写入 `request.cf.country`（或 `cf-ipcountry` Header）作为该条记录的 `region` 字段（统一转大写）。
 
@@ -534,7 +534,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 | 1 \~ 6    | 1 分钟                   |
 | ≤ 1       | 10 秒                   |
 
-> 默认历史查询使用 `server_id + timestamp` 条件取数；随后用 `ROW_NUMBER() OVER (PARTITION BY ts/interval ORDER BY ts)` 取每个采样窗口的第一条。设置 `HISTORY_ID_OPTIMIZED=1` 后，查询改为整数 `id` 主键范围（`history_partition_id0<cutoff>` 到 `history_partition_id099999999999999`）并保留 `server_id` 精确过滤。
+> 默认历史查询使用 `server_id + timestamp` 条件取数；随后用 `ROW_NUMBER() OVER (PARTITION BY ts/interval ORDER BY ts)` 取每个采样窗口的第一条。设置 `HISTORY_ID_OPTIMIZED=1` 后，查询改为整数 `id` 主键范围（`history_partition_id * 10000000000 + cutoff_seconds` 到 `history_partition_id * 10000000000 + 9999999999`）。
 
 **跨周查询**：默认模式下，当 `cutoff` 早于本周日 00:00 UTC 且存在 `metrics_history_old` 表时，自动 `UNION ALL` 两张表。优化模式不查询 `metrics_history_old`，只展示开启后写入当前表的新历史数据。
 

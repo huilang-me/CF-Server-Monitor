@@ -9,6 +9,9 @@ import {
   SERVER_HISTORY_PARTITION_COLUMN
 } from './historyKey.js';
 
+const OPTIMIZED_HISTORY_STORAGE_SETTING = 'history_id_optimized_storage_version';
+const OPTIMIZED_HISTORY_STORAGE_VERSION = 'safe_integer_v1';
+
 export async function updateDatabase(db, env = {}) {
   console.log('开始执行数据库更新...');
   const results = [];
@@ -158,12 +161,37 @@ async function isOptimizedHistoryTableReady(db) {
   return HISTORY_COLUMN_NAMES.every(column => existingColumns.has(column));
 }
 
+async function ensureSettingsTable(db) {
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    )
+  `).run();
+}
+
+async function getOptimizedHistoryStorageVersion(db) {
+  await ensureSettingsTable(db);
+  const row = await db.prepare(
+    `SELECT value FROM settings WHERE key = ?`
+  ).bind(OPTIMIZED_HISTORY_STORAGE_SETTING).first();
+  return row?.value || '';
+}
+
+async function setOptimizedHistoryStorageVersion(db) {
+  await ensureSettingsTable(db);
+  await db.prepare(
+    `INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+  ).bind(OPTIMIZED_HISTORY_STORAGE_SETTING, OPTIMIZED_HISTORY_STORAGE_VERSION).run();
+}
+
 export async function ensureOptimizedHistoryStorage(db) {
   try {
     await ensureServerHistoryPartitions(db);
 
+    const storageVersion = await getOptimizedHistoryStorageVersion(db);
     let reset = false;
-    if (!await isOptimizedHistoryTableReady(db)) {
+    if (storageVersion !== OPTIMIZED_HISTORY_STORAGE_VERSION || !await isOptimizedHistoryTableReady(db)) {
       await db.prepare(`DROP TABLE IF EXISTS metrics_history`).run();
       await db.prepare(createMetricsHistoryTableSql()).run();
       await isHistoryIdPrimaryKey(db, 'metrics_history', { force: true });
@@ -174,11 +202,13 @@ export async function ensureOptimizedHistoryStorage(db) {
     if (!indexes.success) {
       return indexes;
     }
+    await setOptimizedHistoryStorageVersion(db);
 
     return {
       success: true,
       reset,
       dropped: indexes.dropped || 0,
+      version: OPTIMIZED_HISTORY_STORAGE_VERSION,
       message: reset ? '已重建优化历史表' : '优化历史表已就绪'
     };
   } catch (e) {
