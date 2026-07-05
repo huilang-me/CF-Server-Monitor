@@ -72,6 +72,7 @@ const now = Date.now();
 const servers = [
   {
     id: '550e8400-e29b-41d4-a716-446655440001',
+    history_partition_id: 1,
     name: 'US-East-Fast',
     server_group: 'Production',
     price: '$15/mo',
@@ -83,6 +84,7 @@ const servers = [
   },
   {
     id: '550e8400-e29b-41d4-a716-446655440002',
+    history_partition_id: 2,
     name: 'JP-Tokyo-Stable',
     server_group: 'Production',
     price: '$10/mo',
@@ -135,11 +137,11 @@ const serverLatestMetrics = {};
 
 for (const server of servers) {
   sql += `INSERT INTO servers (
-    id, name, server_group, price, expire_date, bandwidth, traffic_limit, is_hidden, sort_order
+    id, name, server_group, price, expire_date, bandwidth, traffic_limit, is_hidden, sort_order, history_partition_id
   ) VALUES (
     '${server.id}', '${server.name}', '${server.server_group}', '${server.price}', 
     '${server.expire_date}', '${server.bandwidth}', '${server.traffic_limit}', 
-    '${server.is_hidden}', ${server.sort_order}
+    '${server.is_hidden}', ${server.sort_order}, ${server.history_partition_id}
   );\n`;
 }
 
@@ -209,7 +211,7 @@ INSERT INTO metrics_history (
   net_rx_monthly, net_tx_monthly,
   region
 ) VALUES (
-  '${buildHistoryId(server.id, ts)}',
+  ${buildHistoryId(server.history_partition_id, ts)},
   '${server.id}',
   ${ts},
   ${parseFloat(metrics.cpu)},

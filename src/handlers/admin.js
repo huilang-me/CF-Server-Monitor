@@ -7,6 +7,7 @@ import { verifyTurnstileToken, hashPassword } from '../utils/common.js';
 import { AppError, createSuccessResponse, createBadRequestResponse, createUnauthorizedResponse, createErrorResponse } from '../utils/errors.js';
 import { addServerColumns } from '../database/updateDatabase.js';
 import { sendNotification } from '../services/notification.js';
+import { getNextServerHistoryPartitionId } from '../database/historyKey.js';
 
 function isValidUUID(id) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
@@ -366,15 +367,16 @@ export async function handleAdminAPI(request, env, sys) {
       
       const id = crypto.randomUUID();
       const group = data.server_group || 'Default';
+      const historyPartitionId = await getNextServerHistoryPartitionId(env.DB);
       
       const { max_order } = await env.DB.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_order FROM servers').first();
       const sortOrder = (max_order || 0) + 1;
       
       await env.DB.prepare(`
         INSERT INTO servers 
-        (id, name, server_group, sort_order) 
-        VALUES (?, ?, ?, ?)
-      `).bind(id, name, group, sortOrder).run();
+        (id, name, server_group, sort_order, history_partition_id)
+        VALUES (?, ?, ?, ?, ?)
+      `).bind(id, name, group, sortOrder, historyPartitionId).run();
       
       clearServersListCache();
       
