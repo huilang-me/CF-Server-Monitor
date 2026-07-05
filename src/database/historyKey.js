@@ -222,7 +222,7 @@ export async function getNextServerHistoryPartitionId(db) {
   return nextAvailableHistoryPartitionId(usedIds);
 }
 
-export async function getServerHistoryPartitionId(db, serverId) {
+export async function getServerHistoryPartitionForExistingServer(db, serverId) {
   if (serverHistoryPartitionCache.has(serverId)) {
     return serverHistoryPartitionCache.get(serverId);
   }
@@ -246,6 +246,10 @@ export async function getServerHistoryPartitionId(db, serverId) {
   }
 
   let partitionId = normalizeHistoryPartitionId(row?.history_partition_id);
+  if (!row) {
+    return null;
+  }
+
   if (partitionId) {
     serverHistoryPartitionCache.set(serverId, partitionId);
     return partitionId;
@@ -255,11 +259,23 @@ export async function getServerHistoryPartitionId(db, serverId) {
 
   row = await selectPartition();
   partitionId = normalizeHistoryPartitionId(row?.history_partition_id);
+  if (!row) {
+    return null;
+  }
+
   if (!partitionId) {
     throw new Error(`Missing history partition id for server ${serverId}`);
   }
 
   serverHistoryPartitionCache.set(serverId, partitionId);
+  return partitionId;
+}
+
+export async function getServerHistoryPartitionId(db, serverId) {
+  const partitionId = await getServerHistoryPartitionForExistingServer(db, serverId);
+  if (!partitionId) {
+    throw new Error(`Missing history partition id for server ${serverId}`);
+  }
   return partitionId;
 }
 

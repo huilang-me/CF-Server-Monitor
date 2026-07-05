@@ -280,7 +280,7 @@ export async function weeklyCleanup(db, env = {}) {
   }
 }
 
-export async function saveMetricsHistory(db, serverId, metrics, regionCode = '', timestamp = null, env = {}, partitionRepairAttempted = false) {
+export async function saveMetricsHistory(db, serverId, metrics, regionCode = '', timestamp = null, env = {}, partitionIdOverride = null, partitionRepairAttempted = false) {
   const useHistoryId = isHistoryIdOptimized(env);
 
   try {
@@ -299,7 +299,7 @@ export async function saveMetricsHistory(db, serverId, metrics, regionCode = '',
       return Math.max(0, Math.min(100, num));
     };
     
-    const partitionId = useHistoryId ? await getServerHistoryPartitionId(db, serverId) : null;
+    const partitionId = useHistoryId ? (partitionIdOverride || await getServerHistoryPartitionId(db, serverId)) : null;
 
     const insertColumns = [
       'server_id', 'timestamp', 'cpu', 'load_avg',
@@ -368,19 +368,19 @@ export async function saveMetricsHistory(db, serverId, metrics, regionCode = '',
 
     if (useHistoryId && result?.meta?.changes === 0 && !partitionRepairAttempted) {
       await ensureServerHistoryPartitions(db);
-      return saveMetricsHistory(db, serverId, metrics, regionCode, timestamp, env, true);
+      return saveMetricsHistory(db, serverId, metrics, regionCode, timestamp, env, null, true);
     }
   } catch (e) {
     if (useHistoryId && e.message && /datatype mismatch|NOT NULL constraint failed: metrics_history\.id/i.test(e.message) && !partitionRepairAttempted) {
       await ensureServerHistoryPartitions(db);
-      return saveMetricsHistory(db, serverId, metrics, regionCode, timestamp, env, true);
+      return saveMetricsHistory(db, serverId, metrics, regionCode, timestamp, env, null, true);
     }
 
     // 检测是否是 "has no column" 错误，如果是则添加缺失字段
     if (e.message && /has no column/i.test(e.message)) {
       if (useHistoryId && !partitionRepairAttempted) {
         await addHistoryColumns(db);
-        return saveMetricsHistory(db, serverId, metrics, regionCode, timestamp, env, true);
+        return saveMetricsHistory(db, serverId, metrics, regionCode, timestamp, env, partitionIdOverride, true);
       }
 
       console.warn('检测到数据库字段缺失，尝试添加缺失字段...');

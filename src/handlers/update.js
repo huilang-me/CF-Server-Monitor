@@ -1,4 +1,5 @@
 import { saveMetricsHistory } from '../database/schema.js';
+import { getServerHistoryPartitionForExistingServer, isHistoryIdOptimized } from '../database/historyKey.js';
 import { checkServerExists } from '../utils/cache.js';
 import { mergeMetricsIntoServer } from '../utils/metrics.js';
 import { createErrorResponse, createUnauthorizedResponse, createNotFoundResponse, createBadRequestResponse } from '../utils/errors.js';
@@ -131,7 +132,11 @@ export async function handleUpdate(request, env, ctx) {
 
     let regionCode = request.cf?.country || request.headers?.get('cf-ipcountry') || '';
 
-    const serverExists = await checkServerExists(env.DB, id);
+    const optimizedHistory = isHistoryIdOptimized(env);
+    const historyPartitionId = optimizedHistory
+      ? await getServerHistoryPartitionForExistingServer(env.DB, id)
+      : null;
+    const serverExists = optimizedHistory ? !!historyPartitionId : await checkServerExists(env.DB, id);
 
     if (!serverExists) {
       return createNotFoundResponse('Server not found');
@@ -143,7 +148,7 @@ export async function handleUpdate(request, env, ctx) {
     }
 
     const latestSample = samples[samples.length - 1];
-    await saveMetricsHistory(env.DB, id, latestSample.metrics, regionCode, latestSample.ts, env);
+    await saveMetricsHistory(env.DB, id, latestSample.metrics, regionCode, latestSample.ts, env, historyPartitionId);
 
     const broadcastSamples = toBroadcastSamples(id, samples, regionCode);
     // 加入批量队列，由后台定时任务统一推送到 DO
