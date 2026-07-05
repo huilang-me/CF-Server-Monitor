@@ -28,6 +28,7 @@ async function fetchWithRetry(url, options, retries = MAX_RETRIES) {
 
 export async function sendNotification(settings, msg) {
   if(!settings.tg_bot_token) return;
+  const title = "💌 Cloudflare Server Monitor";
   if(settings.tg_chat_id) {
     try {
       await fetchWithRetry(`https://api.telegram.org/bot${settings.tg_bot_token}/sendMessage`, {
@@ -51,7 +52,7 @@ export async function sendNotification(settings, msg) {
           msg_type: "interactive",
           card: {
             schema: "2.0",
-            header: { template: "blue",  title: { content: "💌 Cloudflare Server Monitor", tag: "plain_text" } },
+            header: { template: "blue",  title: { content: title, tag: "plain_text" } },
             body: { elements: [{tag: "markdown", content: msg}] }
           }
         })
@@ -65,15 +66,15 @@ export async function sendNotification(settings, msg) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          title: "💌 Cloudflare Server Monitor",
-          body: msg.replace(/\*\*/g, ""),
-          group: "您的分组名"
+          title: title,
+          markdown: msg,
+          group: "Cloudflare Server Monitor"
         })
       });
     } catch (e) {
       return "企业微信通知发送失败: " + e.message;
     }
-  }else{
+  }else if(settings.tg_bot_token.includes("https://qyapi.weixin.qq.com")){
     try {
       await fetchWithRetry(settings.tg_bot_token, {
         method: 'POST',
@@ -86,6 +87,39 @@ export async function sendNotification(settings, msg) {
     } catch (e) {
       return "企业微信通知发送失败: " + e.message;
     }
+  // Server 酱（使用 sendkey）
+  }else if(settings.tg_bot_token.includes("https://sctapi.ftqq.com/")) {
+    try {
+      await fetchWithRetry(settings.tg_bot_token, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: title,
+          desp: msg
+        })
+      });
+    } catch (e) {
+      return "Server酱通知发送失败: " + e.message;
+    }
+  }else if(settings.tg_bot_token.includes("https://wxpusher.zjiecode.com/api/send/message/SPT_")) {
+    const match = settings.tg_bot_token.match(/\/message\/([^/]+)/);
+    const spt = match ? match[1] : null;
+    try {
+      await fetchWithRetry("https://wxpusher.zjiecode.com/api/send/message/simple-push", {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          "content": msg,
+          "summary": title,
+          "contentType":3,
+          "spt": spt,
+        })
+      });
+    } catch (e) {
+      return "WxPusher通知发送失败: " + e.message;
+    }
+  }else {
+    return "未知的通知方式";
   }
 }
 

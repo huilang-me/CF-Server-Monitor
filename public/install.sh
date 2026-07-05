@@ -24,6 +24,11 @@ CONFIG_DIR="/etc/config/cf-probe"
 CONFIG_FILE="${CONFIG_DIR}/config.conf"
 TRAFFIC_DATA_FILE="${CONFIG_DIR}/traffic.dat"
 OLD_TRAFFIC_DATA_FILE="/var/lib/cf-probe/traffic.dat"
+CONTAINER_PID_FILE="/run/cf-probe.pid"
+CONTAINER_LOG_FILE="/var/log/cf-probe.log"
+
+# 全局运行模式: systemd | container
+RUNTIME_MODE="systemd"
 
 print_banner() {
     echo -e "${CYAN}╔══════════════════════════════════════════════════╗${NC}"
@@ -65,6 +70,16 @@ print_usage() {
     echo "  bash $0 install -id=server123 -secret=abc123 -url=https://worker.example.com -reset_day=15"
     echo "  bash $0 install -id=server123 -secret=abc123 -url=https://worker.example.com -rx_correction=10 -tx_correction=5"
     exit 1
+}
+
+detect_runtime_mode() {
+    if [ "$(cat /proc/1/comm 2>/dev/null)" = "systemd" ] && [ -d /run/systemd/system ]; then
+        RUNTIME_MODE="systemd"
+        info "Runtime mode: systemd"
+    else
+        RUNTIME_MODE="container"
+        warn "Runtime mode: container"
+    fi
 }
 
 sed_escape() {
@@ -126,20 +141,27 @@ install_deps() {
             error "无法自动安装依赖 [$cmd]，请手动安装后重试。"
         fi
     done
-    
-    if ! command -v systemctl >/dev/null 2>&1; then
-        error "本脚本仅支持基于 systemd 的 Linux 发行版。"
-    fi
+
     info "基础依赖组件检查通过"
 }
 
 stop_old_service() {
     step "清理可能存在的旧服务进程..."
-    if systemctl is-active --quiet "${SERVICE_NAME}.service" 2>/dev/null; then
-        systemctl stop "${SERVICE_NAME}.service" 2>/dev/null || true
+    if command -v systemctl >/dev/null 2>&1; then
+        if systemctl is-active --quiet "${SERVICE_NAME}.service" 2>/dev/null; then
+            systemctl stop "${SERVICE_NAME}.service" 2>/dev/null || true
+        fi
+        if systemctl is-enabled --quiet "${SERVICE_NAME}.service" 2>/dev/null; then
+            systemctl disable "${SERVICE_NAME}.service" 2>/dev/null || true
+        fi
     fi
-    if systemctl is-enabled --quiet "${SERVICE_NAME}.service" 2>/dev/null; then
-        systemctl disable "${SERVICE_NAME}.service" 2>/dev/null || true
+    if [ -f "${CONTAINER_PID_FILE}" ]; then
+        local old_pid
+        old_pid=$(cat "${CONTAINER_PID_FILE}" 2>/dev/null || echo "")
+        if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+            kill "$old_pid" 2>/dev/null || true
+        fi
+        rm -f "${CONTAINER_PID_FILE}"
     fi
     if pgrep -f "${SERVICE_NAME}.sh" >/dev/null 2>&1; then
         pkill -9 -f "${SERVICE_NAME}.sh" 2>/dev/null || true
@@ -736,6 +758,8 @@ PROBE_EOF
 }
 
 create_service() {
+    [ "$RUNTIME_MODE" != "systemd" ] && return
+
     step "构建高兼容、全版本通用的 Systemd 守护配置..."
     
     cat > "${SERVICE_FILE}" << EOF
@@ -769,16 +793,38 @@ EOF
 }
 
 start_service() {
-    step "加载进程树并激活监控探针..."
-    systemctl daemon-reload
-    systemctl enable ${SERVICE_NAME}.service >/dev/null 2>&1 || true
-    systemctl restart ${SERVICE_NAME}.service
-    
-    sleep 1.5
-    if systemctl is-active --quiet ${SERVICE_NAME}.service; then
-        info "探针监控引擎已进入平稳运行状态。"
+    if [ "$RUNTIME_MODE" = "systemd" ]; then
+        step "加载进程树并激活监控探针..."
+        systemctl daemon-reload
+        systemctl enable ${SERVICE_NAME}.service >/dev/null 2>&1 || true
+        systemctl restart ${SERVICE_NAME}.service
+
+        sleep 1.5
+        if systemctl is-active --quiet ${SERVICE_NAME}.service; then
+            info "探针监控引擎已进入平稳运行状态。"
+        else
+            error "探针服务未能启动成功。请执行命令排查原因: journalctl -u ${SERVICE_NAME} -n 20"
+        fi
     else
-        error "探针服务未能启动成功。请执行命令排查原因: journalctl -u ${SERVICE_NAME} -n 20"
+        step "以容器模式启动监控探针..."
+
+        if [ -f "${CONTAINER_PID_FILE}" ] && kill -0 "$(cat "${CONTAINER_PID_FILE}")" 2>/dev/null; then
+            info "探针已在运行中 (PID: $(cat "${CONTAINER_PID_FILE}"))"
+            return
+        fi
+
+        mkdir -p /var/log 2>/dev/null || true
+
+        nohup bash "${SCRIPT_FILE}" >> "${CONTAINER_LOG_FILE}" 2>&1 &
+        local pid=$!
+        echo "$pid" > "${CONTAINER_PID_FILE}"
+
+        sleep 1.5
+        if kill -0 "$pid" 2>/dev/null; then
+            info "探针监控引擎已启动 (PID: $pid)"
+        else
+            error "探针启动失败，请查看日志: ${CONTAINER_LOG_FILE}"
+        fi
     fi
 }
 
@@ -818,6 +864,7 @@ install_probe() {
     print_banner
     check_root
     detect_os
+    detect_runtime_mode
     install_deps
     stop_old_service
 
@@ -983,10 +1030,16 @@ EOF
     [ -n "${CU_NODE}" ] && echo -e "    ● CU节点      : ${CU_NODE}"
     [ -n "${CM_NODE}" ] && echo -e "    ● CM节点      : ${CM_NODE}"
     [ -n "${BD_NODE}" ] && echo -e "    ● BD节点      : ${BD_NODE}"
-    echo -e "  管理指令 :"
-    echo -e "    ● 查看实时日志 : journalctl -u ${SERVICE_NAME} -f"
-    echo -e "    ● 查看运行状态 : systemctl status ${SERVICE_NAME}"
-    echo -e "    ● 停止探针服务 : systemctl stop ${SERVICE_NAME}"
+    if [ "$RUNTIME_MODE" = "systemd" ]; then
+        echo -e "  管理指令 :"
+        echo -e "    ● 查看实时日志 : journalctl -u ${SERVICE_NAME} -f"
+        echo -e "    ● 查看运行状态 : systemctl status ${SERVICE_NAME}"
+        echo -e "    ● 停止探针服务 : systemctl stop ${SERVICE_NAME}"
+    else
+        echo -e "  管理指令 :"
+        echo -e "    ● 查看实时日志 : tail -f ${CONTAINER_LOG_FILE}"
+        echo -e "    ● 停止探针服务 : kill \$(cat ${CONTAINER_PID_FILE})"
+    fi
     echo -e "=============================================\n"
 }
 
@@ -995,18 +1048,24 @@ uninstall_probe() {
     echo -e "${YELLOW}[!] 开始执行无残留深度卸载清理方案...${NC}\n"
     check_root
 
+    detect_runtime_mode
+
     step "停用并撤销系统守护进程..."
-    if systemctl is-active --quiet "${SERVICE_NAME}.service" 2>/dev/null; then
-        systemctl stop "${SERVICE_NAME}.service" 2>/dev/null || true
-    fi
-    if systemctl is-enabled --quiet "${SERVICE_NAME}.service" 2>/dev/null; then
-        systemctl disable "${SERVICE_NAME}.service" 2>/dev/null || true
+    if command -v systemctl >/dev/null 2>&1; then
+        if systemctl is-active --quiet "${SERVICE_NAME}.service" 2>/dev/null; then
+            systemctl stop "${SERVICE_NAME}.service" 2>/dev/null || true
+        fi
+        if systemctl is-enabled --quiet "${SERVICE_NAME}.service" 2>/dev/null; then
+            systemctl disable "${SERVICE_NAME}.service" 2>/dev/null || true
+        fi
     fi
 
     step "清理服务描述性系统文件..."
     rm -f "${SERVICE_FILE}"
-    systemctl daemon-reload 2>/dev/null || true
-    systemctl reset-failed "${SERVICE_NAME}" 2>/dev/null || true
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl reset-failed "${SERVICE_NAME}" 2>/dev/null || true
+    fi
 
     step "销毁探针物理可执行代码文件..."
     rm -f "${SCRIPT_FILE}"
@@ -1017,6 +1076,17 @@ uninstall_probe() {
     step "抹除流量追踪数据..."
     rm -rf /var/lib/${SERVICE_NAME}
     rm -rf "${CONFIG_DIR}"
+
+    step "清理容器模式运行痕迹..."
+    if [ -f "${CONTAINER_PID_FILE}" ]; then
+        local old_pid
+        old_pid=$(cat "${CONTAINER_PID_FILE}" 2>/dev/null || echo "")
+        if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+            kill "$old_pid" 2>/dev/null || true
+        fi
+        rm -f "${CONTAINER_PID_FILE}"
+    fi
+    rm -f "${CONTAINER_LOG_FILE}"
 
     step "根除孤儿或僵尸状态的探测残留进程..."
     if pgrep -f "${SERVICE_NAME}.sh" >/dev/null 2>&1; then
