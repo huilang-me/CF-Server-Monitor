@@ -22,6 +22,7 @@
   - [0.4 统一错误码](#04-统一错误码)
   - [0.5 限流与配额](#05-限流与配额)
   - [0.6 CORS](#06-cors)
+  - [0.7 历史查询优化开关](#07-历史查询优化开关)
 - [1. 探针上报接口](#1-探针上报接口)
   - [1.1](#11-post-update---指标上报agent-入口) [`POST /update`](#11-post-update---指标上报agent-入口) [- 指标上报（Agent 入口）](#11-post-update---指标上报agent-入口)
 - [2. 公开 API（前端/管理端共用）](#2-公开-api前端管理端共用)
@@ -190,6 +191,15 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 - 预检请求 `OPTIONS` → 直接返回 `204`，并回显 `Access-Control-Request-Method` / `Access-Control-Request-Headers`，缓存 86400 秒。
 - 未配置或未命中 → 不会下发 CORS Header，浏览器侧会被同源策略拦截。
 
+### 0.7 历史查询优化开关
+
+环境变量 `HISTORY_ID_OPTIMIZED` 默认关闭。只有设置为 `1` / `true` / `yes` / `on` 时，后端才会启用整数历史 ID 优化。
+
+- 关闭时：使用原来的 `server_id + timestamp` 查询方式，并确保 `metrics_history(server_id, timestamp)` 联合索引存在。
+- 开启时：为 `servers` 分配 `history_partition_id`，写入 `history_partition_id + "0" + UTC yyyyMMddHHmmss` 形式的整数 `id`，删除 `metrics_history` 上的二级索引，并按 `id` 范围查询。
+- 开启后不迁移旧历史数据，历史图表只展示开启后新写入的数据；`metrics_history_old` 也不参与优化模式查询。
+- 修改该环境变量并重新部署后，建议调用一次 `POST /updateDatabase` 或在后台点击“升级数据库”。
+
 ***
 
 ## 1. 探针上报接口
@@ -323,7 +333,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 **副作用**
 
 1. `metrics_history` 只写入本次请求中最新的一个样本，避免 1 秒采集时放大 D1 写入次数。
-2. 新版历史表使用 `servers.history_partition_id + "0" + UTC yyyyMMddHHmmss` 作为整数 `id` 主键，例如分区 `1` 在 `2026-07-05T11:46:50Z` 写入 `1020260705114650`。
+2. 默认使用 SQLite 自增 `id`，并通过 `server_id + timestamp` 索引查询历史。设置 `HISTORY_ID_OPTIMIZED=1` 后，使用 `servers.history_partition_id + "0" + UTC yyyyMMddHHmmss` 作为整数 `id` 主键，例如分区 `1` 在 `2026-07-05T11:46:50Z` 写入 `1020260705114650`。
 3. 触发 Durable Object `MetricsBroadcaster` 内部广播，统一发送 `{type:"batchUpdate", ts, updates:[...]}` 格式，前端按样本时间逐个回放。
 4. 写入 `request.cf.country`（或 `cf-ipcountry` Header）作为该条记录的 `region` 字段（统一转大写）。
 
@@ -524,9 +534,9 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 | 1 \~ 6    | 1 分钟                   |
 | ≤ 1       | 10 秒                   |
 
-> 历史查询优先使用整数 `id` 主键范围（`history_partition_id0<cutoff>` 到 `history_partition_id099999999999999`）取数，并保留 `server_id` 精确过滤；随后用 `ROW_NUMBER() OVER (PARTITION BY ts/interval ORDER BY ts)` 取每个采样窗口的第一条。未升级的旧表会临时回退到 `server_id + timestamp` 条件。
+> 默认历史查询使用 `server_id + timestamp` 条件取数；随后用 `ROW_NUMBER() OVER (PARTITION BY ts/interval ORDER BY ts)` 取每个采样窗口的第一条。设置 `HISTORY_ID_OPTIMIZED=1` 后，查询改为整数 `id` 主键范围（`history_partition_id0<cutoff>` 到 `history_partition_id099999999999999`）并保留 `server_id` 精确过滤。
 
-**跨月查询**：当 `cutoff` 早于当月 1 号且存在 `metrics_history_old` 表时，自动 `UNION ALL` 两张表。
+**跨周查询**：默认模式下，当 `cutoff` 早于本周日 00:00 UTC 且存在 `metrics_history_old` 表时，自动 `UNION ALL` 两张表。优化模式不查询 `metrics_history_old`，只展示开启后写入当前表的新历史数据。
 
 **缓存**：命中内存缓存时返回 `X-Cache: HIT`，反之 `MISS`。TTL 取决于 `hours`：
 
@@ -727,6 +737,8 @@ ws.onmessage = (ev) => {
 Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 'true'` 时**必填**）
 
 **Response 200**
+
+`results` 会根据 `HISTORY_ID_OPTIMIZED` 模式返回不同的索引处理项：默认模式返回“索引检查”，优化模式返回“优化模式准备”。
 
 ```json
 {
@@ -1045,7 +1057,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
 
 ### 4.1 `POST /updateDatabase` - 数据库迁移
 
-> 用于老版本升级时补齐 `metrics_history` 与 `servers` 表的字段，为服务器分配 `history_partition_id`，将历史表迁移为 `id INTEGER PRIMARY KEY NOT NULL`，并清理废弃 settings / 非主键索引。
+> 用于老版本升级时补齐 `metrics_history` 与 `servers` 表的字段，并清理废弃 settings。默认模式会确保 `metrics_history(server_id, timestamp)` 联合索引存在；设置 `HISTORY_ID_OPTIMIZED=1` 时会分配 `history_partition_id`、清理 `metrics_history` 二级索引，并从开启后新写入的数据开始使用整数 `id` 查询，不迁移旧历史数据。
 
 **Request**
 
@@ -1064,12 +1076,17 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
     { "name": "servers 表列更新", "success": true, "added": 5 },
     { "name": "servers 表多余字段清理", "success": true, "cleaned": 30, "message": "..." },
     { "name": "metrics_history 表列更新", "success": true, "added": 14 },
-    { "name": "metrics_history id 主键迁移", "success": true, "migrated": true, "rows": 1234, "message": "..." },
-    { "name": "metrics_history 非主键索引清理", "success": true, "dropped": 1, "message": "..." },
+    { "name": "metrics_history 索引检查", "success": true, "created": false, "message": "..." },
     { "name": "废弃 settings key 清理", "success": true, "cleaned": 0 },
     { "name": "删除弃用的 metrics_aggregated 表", "success": true, "dropped": 0, "message": "..." }
   ]
 }
+```
+
+优化模式下会用下面的结果项替代“metrics_history 索引检查”：
+
+```json
+{ "name": "metrics_history 优化模式准备", "success": true, "reset": false, "dropped": 1, "message": "..." }
 ```
 
 **失败返回**：`500` + `error` 字段（任一步骤抛错时整体失败）。

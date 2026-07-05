@@ -7,7 +7,7 @@ import { verifyTurnstileToken, hashPassword } from '../utils/common.js';
 import { AppError, createSuccessResponse, createBadRequestResponse, createUnauthorizedResponse, createErrorResponse } from '../utils/errors.js';
 import { addServerColumns } from '../database/updateDatabase.js';
 import { sendNotification } from '../services/notification.js';
-import { getNextServerHistoryPartitionId } from '../database/historyKey.js';
+import { getNextServerHistoryPartitionId, isHistoryIdOptimized } from '../database/historyKey.js';
 
 function isValidUUID(id) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
@@ -17,9 +17,9 @@ function isValidName(name) {
   return name && typeof name === 'string' && name.trim().length > 0 && name.length <= 100;
 }
 
-async function deleteServer(db, id) {
+async function deleteServer(db, id, env) {
   await deleteMetricsHistoryForServer(db, id, 'metrics_history_old');
-  await deleteMetricsHistoryForServer(db, id, 'metrics_history');
+  await deleteMetricsHistoryForServer(db, id, 'metrics_history', env);
   await db.prepare('DELETE FROM servers WHERE id = ?').bind(id).run();
   console.log('✅ servers 删除成功');
   return { success: true };
@@ -213,7 +213,7 @@ export async function handleAdminAPI(request, env, sys) {
     }
     else if (data.action === 'list') {
       const servers = await getAllServers(env.DB);
-      const latestMetricsMap = await getLatestMetricsForAllServers(env.DB);
+      const latestMetricsMap = await getLatestMetricsForAllServers(env.DB, env);
       
       const now = Date.now();
       const ONLINE_THRESHOLD = 300000;
@@ -367,16 +367,25 @@ export async function handleAdminAPI(request, env, sys) {
       
       const id = crypto.randomUUID();
       const group = data.server_group || 'Default';
-      const historyPartitionId = await getNextServerHistoryPartitionId(env.DB);
+      const optimizedHistory = isHistoryIdOptimized(env);
+      const historyPartitionId = optimizedHistory ? await getNextServerHistoryPartitionId(env.DB) : null;
       
       const { max_order } = await env.DB.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_order FROM servers').first();
       const sortOrder = (max_order || 0) + 1;
-      
-      await env.DB.prepare(`
-        INSERT INTO servers 
-        (id, name, server_group, sort_order, history_partition_id)
-        VALUES (?, ?, ?, ?, ?)
-      `).bind(id, name, group, sortOrder, historyPartitionId).run();
+
+      if (optimizedHistory) {
+        await env.DB.prepare(`
+          INSERT INTO servers
+          (id, name, server_group, sort_order, history_partition_id)
+          VALUES (?, ?, ?, ?, ?)
+        `).bind(id, name, group, sortOrder, historyPartitionId).run();
+      } else {
+        await env.DB.prepare(`
+          INSERT INTO servers
+          (id, name, server_group, sort_order)
+          VALUES (?, ?, ?, ?)
+        `).bind(id, name, group, sortOrder).run();
+      }
       
       clearServersListCache();
       
@@ -392,7 +401,7 @@ export async function handleAdminAPI(request, env, sys) {
         return createBadRequestResponse('invalidServerId');
       }
       
-      await deleteServer(env.DB, id);
+      await deleteServer(env.DB, id, env);
       
       clearServersListCache();
       clearServerDetailCache(id);
@@ -453,7 +462,7 @@ export async function handleAdminAPI(request, env, sys) {
       } catch (e) {
         if (e.message && /no such column/i.test(e.message)) {
           console.warn('检测到数据库字段缺失，尝试添加缺失字段...');
-          await addServerColumns(env.DB);
+          await addServerColumns(env.DB, isHistoryIdOptimized(env));
           return createBadRequestResponse('dbColumnsAdded');
         }else{
           const errMsg = e?.message || String(e);
@@ -482,7 +491,7 @@ export async function handleAdminAPI(request, env, sys) {
       }
       
       for (const id of ids) {
-        await deleteServer(env.DB, id);
+        await deleteServer(env.DB, id, env);
       }
       
       clearServersListCache();

@@ -1,74 +1,65 @@
 import {
-  buildHistoryIdSqlExpression,
   createMetricsHistoryTableSql,
   ensureServerHistoryPartitions,
   HISTORY_COLUMN_NAMES,
   historyTableExists,
   isHistoryIdPrimaryKey,
+  isHistoryIdOptimized,
   quoteIdentifier,
-  SERVER_HISTORY_PARTITION_COLUMN,
-  selectHistoryColumnExpression,
-  setHistoryIdPrimaryKeyCache
+  SERVER_HISTORY_PARTITION_COLUMN
 } from './historyKey.js';
 
-export async function updateDatabase(db) {
+export async function updateDatabase(db, env = {}) {
   console.log('开始执行数据库更新...');
   const results = [];
+  const optimizedHistory = isHistoryIdOptimized(env);
   
   try {
-    const migrateLoad = await migrateLoadToLoadAvg(db);
-    results.push({ name: 'metrics_history load -> load_avg 迁移', ...migrateLoad });
+    if (!optimizedHistory) {
+      const migrateLoad = await migrateLoadToLoadAvg(db);
+      results.push({ name: 'metrics_history load -> load_avg 迁移', ...migrateLoad });
 
-    const migrateOldLoad = await migrateLoadToLoadAvg(db, 'metrics_history_old');
-    if (!migrateOldLoad.skipped) {
-      results.push({ name: 'metrics_history_old load -> load_avg 迁移', ...migrateOldLoad });
+      const migrateOldLoad = await migrateLoadToLoadAvg(db, 'metrics_history_old');
+      if (!migrateOldLoad.skipped) {
+        results.push({ name: 'metrics_history_old load -> load_avg 迁移', ...migrateOldLoad });
+      }
     }
     
-    const serversCols = await addServerColumns(db);
+    const serversCols = await addServerColumns(db, optimizedHistory);
     results.push({ name: 'servers 表列更新', ...serversCols });
 
-    const serverPartitions = await ensureServerHistoryPartitions(db);
-    results.push({ name: 'servers 历史分区 ID 检查', ...serverPartitions });
-    if (!serverPartitions.success) {
-      throw new Error(serverPartitions.error || 'servers 历史分区 ID 检查失败');
+    if (optimizedHistory) {
+      const serverPartitions = await ensureServerHistoryPartitions(db);
+      results.push({ name: 'servers 历史分区 ID 检查', ...serverPartitions });
+      if (!serverPartitions.success) {
+        throw new Error(serverPartitions.error || 'servers 历史分区 ID 检查失败');
+      }
     }
     
     const cleanupServers = await cleanupServerExtraColumns(db);
     results.push({ name: 'servers 表多余字段清理', ...cleanupServers });
     
-    const historyCols = await addHistoryColumns(db);
-    results.push({ name: 'metrics_history 表列更新', ...historyCols });
+    if (!optimizedHistory) {
+      const historyCols = await addHistoryColumns(db);
+      results.push({ name: 'metrics_history 表列更新', ...historyCols });
 
-    const oldHistoryCols = await addHistoryColumns(db, 'metrics_history_old');
-    if (!oldHistoryCols.skipped) {
-      results.push({ name: 'metrics_history_old 表列更新', ...oldHistoryCols });
-    }
-
-    const historyId = await migrateHistoryIdPrimaryKey(db);
-    results.push({ name: 'metrics_history id 主键迁移', ...historyId });
-    if (!historyId.success) {
-      throw new Error(historyId.error || 'metrics_history id 主键迁移失败');
-    }
-
-    const oldHistoryId = await migrateHistoryIdPrimaryKey(db, 'metrics_history_old');
-    if (!oldHistoryId.skipped) {
-      results.push({ name: 'metrics_history_old id 主键迁移', ...oldHistoryId });
-      if (!oldHistoryId.success) {
-        throw new Error(oldHistoryId.error || 'metrics_history_old id 主键迁移失败');
+      const oldHistoryCols = await addHistoryColumns(db, 'metrics_history_old');
+      if (!oldHistoryCols.skipped) {
+        results.push({ name: 'metrics_history_old 表列更新', ...oldHistoryCols });
       }
     }
 
-    const historyIndexes = await dropHistorySecondaryIndexes(db);
-    results.push({ name: 'metrics_history 非主键索引清理', ...historyIndexes });
-    if (!historyIndexes.success) {
-      throw new Error(historyIndexes.error || 'metrics_history 非主键索引清理失败');
-    }
-
-    const oldHistoryIndexes = await dropHistorySecondaryIndexes(db, 'metrics_history_old');
-    if (!oldHistoryIndexes.skipped) {
-      results.push({ name: 'metrics_history_old 非主键索引清理', ...oldHistoryIndexes });
-      if (!oldHistoryIndexes.success) {
-        throw new Error(oldHistoryIndexes.error || 'metrics_history_old 非主键索引清理失败');
+    if (optimizedHistory) {
+      const optimizedStorage = await ensureOptimizedHistoryStorage(db);
+      results.push({ name: 'metrics_history 优化模式准备', ...optimizedStorage });
+      if (!optimizedStorage.success) {
+        throw new Error(optimizedStorage.error || 'metrics_history 优化模式准备失败');
+      }
+    } else {
+      const historyIndex = await ensureHistoryIndex(db);
+      results.push({ name: 'metrics_history 索引检查', ...historyIndex });
+      if (!historyIndex.success) {
+        throw new Error(historyIndex.error || 'metrics_history 索引检查失败');
       }
     }
 
@@ -98,10 +89,35 @@ export async function updateDatabase(db) {
   }
 }
 
-// Backward-compatible name: this now removes secondary indexes instead of
-// creating (server_id, timestamp).
 export async function ensureHistoryIndex(db) {
-  return dropHistorySecondaryIndexes(db);
+  try {
+    if (!await historyTableExists(db)) {
+      await db.prepare(createMetricsHistoryTableSql()).run();
+    }
+
+    const { results: indexes = [] } = await db.prepare(
+      `SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'metrics_history'`
+    ).all();
+    const hasServerTimeIndex = indexes.some(index => {
+      const sql = String(index.sql || '').toLowerCase().replace(/\s+/g, ' ');
+      return sql.includes('server_id') && sql.includes('timestamp');
+    });
+
+    if (hasServerTimeIndex) {
+      return { success: true, created: false, message: '索引已存在' };
+    }
+
+    const idxName = 'idx_history_server_time_' + Math.random().toString(36).substring(2);
+    await db.prepare(`
+      CREATE INDEX IF NOT EXISTS ${quoteIdentifier(idxName)}
+      ON metrics_history(server_id, timestamp)
+    `).run();
+
+    return { success: true, created: true, message: '已创建索引' };
+  } catch (e) {
+    console.error('检查/创建 metrics_history 索引失败:', e);
+    return { success: false, error: e.message };
+  }
 }
 
 export async function dropHistorySecondaryIndexes(db, tableName = 'metrics_history') {
@@ -130,70 +146,43 @@ export async function dropHistorySecondaryIndexes(db, tableName = 'metrics_histo
   }
 }
 
-export async function migrateHistoryIdPrimaryKey(db, tableName = 'metrics_history') {
-  let tempTable = null;
-  let originalDropped = false;
+async function isOptimizedHistoryTableReady(db) {
+  if (!await isHistoryIdPrimaryKey(db, 'metrics_history', { force: true })) {
+    return false;
+  }
 
+  const { results: columns = [] } = await db.prepare(
+    `PRAGMA table_info(metrics_history)`
+  ).all();
+  const existingColumns = new Set(columns.map(column => column.name));
+  return HISTORY_COLUMN_NAMES.every(column => existingColumns.has(column));
+}
+
+export async function ensureOptimizedHistoryStorage(db) {
   try {
-    if (!await historyTableExists(db, tableName)) {
-      return { success: true, migrated: false, skipped: true, message: '表不存在' };
+    await ensureServerHistoryPartitions(db);
+
+    let reset = false;
+    if (!await isOptimizedHistoryTableReady(db)) {
+      await db.prepare(`DROP TABLE IF EXISTS metrics_history`).run();
+      await db.prepare(createMetricsHistoryTableSql()).run();
+      await isHistoryIdPrimaryKey(db, 'metrics_history', { force: true });
+      reset = true;
     }
 
-    if (await isHistoryIdPrimaryKey(db, tableName, { force: true })) {
-      return { success: true, migrated: false, rows: 0, message: 'id 已是整数主键' };
+    const indexes = await dropHistorySecondaryIndexes(db);
+    if (!indexes.success) {
+      return indexes;
     }
-
-    const { results: columns = [] } = await db.prepare(
-      `PRAGMA table_info(${quoteIdentifier(tableName)})`
-    ).all();
-    const existingCols = columns.map(c => c.name);
-    if (!existingCols.includes('server_id') || !existingCols.includes('timestamp')) {
-      return { success: false, migrated: false, error: '缺少 server_id 或 timestamp 字段' };
-    }
-
-    tempTable = `${tableName}_id_migration_${Math.random().toString(36).slice(2, 8)}`;
-    const insertColumns = HISTORY_COLUMN_NAMES.map(quoteIdentifier).join(', ');
-    const dataColumns = HISTORY_COLUMN_NAMES
-      .filter(column => column !== 'id')
-      .map(column => `${selectHistoryColumnExpression(column, existingCols, 'h')} AS ${quoteIdentifier(column)}`)
-      .join(',\n        ');
-
-    await db.prepare(`DROP TABLE IF EXISTS ${quoteIdentifier(tempTable)}`).run();
-    await db.prepare(createMetricsHistoryTableSql(tempTable)).run();
-
-    const { meta } = await db.prepare(`
-      INSERT OR REPLACE INTO ${quoteIdentifier(tempTable)} (${insertColumns})
-      SELECT
-        ${buildHistoryIdSqlExpression(`s.${quoteIdentifier(SERVER_HISTORY_PARTITION_COLUMN)}`, `h.${quoteIdentifier('timestamp')}`)} AS ${quoteIdentifier('id')},
-        ${dataColumns}
-      FROM ${quoteIdentifier(tableName)} h
-      INNER JOIN servers s ON s.id = h.${quoteIdentifier('server_id')}
-      WHERE h.${quoteIdentifier('server_id')} IS NOT NULL
-        AND h.${quoteIdentifier('timestamp')} IS NOT NULL
-        AND s.${quoteIdentifier(SERVER_HISTORY_PARTITION_COLUMN)} > 0
-      ORDER BY s.${quoteIdentifier(SERVER_HISTORY_PARTITION_COLUMN)}, h.${quoteIdentifier('timestamp')}
-    `).run();
-
-    await db.prepare(`DROP TABLE ${quoteIdentifier(tableName)}`).run();
-    originalDropped = true;
-    await db.prepare(`ALTER TABLE ${quoteIdentifier(tempTable)} RENAME TO ${quoteIdentifier(tableName)}`).run();
-    setHistoryIdPrimaryKeyCache(tableName, true);
 
     return {
       success: true,
-      migrated: true,
-      rows: meta?.changes || 0,
-      message: `已迁移 ${meta?.changes || 0} 条历史记录到 id 主键`
+      reset,
+      dropped: indexes.dropped || 0,
+      message: reset ? '已重建优化历史表' : '优化历史表已就绪'
     };
   } catch (e) {
-    if (tempTable && !originalDropped) {
-      try {
-        await db.prepare(`DROP TABLE IF EXISTS ${quoteIdentifier(tempTable)}`).run();
-      } catch (cleanupError) {
-        console.warn(`清理 ${tableName} id 迁移临时表失败:`, cleanupError);
-      }
-    }
-    console.error(`迁移 ${tableName} id 主键失败:`, e);
+    console.error('准备 metrics_history 优化模式失败:', e);
     return { success: false, error: e.message };
   }
 }
@@ -232,7 +221,7 @@ async function migrateLoadToLoadAvg(db, tableName = 'metrics_history') {
   }
 }
 
-export async function addServerColumns(db) {
+export async function addServerColumns(db, optimizedHistory = false) {
   try {
     const { results: columns } = await db.prepare(`PRAGMA table_info(servers)`).all();
     const existingCols = columns.map(c => c.name);
@@ -244,9 +233,12 @@ export async function addServerColumns(db) {
       collect_interval: "INTEGER DEFAULT 0",
       report_interval: "INTEGER DEFAULT 60",
       ping_mode: "TEXT DEFAULT 'http'",
-      traffic_calc_type: "TEXT DEFAULT 'total'",
-      [SERVER_HISTORY_PARTITION_COLUMN]: "INTEGER DEFAULT 0"
+      traffic_calc_type: "TEXT DEFAULT 'total'"
     };
+
+    if (optimizedHistory) {
+      newCols[SERVER_HISTORY_PARTITION_COLUMN] = "INTEGER DEFAULT 0";
+    }
     
     let added = 0;
     for (const [colName, colDef] of Object.entries(newCols)) {

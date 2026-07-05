@@ -7,7 +7,7 @@ import {
   getCacheDuration
 } from '../utils/cache.js';
 import { saveSiteOptions, debug } from '../utils/settings.js';
-import { addHistoryColumns, migrateHistoryIdPrimaryKey } from './updateDatabase.js';
+import { addHistoryColumns, ensureHistoryIndex, ensureOptimizedHistoryStorage } from './updateDatabase.js';
 import {
   buildHistoryId,
   createMetricsHistoryTableSql,
@@ -15,10 +15,9 @@ import {
   getHistoryIdRange,
   getServerHistoryPartitionId,
   historyTableExists,
-  isHistoryIdPrimaryKey,
+  isHistoryIdOptimized,
   normalizeHistoryTimestamp,
-  quoteIdentifier,
-  clearHistoryIdPrimaryKeyCache
+  quoteIdentifier
 } from './historyKey.js';
 
 let dbInitialized = false;
@@ -49,24 +48,29 @@ function buildHistorySource(tableName, useHistoryId, serverId, partitionId, cuto
   };
 }
 
-async function ensureHistoryStorage(db) {
-  await ensureServerHistoryPartitions(db);
-
-  const currentHistory = await migrateHistoryIdPrimaryKey(db);
-  if (!currentHistory.success) {
-    throw new Error(currentHistory.error || 'metrics_history id 主键迁移失败');
+async function ensureHistoryStorage(db, optimizedHistory) {
+  if (optimizedHistory) {
+    const result = await ensureOptimizedHistoryStorage(db);
+    if (!result.success) {
+      throw new Error(result.error || 'metrics_history 优化模式准备失败');
+    }
+    return;
   }
 
-  const oldHistory = await migrateHistoryIdPrimaryKey(db, 'metrics_history_old');
-  if (!oldHistory.success && !oldHistory.skipped) {
-    throw new Error(oldHistory.error || 'metrics_history_old id 主键迁移失败');
+  const result = await ensureHistoryIndex(db);
+  if (!result.success) {
+    throw new Error(result.error || 'metrics_history 索引检查失败');
   }
 }
 
-export async function initDatabase(db) {
+export async function initDatabase(db, env = {}) {
   if (dbInitialized) return;
   
   try {
+    const optimizedHistory = isHistoryIdOptimized(env);
+    const serverHistoryPartitionColumnSql = optimizedHistory ? `,
+        history_partition_id INTEGER DEFAULT 0` : '';
+
     await db.prepare(`
       CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY, 
@@ -89,14 +93,12 @@ export async function initDatabase(db) {
         report_interval INTEGER DEFAULT 60,
         ping_mode TEXT DEFAULT 'http',
         is_hidden TEXT DEFAULT '0',
-        sort_order INTEGER DEFAULT 0,
-        history_partition_id INTEGER DEFAULT 0
+        sort_order INTEGER DEFAULT 0${serverHistoryPartitionColumnSql}
       )
     `).run();
 
     await db.prepare(createMetricsHistoryTableSql()).run();
-    await ensureHistoryStorage(db);
-    await isHistoryIdPrimaryKey(db, 'metrics_history', { force: true });
+    await ensureHistoryStorage(db, optimizedHistory);
 
     debug('✅ 数据库初始化完成');
     dbInitialized = true;
@@ -105,7 +107,7 @@ export async function initDatabase(db) {
   }
 }
 
-export async function rebuildDatabase(db) {
+export async function rebuildDatabase(db, env = {}) {
   debug('开始执行数据库重建...');
   
   try {
@@ -123,7 +125,7 @@ export async function rebuildDatabase(db) {
     
     dbInitialized = false;
     
-    await initDatabase(db);
+    await initDatabase(db, env);
     
     debug('✅ 数据库重建完成');
     
@@ -141,9 +143,10 @@ export async function rebuildDatabase(db) {
   }
 }
 
-export async function getMetricsHistory(db, serverId, hours, columns) {
+export async function getMetricsHistory(db, serverId, hours, columns, env = {}) {
   const now = Date.now();
   const cacheDuration = getCacheDuration(hours);
+  const optimizedHistory = isHistoryIdOptimized(env);
   
   const cached = getMetricsHistoryCache(serverId, hours, columns);
   if (cached && now - cached.timestamp < cacheDuration) {
@@ -191,17 +194,13 @@ export async function getMetricsHistory(db, serverId, hours, columns) {
   const thisSunday = new Date(Date.UTC(nowDate.getUTCFullYear(), nowDate.getUTCMonth(), nowDate.getUTCDate() - day));
   const needOldTable = cutoff < thisSunday.getTime();
   
-  const oldTableExists = needOldTable && await historyTableExists(db, 'metrics_history_old');
-  const currentUsesHistoryId = await isHistoryIdPrimaryKey(db, 'metrics_history');
-  const oldUsesHistoryId = oldTableExists && await isHistoryIdPrimaryKey(db, 'metrics_history_old');
-  const needsPartitionId = currentUsesHistoryId || oldUsesHistoryId;
-  const partitionId = needsPartitionId ? await getServerHistoryPartitionId(db, serverId) : null;
+  const partitionId = optimizedHistory ? await getServerHistoryPartitionId(db, serverId) : null;
   const sources = [
-    buildHistorySource('metrics_history', currentUsesHistoryId, serverId, partitionId, cutoff, columns)
+    buildHistorySource('metrics_history', optimizedHistory, serverId, partitionId, cutoff, columns)
   ];
 
-  if (oldTableExists) {
-    sources.push(buildHistorySource('metrics_history_old', oldUsesHistoryId, serverId, partitionId, cutoff, columns));
+  if (!optimizedHistory && needOldTable && await historyTableExists(db, 'metrics_history_old')) {
+    sources.push(buildHistorySource('metrics_history_old', false, serverId, null, cutoff, columns));
     debug('[History] 跨周查询，合并 metrics_history 和 metrics_history_old');
   }
 
@@ -250,7 +249,7 @@ export async function dropMetricsHistoryOld(db) {
   }
 }
 
-export async function weeklyCleanup(db) {
+export async function weeklyCleanup(db, env = {}) {
   try {
     debug('[Cleanup] 开始执行表轮换操作...');
     
@@ -273,7 +272,7 @@ export async function weeklyCleanup(db) {
     
     // 3. 重新初始化数据库以创建新的 metrics_history 表
     dbInitialized = false;
-    await initDatabase(db);
+    await initDatabase(db, env);
 
     debug('[Cleanup] 已创建新的 metrics_history 表');
     
@@ -287,8 +286,8 @@ export async function weeklyCleanup(db) {
   }
 }
 
-export async function saveMetricsHistory(db, serverId, metrics, regionCode = '', timestamp = null, partitionRepairAttempted = false) {
-  let useHistoryId = false;
+export async function saveMetricsHistory(db, serverId, metrics, regionCode = '', timestamp = null, env = {}, partitionRepairAttempted = false) {
+  const useHistoryId = isHistoryIdOptimized(env);
 
   try {
     const now = normalizeHistoryTimestamp(timestamp);
@@ -306,7 +305,6 @@ export async function saveMetricsHistory(db, serverId, metrics, regionCode = '',
       return Math.max(0, Math.min(100, num));
     };
     
-    useHistoryId = await isHistoryIdPrimaryKey(db);
     const partitionId = useHistoryId ? await getServerHistoryPartitionId(db, serverId) : null;
 
     const insertColumns = [
@@ -376,19 +374,21 @@ export async function saveMetricsHistory(db, serverId, metrics, regionCode = '',
 
     if (useHistoryId && result?.meta?.changes === 0 && !partitionRepairAttempted) {
       await ensureServerHistoryPartitions(db);
-      return saveMetricsHistory(db, serverId, metrics, regionCode, timestamp, true);
+      return saveMetricsHistory(db, serverId, metrics, regionCode, timestamp, env, true);
     }
   } catch (e) {
-    if (e.message && /datatype mismatch|NOT NULL constraint failed: metrics_history\.id/i.test(e.message)) {
-      clearHistoryIdPrimaryKeyCache('metrics_history');
-      const refreshedUseHistoryId = await isHistoryIdPrimaryKey(db, 'metrics_history', { force: true });
-      if (refreshedUseHistoryId !== useHistoryId) {
-        return saveMetricsHistory(db, serverId, metrics, regionCode, timestamp);
-      }
+    if (useHistoryId && e.message && /datatype mismatch|NOT NULL constraint failed: metrics_history\.id/i.test(e.message) && !partitionRepairAttempted) {
+      await ensureOptimizedHistoryStorage(db);
+      return saveMetricsHistory(db, serverId, metrics, regionCode, timestamp, env, true);
     }
 
     // 检测是否是 "has no column" 错误，如果是则添加缺失字段
     if (e.message && /has no column/i.test(e.message)) {
+      if (useHistoryId && !partitionRepairAttempted) {
+        await ensureOptimizedHistoryStorage(db);
+        return saveMetricsHistory(db, serverId, metrics, regionCode, timestamp, env, true);
+      }
+
       console.warn('检测到数据库字段缺失，尝试添加缺失字段...');
       await addHistoryColumns(db);
       return;
@@ -397,9 +397,9 @@ export async function saveMetricsHistory(db, serverId, metrics, regionCode = '',
   }
 }
 
-export async function getLatestMetrics(db, serverId) {
+export async function getLatestMetrics(db, serverId, env = {}) {
   try {
-    const useHistoryId = await isHistoryIdPrimaryKey(db);
+    const useHistoryId = isHistoryIdOptimized(env);
     let result;
 
     if (useHistoryId) {
@@ -429,16 +429,20 @@ export async function getLatestMetrics(db, serverId) {
   }
 }
 
-export async function getLatestMetricsForAllServers(db) {
+export async function getLatestMetricsForAllServers(db, env = {}) {
   const now = Date.now();
   const cacheInfo = getLatestMetricsCache();
   if (cacheInfo.cache && now - cacheInfo.time < cacheInfo.ttl) {
     return cacheInfo.cache;
   }
 
+  const useHistoryId = isHistoryIdOptimized(env);
+  if (!useHistoryId) {
+    await ensureHistoryIndex(db);
+  }
+
   try {
     const servers = await getAllServers(db);
-    const useHistoryId = await isHistoryIdPrimaryKey(db);
 
     const entries = await Promise.all(
       servers.map(s =>
@@ -478,12 +482,12 @@ async function getLatestMetricsWithMode(db, serverId, useHistoryId) {
   `).bind(serverId).first();
 }
 
-export async function deleteMetricsHistoryForServer(db, serverId, tableName = 'metrics_history') {
+export async function deleteMetricsHistoryForServer(db, serverId, tableName = 'metrics_history', env = {}) {
   if (!await historyTableExists(db, tableName)) {
     return { success: true, changes: 0 };
   }
 
-  const useHistoryId = await isHistoryIdPrimaryKey(db, tableName);
+  const useHistoryId = tableName === 'metrics_history' && isHistoryIdOptimized(env);
   let result;
 
   if (useHistoryId) {

@@ -89,7 +89,7 @@ export async function sendNotification(settings, msg) {
   }
 }
 
-export async function checkOfflineNodes(db) {
+export async function checkOfflineNodes(db, env = {}) {
   const siteSettings = await loadSiteSettings(db);
 
   if (siteSettings.tg_notify !== 'true'|| !siteSettings.tg_bot_token) return;
@@ -109,7 +109,7 @@ export async function checkOfflineNodes(db) {
   try {
     const allServers = await getAllServers(db);
     
-    const latestMetricsMap = await getLatestMetricsForAllServers(db);
+    const latestMetricsMap = await getLatestMetricsForAllServers(db, env);
     
     let alertState = {};
     const stateRes = await db.prepare(
@@ -168,7 +168,7 @@ export async function checkOfflineNodes(db) {
   }
 }
 
-export async function checkExpiringServers(db) {
+export async function checkExpiringServers(db, env = {}) {
   const siteSettings = await loadSiteSettings(db);
 
   if (siteSettings.expire_reminder !== 'true' || !siteSettings.tg_bot_token) {

@@ -110,7 +110,7 @@ async function fetchHistoryData(env, request, id, hours, columns, sys = null) {
   
   let data;
   try {
-    data = await getMetricsHistory(env.DB, id, clampedHours, columns);
+    data = await getMetricsHistory(env.DB, id, clampedHours, columns, env);
   } catch (e) {
     const message = e && e.message ? e.message : String(e);
     if (/no such column/i.test(message)) {
@@ -166,7 +166,7 @@ export default {
 
     const isApiRequest = path.startsWith('/api/') || path.startsWith('/admin/api');
     if (path === '/api/config' || path === '/rebuild') {
-      await initDatabase(env.DB);
+      await initDatabase(env.DB, env);
     }
 
     // /api/config 在不带 X-Turnstile-Token 且不带 X-Turnstile-Verified 时仍然 bypass（用于初始化判断是否需要验证），
@@ -281,7 +281,7 @@ export default {
         if (!await checkAuth(request, env, sys)) {
           return simpleAuthResponse();
         }
-        const result = await updateDatabase(env.DB);
+        const result = await updateDatabase(env.DB, env);
         return createSuccessResponse(result);
       }},
       { method: 'POST', path: '/rebuild', handler: async () => {
@@ -289,7 +289,7 @@ export default {
         if (!await checkAuth(request, env, sys)) {
           return simpleAuthResponse();
         }
-        const result = await rebuildDatabase(env.DB);
+        const result = await rebuildDatabase(env.DB, env);
         return createSuccessResponse(result);
       }}
     ];
@@ -335,7 +335,7 @@ export default {
     
     if (cron === '*/1 * * * *') {
       debug('[Cron] 开始执行离线节点检测');
-      await checkOfflineNodes(env.DB);
+      await checkOfflineNodes(env.DB, env);
       debug('[Cron] 离线节点检测完成');
     } else if (cron === '0 * * * *') {
       const now = new Date();
@@ -344,23 +344,23 @@ export default {
       
       if (day === 0 && hour === 0) {
         debug('[Cron] 开始执行每周数据清理任务（表轮换）');
-        await weeklyCleanup(env.DB);
+        await weeklyCleanup(env.DB, env);
         debug('[Cron] 每周数据清理任务完成');
       }
       
       if (hour === 12) {
         debug('[Cron] 开始执行服务器到期检测');
-        await checkExpiringServers(env.DB);
+        await checkExpiringServers(env.DB, env);
         debug('[Cron] 服务器到期检测完成');
       }
     }else if(env.DEBUG == 1){
       if (cron === '0 0 * * 0') {
         debug('[Cron DEBUG] 开始执行每周数据清理任务（表轮换）');
-        await weeklyCleanup(env.DB);
+        await weeklyCleanup(env.DB, env);
         debug('[Cron DEBUG] 每周数据清理任务完成');
       } else if (cron === '0 12 * * *') {
         debug('[Cron DEBUG] 开始执行服务器到期检测');
-        await checkExpiringServers(env.DB);
+        await checkExpiringServers(env.DB, env);
         debug('[Cron DEBUG] 服务器到期检测完成');
       }
     }

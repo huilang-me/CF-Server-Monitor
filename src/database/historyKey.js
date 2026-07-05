@@ -4,9 +4,10 @@ export const HISTORY_MIN_TIME_KEY = '19700101000000';
 export const HISTORY_MAX_TIME_KEY = '9'.repeat(HISTORY_TIME_DIGITS);
 export const HISTORY_MAX_PARTITION_ID = 9223;
 export const SERVER_HISTORY_PARTITION_COLUMN = 'history_partition_id';
+export const HISTORY_ID_OPTIMIZED_ENV = 'HISTORY_ID_OPTIMIZED';
 
 export const HISTORY_COLUMNS = [
-  { name: 'id', definition: 'INTEGER PRIMARY KEY NOT NULL', defaultSql: null },
+  { name: 'id', definition: 'INTEGER PRIMARY KEY', defaultSql: null },
   { name: 'server_id', definition: 'TEXT NOT NULL', defaultSql: "''" },
   { name: 'timestamp', definition: 'INTEGER DEFAULT 0', defaultSql: '0' },
   { name: 'cpu', definition: 'REAL DEFAULT 0', defaultSql: '0' },
@@ -47,10 +48,15 @@ export const HISTORY_COLUMNS = [
 ];
 
 export const HISTORY_COLUMN_NAMES = HISTORY_COLUMNS.map(column => column.name);
-export const HISTORY_INSERT_COLUMNS = HISTORY_COLUMN_NAMES.filter(name => name !== 'id');
 
 const historyIdPrimaryKeyCache = new Map();
 const serverHistoryPartitionCache = new Map();
+
+export function isHistoryIdOptimized(env = {}) {
+  const value = env?.[HISTORY_ID_OPTIMIZED_ENV];
+  if (value === true || value === 1) return true;
+  return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
+}
 
 export function quoteIdentifier(identifier) {
   return `"${String(identifier).replace(/"/g, '""')}"`;
@@ -116,35 +122,6 @@ export function getHistoryIdRange(partitionId, startTimestamp = null, endTimesta
       ? HISTORY_MAX_TIME_KEY
       : formatHistoryTimeKey(endTimestamp))
   };
-}
-
-export function buildHistoryIdSqlExpression(partitionExpression, timestampExpression) {
-  return `
-    CAST(
-      CAST(${partitionExpression} AS TEXT) || '${HISTORY_ID_SEPARATOR}' || COALESCE(
-        strftime(
-          '%Y%m%d%H%M%S',
-          CASE
-            WHEN CAST(${timestampExpression} AS INTEGER) < 10000000000
-              THEN CAST(${timestampExpression} AS INTEGER)
-            ELSE CAST(${timestampExpression} AS INTEGER) / 1000
-          END,
-          'unixepoch'
-        ),
-        '19700101000000'
-      ) AS INTEGER
-    )
-  `;
-}
-
-export function selectHistoryColumnExpression(columnName, existingColumns, tableAlias = null) {
-  const prefix = tableAlias ? `${quoteIdentifier(tableAlias)}.` : '';
-  if (existingColumns.includes(columnName)) return `${prefix}${quoteIdentifier(columnName)}`;
-  if (columnName === 'load_avg' && existingColumns.includes('load')) {
-    return `${prefix}${quoteIdentifier('load')}`;
-  }
-  const column = HISTORY_COLUMNS.find(item => item.name === columnName);
-  return column?.defaultSql ?? 'NULL';
 }
 
 export async function historyTableExists(db, tableName = 'metrics_history') {
@@ -285,16 +262,8 @@ export async function getServerHistoryPartitionId(db, serverId) {
   return partitionId;
 }
 
-export function setHistoryIdPrimaryKeyCache(tableName = 'metrics_history', value) {
+function setHistoryIdPrimaryKeyCache(tableName = 'metrics_history', value) {
   historyIdPrimaryKeyCache.set(tableName, !!value);
-}
-
-export function clearHistoryIdPrimaryKeyCache(tableName = null) {
-  if (tableName) {
-    historyIdPrimaryKeyCache.delete(tableName);
-  } else {
-    historyIdPrimaryKeyCache.clear();
-  }
 }
 
 export async function isHistoryIdPrimaryKey(db, tableName = 'metrics_history', { force = false } = {}) {
@@ -317,8 +286,7 @@ export async function isHistoryIdPrimaryKey(db, tableName = 'metrics_history', {
   const idColumn = results.find(column => column.name === 'id');
   const optimized = !!idColumn
     && Number(idColumn.pk) > 0
-    && String(idColumn.type || '').toUpperCase().includes('INTEGER')
-    && Number(idColumn.notnull) > 0;
+    && String(idColumn.type || '').toUpperCase().includes('INTEGER');
 
   setHistoryIdPrimaryKeyCache(tableName, optimized);
   return optimized;

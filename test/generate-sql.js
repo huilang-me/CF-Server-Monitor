@@ -2,9 +2,10 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { buildHistoryId } from '../src/database/historyKey.js';
+import { buildHistoryId, isHistoryIdOptimized } from '../src/database/historyKey.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const optimizedHistory = isHistoryIdOptimized(process.env);
 
 function generateMetrics(baseTimestamp, serverIdx, hourOffset) {
   const baseHour = (new Date(baseTimestamp).getHours() + hourOffset / 60) % 24;
@@ -136,12 +137,26 @@ sql += `\n-- 插入服务器数据\n`;
 const serverLatestMetrics = {};
 
 for (const server of servers) {
+  const serverColumns = optimizedHistory
+    ? 'id, name, server_group, price, expire_date, bandwidth, traffic_limit, is_hidden, sort_order, history_partition_id'
+    : 'id, name, server_group, price, expire_date, bandwidth, traffic_limit, is_hidden, sort_order';
+  const serverValues = [
+    `'${server.id}'`,
+    `'${server.name}'`,
+    `'${server.server_group}'`,
+    `'${server.price}'`,
+    `'${server.expire_date}'`,
+    `'${server.bandwidth}'`,
+    `'${server.traffic_limit}'`,
+    `'${server.is_hidden}'`,
+    server.sort_order,
+    ...(optimizedHistory ? [server.history_partition_id] : [])
+  ].join(', ');
+
   sql += `INSERT INTO servers (
-    id, name, server_group, price, expire_date, bandwidth, traffic_limit, is_hidden, sort_order, history_partition_id
+    ${serverColumns}
   ) VALUES (
-    '${server.id}', '${server.name}', '${server.server_group}', '${server.price}', 
-    '${server.expire_date}', '${server.bandwidth}', '${server.traffic_limit}', 
-    '${server.is_hidden}', ${server.sort_order}, ${server.history_partition_id}
+    ${serverValues}
   );\n`;
 }
 
@@ -197,9 +212,12 @@ for (let s = 0; s < servers.length; s++) {
     const metrics =
       generateMetrics(now, s, hourOffset);
 
+    const historyIdColumn = optimizedHistory ? 'id, ' : '';
+    const historyIdValue = optimizedHistory ? `  ${buildHistoryId(server.history_partition_id, ts)},\n` : '';
+
     rows.push(`
 INSERT INTO metrics_history (
-  id, server_id, timestamp, cpu, load_avg,
+  ${historyIdColumn}server_id, timestamp, cpu, load_avg,
   net_in_speed, net_out_speed, net_rx, net_tx,
   processes, tcp_conn, udp_conn,
   ping_ct, ping_cu, ping_cm, ping_bd,
@@ -211,8 +229,7 @@ INSERT INTO metrics_history (
   net_rx_monthly, net_tx_monthly,
   region
 ) VALUES (
-  ${buildHistoryId(server.history_partition_id, ts)},
-  '${server.id}',
+${historyIdValue}  '${server.id}',
   ${ts},
   ${parseFloat(metrics.cpu)},
   '${metrics.load_avg}',
@@ -274,6 +291,7 @@ const outputPath = path.join(__dirname, 'mock-data.sql');
 fs.writeFileSync(outputPath, sql);
 
 console.log('✅ SQL 文件生成成功:', outputPath);
+console.log('历史查询模式:', optimizedHistory ? 'HISTORY_ID_OPTIMIZED=1' : '默认 server_id + timestamp 索引');
 console.log('\n📝 使用说明:');
 console.log('  1. 确保你有 wrangler.toml 配置好 D1 数据库');
 console.log('  2. 创建本地 D1 数据库: wrangler d1 create server-monitor-db');

@@ -20,7 +20,7 @@ export async function handleServerAPI(request, env, sys) {
   const server = await getServerDetail(env.DB, id, isLoggedIn);
   if (!server) return createNotFoundResponse('Server not found');
   
-  const latestMetrics = await getLatestMetrics(env.DB, id);
+  const latestMetrics = await getLatestMetrics(env.DB, id, env);
   mergeMetricsIntoServer(server, latestMetrics);
   server.sysConfig = {
     show_long_history: sys.show_long_history === 'true'
@@ -38,7 +38,7 @@ export async function handleServersAPI(request, env, sys) {
   
   const results = await getAllServers(env.DB, isLoggedIn);
   
-  const latestMetricsMap = await getLatestMetricsForAllServers(env.DB);
+  const latestMetricsMap = await getLatestMetricsForAllServers(env.DB, env);
   
   const now = Date.now();
   let globalOnline = 0;

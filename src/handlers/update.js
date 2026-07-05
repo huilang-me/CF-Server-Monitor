@@ -143,7 +143,7 @@ export async function handleUpdate(request, env, ctx) {
     }
 
     const latestSample = samples[samples.length - 1];
-    await saveMetricsHistory(env.DB, id, latestSample.metrics, regionCode, latestSample.ts);
+    await saveMetricsHistory(env.DB, id, latestSample.metrics, regionCode, latestSample.ts, env);
 
     const broadcastSamples = toBroadcastSamples(id, samples, regionCode);
     // 加入批量队列，由后台定时任务统一推送到 DO
