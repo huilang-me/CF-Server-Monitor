@@ -1,4 +1,5 @@
 export const HISTORY_PARTITION_MULTIPLIER = 10000000000000;
+export const HISTORY_AUTO_OPTIMIZED_MIN_ID = HISTORY_PARTITION_MULTIPLIER;
 export const HISTORY_MIN_TIME_KEY = 0;
 export const HISTORY_MAX_TIME_KEY = 991231235959;
 export const HISTORY_MAX_PARTITION_ID = 900;
@@ -52,6 +53,7 @@ export const HISTORY_COLUMN_NAMES = HISTORY_COLUMNS.map(column => column.name);
 
 const historyIdPrimaryKeyCache = new Map();
 const serverHistoryPartitionCache = new Map();
+let historyIdAutoOptimizedCache = null;
 let serverHistoryPartitionColumnReady = false;
 
 export function isHistoryIdOptimized(env = {}) {
@@ -138,6 +140,70 @@ export async function historyTableExists(db, tableName = 'metrics_history') {
     `SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`
   ).bind(tableName).first();
   return !!table;
+}
+
+export function resetHistoryIdAutoOptimizedCache() {
+  historyIdAutoOptimizedCache = null;
+}
+
+async function getHistoryIdCoverageForTable(db, tableName) {
+  if (!await historyTableExists(db, tableName)) {
+    return { tableName, exists: false, rows: 0, minId: null, ready: true };
+  }
+
+  try {
+    const row = await db.prepare(`
+      SELECT COUNT(*) AS row_count, MIN(id) AS min_id
+      FROM ${quoteIdentifier(tableName)}
+    `).first();
+    const rows = Number(row?.row_count || 0);
+    if (!rows) {
+      return { tableName, exists: true, rows: 0, minId: null, ready: true };
+    }
+
+    const minId = Number(row?.min_id);
+    return {
+      tableName,
+      exists: true,
+      rows,
+      minId,
+      ready: Number.isSafeInteger(minId) && minId > HISTORY_AUTO_OPTIMIZED_MIN_ID
+    };
+  } catch (e) {
+    return {
+      tableName,
+      exists: true,
+      rows: 0,
+      minId: null,
+      ready: false,
+      error: e.message || String(e)
+    };
+  }
+}
+
+export async function getHistoryIdAutoOptimizationStatus(db, { force = false } = {}) {
+  if (!force && historyIdAutoOptimizedCache) {
+    return historyIdAutoOptimizedCache;
+  }
+
+  const tables = [];
+  for (const tableName of ['metrics_history', 'metrics_history_old']) {
+    tables.push(await getHistoryIdCoverageForTable(db, tableName));
+  }
+
+  historyIdAutoOptimizedCache = {
+    ready: tables.every(table => table.ready),
+    threshold: HISTORY_AUTO_OPTIMIZED_MIN_ID,
+    checkedAt: Date.now(),
+    tables
+  };
+  return historyIdAutoOptimizedCache;
+}
+
+export async function shouldUseHistoryIdQueries(db, env = {}, options = {}) {
+  if (isHistoryIdOptimized(env)) return true;
+  const status = await getHistoryIdAutoOptimizationStatus(db, options);
+  return status.ready;
 }
 
 export function normalizeHistoryPartitionId(value) {

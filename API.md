@@ -22,7 +22,7 @@
   - [0.4 统一错误码](#04-统一错误码)
   - [0.5 限流与配额](#05-限流与配额)
   - [0.6 CORS](#06-cors)
-  - [0.7 历史查询优化开关](#07-历史查询优化开关)
+  - [0.7 历史查询优化开关与自动切换](#07-历史查询优化开关与自动切换)
 - [1. 探针上报接口](#1-探针上报接口)
   - [1.1](#11-post-update---指标上报agent-入口) [`POST /update`](#11-post-update---指标上报agent-入口) [- 指标上报（Agent 入口）](#11-post-update---指标上报agent-入口)
 - [2. 公开 API（前端/管理端共用）](#2-公开-api前端管理端共用)
@@ -191,13 +191,13 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 - 预检请求 `OPTIONS` → 直接返回 `204`，并回显 `Access-Control-Request-Method` / `Access-Control-Request-Headers`，缓存 86400 秒。
 - 未配置或未命中 → 不会下发 CORS Header，浏览器侧会被同源策略拦截。
 
-### 0.7 历史查询优化开关
+### 0.7 历史查询优化开关与自动切换
 
-环境变量 `HISTORY_ID_OPTIMIZED` 默认关闭。只有设置为 `1` / `true` / `yes` / `on` 时，后端才会启用整数历史 ID 优化。
+环境变量 `HISTORY_ID_OPTIMIZED` 默认关闭。无论是否开启，新写入的历史数据都会使用安全整数 `id`；开关只控制是否跳过兼容期并直接使用整数 `id` 查询。
 
-- 关闭时：使用原来的 `server_id + timestamp` 查询方式，并确保 `metrics_history(server_id, timestamp)` 联合索引存在。
+- 关闭时：默认继续使用原来的 `server_id + timestamp` 查询方式，并确保 `metrics_history(server_id, timestamp)` 联合索引存在；当 `metrics_history` 和 `metrics_history_old` 中已有数据的最小 `id` 都大于 `10000000000000` 时，系统会自动视为覆盖完成，切换到整数 `id` 查询，并且新建历史表不再创建联合索引。
 - 开启时：为 `servers` 分配 `history_partition_id`，写入 `history_partition_id * 10000000000000 + YYMMDDHHMMSS` 形式的安全整数 `id`（时间使用 UTC，中间等价于固定补一个 `0`），删除 `metrics_history` 上的二级索引，并按 `id` 范围查询。该模式最多支持 `900` 个 `history_partition_id`，时间编码适用于 2000-2099 年。
-- 开启后不迁移旧历史数据，历史图表只展示开启后新写入的数据；`metrics_history_old` 也不参与优化模式查询。
+- 强制开启后不迁移旧历史数据；未使用新 `id` 格式的旧记录不会出现在优化查询结果里。优化模式跨周查询时会同时按 `id` 范围查询 `metrics_history` 和 `metrics_history_old`。
 - 修改该环境变量并重新部署后，建议调用一次 `POST /updateDatabase` 或在后台点击“升级数据库”。
 
 ***
@@ -333,7 +333,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 **副作用**
 
 1. `metrics_history` 只写入本次请求中最新的一个样本，避免 1 秒采集时放大 D1 写入次数。
-2. 默认使用 SQLite 自增 `id`，并通过 `server_id + timestamp` 索引查询历史。设置 `HISTORY_ID_OPTIMIZED=1` 后，使用 `history_partition_id * 10000000000000 + YYMMDDHHMMSS` 作为整数 `id` 主键（时间使用 UTC），例如分区 `1` 在 `2026-07-05T11:46:50Z` 写入 `10260705114650`。
+2. 写入时始终使用 `history_partition_id * 10000000000000 + YYMMDDHHMMSS` 作为整数 `id` 主键（时间使用 UTC），例如分区 `1` 在 `2026-07-05T11:46:50Z` 写入 `10260705114650`。查询在兼容期仍可继续走 `server_id + timestamp`，覆盖完成或设置 `HISTORY_ID_OPTIMIZED=1` 后改走整数 `id` 范围。
 3. 触发 Durable Object `MetricsBroadcaster` 内部广播，统一发送 `{type:"batchUpdate", ts, updates:[...]}` 格式，前端按样本时间逐个回放。
 4. 写入 `request.cf.country`（或 `cf-ipcountry` Header）作为该条记录的 `region` 字段（统一转大写）。
 
@@ -534,9 +534,9 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 | 1 \~ 6    | 1 分钟                   |
 | ≤ 1       | 10 秒                   |
 
-> 默认历史查询使用 `server_id + timestamp` 条件取数；随后用 `ROW_NUMBER() OVER (PARTITION BY ts/interval ORDER BY ts)` 取每个采样窗口的第一条。设置 `HISTORY_ID_OPTIMIZED=1` 后，查询改为整数 `id` 主键范围（`history_partition_id * 10000000000000 + cutoff_YYMMDDHHMMSS` 到 `history_partition_id * 10000000000000 + 991231235959`）。
+> 兼容期历史查询使用 `server_id + timestamp` 条件取数；随后用 `ROW_NUMBER() OVER (PARTITION BY ts/interval ORDER BY ts)` 取每个采样窗口的第一条。当自动覆盖检测通过或设置 `HISTORY_ID_OPTIMIZED=1` 后，查询改为整数 `id` 主键范围（`history_partition_id * 10000000000000 + cutoff_YYMMDDHHMMSS` 到 `history_partition_id * 10000000000000 + 991231235959`）。
 
-**跨周查询**：默认模式下，当 `cutoff` 早于本周日 00:00 UTC 且存在 `metrics_history_old` 表时，自动 `UNION ALL` 两张表。优化模式不查询 `metrics_history_old`，只展示开启后写入当前表的新历史数据。
+**跨周查询**：当 `cutoff` 早于本周日 00:00 UTC 且存在 `metrics_history_old` 表时，自动 `UNION ALL` 两张表；兼容期按 `server_id + timestamp` 查询，优化模式按 `id` 范围查询。
 
 **缓存**：命中内存缓存时返回 `X-Cache: HIT`，反之 `MISS`。TTL 取决于 `hours`：
 
@@ -738,7 +738,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
 
 **Response 200**
 
-`results` 会根据 `HISTORY_ID_OPTIMIZED` 模式返回不同的索引处理项：默认模式返回“索引检查”，优化模式返回“优化模式准备”。
+`results` 会根据当前历史查询模式返回不同的索引处理项：兼容期返回“索引检查”，设置 `HISTORY_ID_OPTIMIZED=1` 或自动覆盖检测通过后返回“优化模式准备”。
 
 ```json
 {
@@ -1057,7 +1057,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
 
 ### 4.1 `POST /updateDatabase` - 数据库迁移
 
-> 用于老版本升级时补齐 `metrics_history` 与 `servers` 表的字段，并清理废弃 settings。默认模式会确保 `metrics_history(server_id, timestamp)` 联合索引存在；设置 `HISTORY_ID_OPTIMIZED=1` 时会分配 `history_partition_id`、清理 `metrics_history` 二级索引，并从开启后新写入的数据开始使用整数 `id` 查询，不迁移旧历史数据。
+> 用于老版本升级时补齐 `metrics_history` 与 `servers` 表的字段，并清理废弃 settings。升级会始终分配 `history_partition_id`；兼容期会确保 `metrics_history(server_id, timestamp)` 联合索引存在。设置 `HISTORY_ID_OPTIMIZED=1` 或自动覆盖检测通过后，会清理 `metrics_history` 二级索引，并使用整数 `id` 范围查询。
 
 **Request**
 

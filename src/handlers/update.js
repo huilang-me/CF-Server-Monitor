@@ -1,6 +1,5 @@
 import { saveMetricsHistory } from '../database/schema.js';
-import { getServerHistoryPartitionForExistingServer, isHistoryIdOptimized } from '../database/historyKey.js';
-import { checkServerExists } from '../utils/cache.js';
+import { getServerHistoryPartitionForExistingServer } from '../database/historyKey.js';
 import { mergeMetricsIntoServer } from '../utils/metrics.js';
 import { createErrorResponse, createUnauthorizedResponse, createNotFoundResponse, createBadRequestResponse } from '../utils/errors.js';
 
@@ -132,11 +131,8 @@ export async function handleUpdate(request, env, ctx) {
 
     let regionCode = request.cf?.country || request.headers?.get('cf-ipcountry') || '';
 
-    const optimizedHistory = isHistoryIdOptimized(env);
-    const historyPartitionId = optimizedHistory
-      ? await getServerHistoryPartitionForExistingServer(env.DB, id)
-      : null;
-    const serverExists = optimizedHistory ? !!historyPartitionId : await checkServerExists(env.DB, id);
+    const historyPartitionId = await getServerHistoryPartitionForExistingServer(env.DB, id);
+    const serverExists = !!historyPartitionId;
 
     if (!serverExists) {
       return createNotFoundResponse('Server not found');

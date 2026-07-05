@@ -442,7 +442,7 @@ Windows 系统（Python 版）
 
 ### 历史查询优化（可选）
 
-默认情况下，历史查询继续使用原来的 `server_id + timestamp` 联合索引，兼容已有历史数据。
+默认情况下，新写入的历史数据也会使用安全整数 `id`，但历史查询会继续使用原来的 `server_id + timestamp` 联合索引，以兼容已有历史数据。
 
 如需降低长历史查询的 D1 读行消耗，可在 Workers & Pages 的 **Settings** → **Variables and secrets** 中添加：
 
@@ -450,7 +450,9 @@ Windows 系统（Python 版）
 HISTORY_ID_OPTIMIZED=1
 ```
 
-开启后，系统会为服务器分配 `history_partition_id`，新写入的历史数据使用 `history_partition_id * 10000000000000 + YYMMDDHHMMSS` 形式的安全整数 `id` 主键范围查询（中间等价于固定补一个 `0`，时间使用 UTC），并删除 `metrics_history` 上原来的二级索引。旧历史数据不会迁移，开启后历史图表只展示新写入的数据。
+系统会为服务器分配 `history_partition_id`，新写入的历史数据使用 `history_partition_id * 10000000000000 + YYMMDDHHMMSS` 形式的安全整数 `id`（中间等价于固定补一个 `0`，时间使用 UTC）。当 `metrics_history` 和 `metrics_history_old` 中已有数据的最小 `id` 都大于 `10000000000000` 时，系统会自动视为历史数据已覆盖并切换到 `id` 主键范围查询；此后新建历史表不会再创建 `metrics_history(server_id, timestamp)` 联合索引。
+
+设置 `HISTORY_ID_OPTIMIZED=1` 会跳过自动覆盖检测，直接使用整数 `id` 主键范围查询，并清理 `metrics_history` 上原来的二级索引。旧历史数据不会迁移；未使用新 `id` 格式的旧记录不会出现在优化查询结果里。
 
 > 风险提示：该编码依赖 JavaScript `Number.MAX_SAFE_INTEGER`，`history_partition_id` 最大支持 `900`，即最多约 900 个服务器分区；时间后缀只保留两位年份，适合 2000-2099 年范围内使用。
 

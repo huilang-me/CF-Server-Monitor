@@ -7,7 +7,7 @@ import { verifyTurnstileToken, hashPassword } from '../utils/common.js';
 import { AppError, createSuccessResponse, createBadRequestResponse, createUnauthorizedResponse, createErrorResponse } from '../utils/errors.js';
 import { addServerColumns } from '../database/updateDatabase.js';
 import { sendNotification } from '../services/notification.js';
-import { getNextServerHistoryPartitionId, isHistoryIdOptimized } from '../database/historyKey.js';
+import { getNextServerHistoryPartitionId } from '../database/historyKey.js';
 
 function isValidUUID(id) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
@@ -367,25 +367,16 @@ export async function handleAdminAPI(request, env, sys) {
       
       const id = crypto.randomUUID();
       const group = data.server_group || 'Default';
-      const optimizedHistory = isHistoryIdOptimized(env);
-      const historyPartitionId = optimizedHistory ? await getNextServerHistoryPartitionId(env.DB) : null;
+      const historyPartitionId = await getNextServerHistoryPartitionId(env.DB);
       
       const { max_order } = await env.DB.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_order FROM servers').first();
       const sortOrder = (max_order || 0) + 1;
 
-      if (optimizedHistory) {
-        await env.DB.prepare(`
-          INSERT INTO servers
-          (id, name, server_group, sort_order, history_partition_id)
-          VALUES (?, ?, ?, ?, ?)
-        `).bind(id, name, group, sortOrder, historyPartitionId).run();
-      } else {
-        await env.DB.prepare(`
-          INSERT INTO servers
-          (id, name, server_group, sort_order)
-          VALUES (?, ?, ?, ?)
-        `).bind(id, name, group, sortOrder).run();
-      }
+      await env.DB.prepare(`
+        INSERT INTO servers
+        (id, name, server_group, sort_order, history_partition_id)
+        VALUES (?, ?, ?, ?, ?)
+      `).bind(id, name, group, sortOrder, historyPartitionId).run();
       
       clearServersListCache();
       
@@ -462,7 +453,7 @@ export async function handleAdminAPI(request, env, sys) {
       } catch (e) {
         if (e.message && /no such column/i.test(e.message)) {
           console.warn('检测到数据库字段缺失，尝试添加缺失字段...');
-          await addServerColumns(env.DB, isHistoryIdOptimized(env));
+          await addServerColumns(env.DB);
           return createBadRequestResponse('dbColumnsAdded');
         }else{
           const errMsg = e?.message || String(e);

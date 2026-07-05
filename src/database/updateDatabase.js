@@ -6,16 +6,19 @@ import {
   isHistoryIdPrimaryKey,
   isHistoryIdOptimized,
   quoteIdentifier,
-  SERVER_HISTORY_PARTITION_COLUMN
+  resetHistoryIdAutoOptimizedCache,
+  SERVER_HISTORY_PARTITION_COLUMN,
+  shouldUseHistoryIdQueries
 } from './historyKey.js';
 
 const OPTIMIZED_HISTORY_STORAGE_SETTING = 'history_id_optimized_storage_version';
-const OPTIMIZED_HISTORY_STORAGE_VERSION = 'safe_integer_v1';
+const OPTIMIZED_HISTORY_STORAGE_VERSION = 'compressed_safe_integer_v2';
 
 export async function updateDatabase(db, env = {}) {
   console.log('开始执行数据库更新...');
   const results = [];
-  const optimizedHistory = isHistoryIdOptimized(env);
+  resetHistoryIdAutoOptimizedCache();
+  let optimizedHistory = isHistoryIdOptimized(env);
   
   try {
     if (!optimizedHistory) {
@@ -28,28 +31,26 @@ export async function updateDatabase(db, env = {}) {
       }
     }
     
-    const serversCols = await addServerColumns(db, optimizedHistory);
+    const serversCols = await addServerColumns(db);
     results.push({ name: 'servers 表列更新', ...serversCols });
 
-    if (optimizedHistory) {
-      const serverPartitions = await ensureServerHistoryPartitions(db);
-      results.push({ name: 'servers 历史分区 ID 检查', ...serverPartitions });
-      if (!serverPartitions.success) {
-        throw new Error(serverPartitions.error || 'servers 历史分区 ID 检查失败');
-      }
+    const serverPartitions = await ensureServerHistoryPartitions(db);
+    results.push({ name: 'servers 历史分区 ID 检查', ...serverPartitions });
+    if (!serverPartitions.success) {
+      throw new Error(serverPartitions.error || 'servers 历史分区 ID 检查失败');
     }
+
+    optimizedHistory = await shouldUseHistoryIdQueries(db, env, { force: true });
     
     const cleanupServers = await cleanupServerExtraColumns(db);
     results.push({ name: 'servers 表多余字段清理', ...cleanupServers });
     
-    if (!optimizedHistory) {
-      const historyCols = await addHistoryColumns(db);
-      results.push({ name: 'metrics_history 表列更新', ...historyCols });
+    const historyCols = await addHistoryColumns(db);
+    results.push({ name: 'metrics_history 表列更新', ...historyCols });
 
-      const oldHistoryCols = await addHistoryColumns(db, 'metrics_history_old');
-      if (!oldHistoryCols.skipped) {
-        results.push({ name: 'metrics_history_old 表列更新', ...oldHistoryCols });
-      }
+    const oldHistoryCols = await addHistoryColumns(db, 'metrics_history_old');
+    if (!oldHistoryCols.skipped) {
+      results.push({ name: 'metrics_history_old 表列更新', ...oldHistoryCols });
     }
 
     if (optimizedHistory) {
@@ -170,14 +171,6 @@ async function ensureSettingsTable(db) {
   `).run();
 }
 
-async function getOptimizedHistoryStorageVersion(db) {
-  await ensureSettingsTable(db);
-  const row = await db.prepare(
-    `SELECT value FROM settings WHERE key = ?`
-  ).bind(OPTIMIZED_HISTORY_STORAGE_SETTING).first();
-  return row?.value || '';
-}
-
 async function setOptimizedHistoryStorageVersion(db) {
   await ensureSettingsTable(db);
   await db.prepare(
@@ -190,15 +183,26 @@ export async function ensureOptimizedHistoryStorage(db, { allowReset = false } =
     await ensureServerHistoryPartitions(db);
 
     let reset = false;
-    const storageVersion = allowReset ? await getOptimizedHistoryStorageVersion(db) : OPTIMIZED_HISTORY_STORAGE_VERSION;
-    const ready = await isOptimizedHistoryTableReady(db);
-    if (allowReset && (storageVersion !== OPTIMIZED_HISTORY_STORAGE_VERSION || !ready)) {
+    let added = 0;
+    if (!await historyTableExists(db)) {
+      await db.prepare(createMetricsHistoryTableSql()).run();
+    }
+
+    let ready = await isOptimizedHistoryTableReady(db);
+    if (!ready) {
+      const columns = await addHistoryColumns(db);
+      if (!columns.success) {
+        return columns;
+      }
+      added = columns.added || 0;
+      ready = await isOptimizedHistoryTableReady(db);
+    }
+
+    if (allowReset && !ready) {
       await db.prepare(`DROP TABLE IF EXISTS metrics_history`).run();
       await db.prepare(createMetricsHistoryTableSql()).run();
       await isHistoryIdPrimaryKey(db, 'metrics_history', { force: true });
       reset = true;
-    } else if (!ready) {
-      await db.prepare(createMetricsHistoryTableSql()).run();
     }
 
     const indexes = await dropHistorySecondaryIndexes(db);
@@ -212,6 +216,7 @@ export async function ensureOptimizedHistoryStorage(db, { allowReset = false } =
     return {
       success: true,
       reset,
+      added,
       dropped: indexes.dropped || 0,
       version: OPTIMIZED_HISTORY_STORAGE_VERSION,
       message: reset ? '已重建优化历史表' : '优化历史表已就绪'
@@ -256,7 +261,7 @@ async function migrateLoadToLoadAvg(db, tableName = 'metrics_history') {
   }
 }
 
-export async function addServerColumns(db, optimizedHistory = false) {
+export async function addServerColumns(db) {
   try {
     const { results: columns } = await db.prepare(`PRAGMA table_info(servers)`).all();
     const existingCols = columns.map(c => c.name);
@@ -271,9 +276,7 @@ export async function addServerColumns(db, optimizedHistory = false) {
       traffic_calc_type: "TEXT DEFAULT 'total'"
     };
 
-    if (optimizedHistory) {
-      newCols[SERVER_HISTORY_PARTITION_COLUMN] = "INTEGER DEFAULT 0";
-    }
+    newCols[SERVER_HISTORY_PARTITION_COLUMN] = "INTEGER DEFAULT 0";
     
     let added = 0;
     for (const [colName, colDef] of Object.entries(newCols)) {

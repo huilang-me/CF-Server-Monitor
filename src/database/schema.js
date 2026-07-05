@@ -7,7 +7,7 @@ import {
   getCacheDuration
 } from '../utils/cache.js';
 import { saveSiteOptions, debug } from '../utils/settings.js';
-import { addHistoryColumns, ensureHistoryIndex } from './updateDatabase.js';
+import { addHistoryColumns, dropHistorySecondaryIndexes, ensureHistoryIndex } from './updateDatabase.js';
 import {
   buildHistoryId,
   createMetricsHistoryTableSql,
@@ -15,9 +15,10 @@ import {
   getHistoryIdRange,
   getServerHistoryPartitionId,
   historyTableExists,
-  isHistoryIdOptimized,
   normalizeHistoryTimestamp,
-  quoteIdentifier
+  quoteIdentifier,
+  resetHistoryIdAutoOptimizedCache,
+  shouldUseHistoryIdQueries
 } from './historyKey.js';
 
 let dbInitialized = false;
@@ -48,6 +49,10 @@ function buildHistorySource(tableName, useHistoryId, serverId, partitionId, cuto
 
 async function ensureHistoryStorage(db, optimizedHistory) {
   if (optimizedHistory) {
+    const result = await dropHistorySecondaryIndexes(db);
+    if (!result.success) {
+      throw new Error(result.error || 'metrics_history optimized index cleanup failed');
+    }
     return;
   }
 
@@ -61,10 +66,6 @@ export async function initDatabase(db, env = {}) {
   if (dbInitialized) return;
   
   try {
-    const optimizedHistory = isHistoryIdOptimized(env);
-    const serverHistoryPartitionColumnSql = optimizedHistory ? `,
-        history_partition_id INTEGER DEFAULT 0` : '';
-
     await db.prepare(`
       CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY, 
@@ -87,11 +88,13 @@ export async function initDatabase(db, env = {}) {
         report_interval INTEGER DEFAULT 60,
         ping_mode TEXT DEFAULT 'http',
         is_hidden TEXT DEFAULT '0',
-        sort_order INTEGER DEFAULT 0${serverHistoryPartitionColumnSql}
+        sort_order INTEGER DEFAULT 0,
+        history_partition_id INTEGER DEFAULT 0
       )
     `).run();
 
     await db.prepare(createMetricsHistoryTableSql()).run();
+    const optimizedHistory = await shouldUseHistoryIdQueries(db, env, { force: true });
     await ensureHistoryStorage(db, optimizedHistory);
 
     debug('✅ 数据库初始化完成');
@@ -118,7 +121,8 @@ export async function rebuildDatabase(db, env = {}) {
     debug('✅ 已删除 settings 表');
     
     dbInitialized = false;
-    
+    resetHistoryIdAutoOptimizedCache();
+
     await initDatabase(db, env);
     
     debug('✅ 数据库重建完成');
@@ -140,7 +144,7 @@ export async function rebuildDatabase(db, env = {}) {
 export async function getMetricsHistory(db, serverId, hours, columns, env = {}) {
   const now = Date.now();
   const cacheDuration = getCacheDuration(hours);
-  const optimizedHistory = isHistoryIdOptimized(env);
+  const optimizedHistory = await shouldUseHistoryIdQueries(db, env);
   
   const cached = getMetricsHistoryCache(serverId, hours, columns);
   if (cached && now - cached.timestamp < cacheDuration) {
@@ -193,8 +197,8 @@ export async function getMetricsHistory(db, serverId, hours, columns, env = {}) 
     buildHistorySource('metrics_history', optimizedHistory, serverId, partitionId, cutoff, columns)
   ];
 
-  if (!optimizedHistory && needOldTable && await historyTableExists(db, 'metrics_history_old')) {
-    sources.push(buildHistorySource('metrics_history_old', false, serverId, null, cutoff, columns));
+  if (needOldTable && await historyTableExists(db, 'metrics_history_old')) {
+    sources.push(buildHistorySource('metrics_history_old', optimizedHistory, serverId, partitionId, cutoff, columns));
     debug('[History] 跨周查询，合并 metrics_history 和 metrics_history_old');
   }
 
@@ -266,6 +270,7 @@ export async function weeklyCleanup(db, env = {}) {
     
     // 3. 重新初始化数据库以创建新的 metrics_history 表
     dbInitialized = false;
+    resetHistoryIdAutoOptimizedCache();
     await initDatabase(db, env);
 
     debug('[Cleanup] 已创建新的 metrics_history 表');
@@ -281,7 +286,7 @@ export async function weeklyCleanup(db, env = {}) {
 }
 
 export async function saveMetricsHistory(db, serverId, metrics, regionCode = '', timestamp = null, env = {}, partitionIdOverride = null, partitionRepairAttempted = false) {
-  const useHistoryId = isHistoryIdOptimized(env);
+  const useHistoryId = true;
 
   try {
     const now = normalizeHistoryTimestamp(timestamp);
@@ -393,7 +398,7 @@ export async function saveMetricsHistory(db, serverId, metrics, regionCode = '',
 
 export async function getLatestMetrics(db, serverId, env = {}) {
   try {
-    const useHistoryId = isHistoryIdOptimized(env);
+    const useHistoryId = await shouldUseHistoryIdQueries(db, env);
     let result;
 
     if (useHistoryId) {
@@ -429,7 +434,7 @@ export async function getLatestMetricsForAllServers(db, env = {}) {
     return cacheInfo.cache;
   }
 
-  const useHistoryId = isHistoryIdOptimized(env);
+  const useHistoryId = await shouldUseHistoryIdQueries(db, env);
   if (!useHistoryId) {
     await ensureHistoryIndex(db);
   }
@@ -479,7 +484,7 @@ export async function deleteMetricsHistoryForServer(db, serverId, tableName = 'm
     return { success: true, changes: 0 };
   }
 
-  const useHistoryId = tableName === 'metrics_history' && isHistoryIdOptimized(env);
+  const useHistoryId = tableName === 'metrics_history' && await shouldUseHistoryIdQueries(db, env);
   let result;
 
   if (useHistoryId) {
