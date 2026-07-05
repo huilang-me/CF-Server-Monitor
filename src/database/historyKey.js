@@ -260,11 +260,12 @@ export async function getHistoryIdAutoOptimizationStatus(db, { force = false } =
     ready: tables.every(table => table.ready),
     minId,
     threshold: HISTORY_AUTO_OPTIMIZED_MIN_ID,
-    hasMinIdBelowThreshold: tables.some(table =>
-      table.rows > 0
-      && Number.isSafeInteger(Number(table.minId))
-      && Number(table.minId) < HISTORY_AUTO_OPTIMIZED_MIN_ID
-    ),
+    hasMinIdBelowThreshold: (() => {
+      const activeTable = tables.find(table => table.tableName === 'metrics_history');
+      return activeTable?.rows > 0
+        && Number.isSafeInteger(Number(activeTable.minId))
+        && Number(activeTable.minId) < HISTORY_AUTO_OPTIMIZED_MIN_ID;
+    })(),
     checkedAt: Date.now(),
     tables
   };
