@@ -53,7 +53,7 @@ export async function updateDatabase(db, env = {}) {
     }
 
     if (optimizedHistory) {
-      const optimizedStorage = await ensureOptimizedHistoryStorage(db);
+      const optimizedStorage = await ensureOptimizedHistoryStorage(db, { allowReset: true });
       results.push({ name: 'metrics_history 优化模式准备', ...optimizedStorage });
       if (!optimizedStorage.success) {
         throw new Error(optimizedStorage.error || 'metrics_history 优化模式准备失败');
@@ -185,24 +185,29 @@ async function setOptimizedHistoryStorageVersion(db) {
   ).bind(OPTIMIZED_HISTORY_STORAGE_SETTING, OPTIMIZED_HISTORY_STORAGE_VERSION).run();
 }
 
-export async function ensureOptimizedHistoryStorage(db) {
+export async function ensureOptimizedHistoryStorage(db, { allowReset = false } = {}) {
   try {
     await ensureServerHistoryPartitions(db);
 
-    const storageVersion = await getOptimizedHistoryStorageVersion(db);
     let reset = false;
-    if (storageVersion !== OPTIMIZED_HISTORY_STORAGE_VERSION || !await isOptimizedHistoryTableReady(db)) {
+    const storageVersion = allowReset ? await getOptimizedHistoryStorageVersion(db) : OPTIMIZED_HISTORY_STORAGE_VERSION;
+    const ready = await isOptimizedHistoryTableReady(db);
+    if (allowReset && (storageVersion !== OPTIMIZED_HISTORY_STORAGE_VERSION || !ready)) {
       await db.prepare(`DROP TABLE IF EXISTS metrics_history`).run();
       await db.prepare(createMetricsHistoryTableSql()).run();
       await isHistoryIdPrimaryKey(db, 'metrics_history', { force: true });
       reset = true;
+    } else if (!ready) {
+      await db.prepare(createMetricsHistoryTableSql()).run();
     }
 
     const indexes = await dropHistorySecondaryIndexes(db);
     if (!indexes.success) {
       return indexes;
     }
-    await setOptimizedHistoryStorageVersion(db);
+    if (allowReset) {
+      await setOptimizedHistoryStorageVersion(db);
+    }
 
     return {
       success: true,

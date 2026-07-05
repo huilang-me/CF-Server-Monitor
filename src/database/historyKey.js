@@ -50,6 +50,7 @@ export const HISTORY_COLUMN_NAMES = HISTORY_COLUMNS.map(column => column.name);
 
 const historyIdPrimaryKeyCache = new Map();
 const serverHistoryPartitionCache = new Map();
+let serverHistoryPartitionColumnReady = false;
 
 export function isHistoryIdOptimized(env = {}) {
   const value = env?.[HISTORY_ID_OPTIMIZED_ENV];
@@ -141,6 +142,10 @@ async function serverTableExists(db) {
 }
 
 export async function ensureServerHistoryPartitionColumn(db) {
+  if (serverHistoryPartitionColumnReady) {
+    return { success: true, added: false, message: 'history_partition_id 已存在' };
+  }
+
   if (!await serverTableExists(db)) {
     return { success: true, added: false, skipped: true, message: 'servers 表不存在' };
   }
@@ -148,12 +153,14 @@ export async function ensureServerHistoryPartitionColumn(db) {
   const { results: columns = [] } = await db.prepare(`PRAGMA table_info(servers)`).all();
   const exists = columns.some(column => column.name === SERVER_HISTORY_PARTITION_COLUMN);
   if (exists) {
+    serverHistoryPartitionColumnReady = true;
     return { success: true, added: false, message: 'history_partition_id 已存在' };
   }
 
   await db.prepare(
     `ALTER TABLE servers ADD COLUMN ${quoteIdentifier(SERVER_HISTORY_PARTITION_COLUMN)} INTEGER DEFAULT 0`
   ).run();
+  serverHistoryPartitionColumnReady = true;
   return { success: true, added: true, message: '已添加 history_partition_id' };
 }
 
@@ -220,13 +227,24 @@ export async function getServerHistoryPartitionId(db, serverId) {
     return serverHistoryPartitionCache.get(serverId);
   }
 
-  await ensureServerHistoryPartitionColumn(db);
-
-  let row = await db.prepare(`
+  const selectPartition = () => db.prepare(`
     SELECT ${quoteIdentifier(SERVER_HISTORY_PARTITION_COLUMN)} AS history_partition_id
     FROM servers
     WHERE id = ?
   `).bind(serverId).first();
+  let row;
+
+  try {
+    row = await selectPartition();
+    serverHistoryPartitionColumnReady = true;
+  } catch (e) {
+    if (!e.message || !/no such column|no such table/i.test(e.message)) {
+      throw e;
+    }
+    await ensureServerHistoryPartitions(db);
+    row = await selectPartition();
+  }
+
   let partitionId = normalizeHistoryPartitionId(row?.history_partition_id);
   if (partitionId) {
     serverHistoryPartitionCache.set(serverId, partitionId);
@@ -235,11 +253,7 @@ export async function getServerHistoryPartitionId(db, serverId) {
 
   await ensureServerHistoryPartitions(db);
 
-  row = await db.prepare(`
-    SELECT ${quoteIdentifier(SERVER_HISTORY_PARTITION_COLUMN)} AS history_partition_id
-    FROM servers
-    WHERE id = ?
-  `).bind(serverId).first();
+  row = await selectPartition();
   partitionId = normalizeHistoryPartitionId(row?.history_partition_id);
   if (!partitionId) {
     throw new Error(`Missing history partition id for server ${serverId}`);

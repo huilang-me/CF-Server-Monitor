@@ -7,7 +7,7 @@ import {
   getCacheDuration
 } from '../utils/cache.js';
 import { saveSiteOptions, debug } from '../utils/settings.js';
-import { addHistoryColumns, ensureHistoryIndex, ensureOptimizedHistoryStorage } from './updateDatabase.js';
+import { addHistoryColumns, ensureHistoryIndex } from './updateDatabase.js';
 import {
   buildHistoryId,
   createMetricsHistoryTableSql,
@@ -48,10 +48,6 @@ function buildHistorySource(tableName, useHistoryId, serverId, partitionId, cuto
 
 async function ensureHistoryStorage(db, optimizedHistory) {
   if (optimizedHistory) {
-    const result = await ensureOptimizedHistoryStorage(db);
-    if (!result.success) {
-      throw new Error(result.error || 'metrics_history 优化模式准备失败');
-    }
     return;
   }
 
@@ -376,14 +372,14 @@ export async function saveMetricsHistory(db, serverId, metrics, regionCode = '',
     }
   } catch (e) {
     if (useHistoryId && e.message && /datatype mismatch|NOT NULL constraint failed: metrics_history\.id/i.test(e.message) && !partitionRepairAttempted) {
-      await ensureOptimizedHistoryStorage(db);
+      await ensureServerHistoryPartitions(db);
       return saveMetricsHistory(db, serverId, metrics, regionCode, timestamp, env, true);
     }
 
     // 检测是否是 "has no column" 错误，如果是则添加缺失字段
     if (e.message && /has no column/i.test(e.message)) {
       if (useHistoryId && !partitionRepairAttempted) {
-        await ensureOptimizedHistoryStorage(db);
+        await addHistoryColumns(db);
         return saveMetricsHistory(db, serverId, metrics, regionCode, timestamp, env, true);
       }
 
