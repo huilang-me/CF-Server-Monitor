@@ -1,7 +1,9 @@
-export const HISTORY_PARTITION_MULTIPLIER = 10000000000;
+export const HISTORY_PARTITION_MULTIPLIER = 10000000000000;
 export const HISTORY_MIN_TIME_KEY = 0;
-export const HISTORY_MAX_TIME_KEY = HISTORY_PARTITION_MULTIPLIER - 1;
-export const HISTORY_MAX_PARTITION_ID = 9223;
+export const HISTORY_MAX_TIME_KEY = 991231235959;
+export const HISTORY_MAX_PARTITION_ID = 900;
+export const HISTORY_MIN_YEAR = 2000;
+export const HISTORY_MAX_YEAR = 2099;
 export const SERVER_HISTORY_PARTITION_COLUMN = 'history_partition_id';
 export const HISTORY_ID_OPTIMIZED_ENV = 'HISTORY_ID_OPTIMIZED';
 
@@ -80,11 +82,30 @@ export function normalizeHistoryTimestamp(value, fallback = Date.now()) {
   return ts < 10000000000 ? ts * 1000 : ts;
 }
 
+function padHistoryTimePart(value) {
+  return String(value).padStart(2, '0');
+}
+
 export function formatHistoryTimeKey(timestamp) {
   const normalized = normalizeHistoryTimestamp(timestamp, 0);
-  const seconds = Math.floor(normalized / 1000);
-  if (!Number.isFinite(seconds) || seconds < HISTORY_MIN_TIME_KEY) return HISTORY_MIN_TIME_KEY;
-  return Math.min(seconds, HISTORY_MAX_TIME_KEY);
+  if (!Number.isFinite(normalized) || normalized <= 0) return HISTORY_MIN_TIME_KEY;
+
+  const date = new Date(normalized);
+  const year = date.getUTCFullYear();
+  if (year < HISTORY_MIN_YEAR) return HISTORY_MIN_TIME_KEY;
+  if (year > HISTORY_MAX_YEAR) return HISTORY_MAX_TIME_KEY;
+
+  const timeKey = Number([
+    padHistoryTimePart(year % 100),
+    padHistoryTimePart(date.getUTCMonth() + 1),
+    padHistoryTimePart(date.getUTCDate()),
+    padHistoryTimePart(date.getUTCHours()),
+    padHistoryTimePart(date.getUTCMinutes()),
+    padHistoryTimePart(date.getUTCSeconds())
+  ].join(''));
+
+  if (!Number.isFinite(timeKey) || timeKey < HISTORY_MIN_TIME_KEY) return HISTORY_MIN_TIME_KEY;
+  return Math.min(timeKey, HISTORY_MAX_TIME_KEY);
 }
 
 export function buildHistoryId(partitionId, timestamp) {

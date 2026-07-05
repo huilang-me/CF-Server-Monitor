@@ -450,7 +450,9 @@ Windows 系统（Python 版）
 HISTORY_ID_OPTIMIZED=1
 ```
 
-开启后，系统会为服务器分配 `history_partition_id`，新写入的历史数据使用 `history_partition_id * 10000000000 + unix_seconds` 形式的安全整数 `id` 主键范围查询，并删除 `metrics_history` 上原来的二级索引。旧历史数据不会迁移，开启后历史图表只展示新写入的数据。
+开启后，系统会为服务器分配 `history_partition_id`，新写入的历史数据使用 `history_partition_id * 10000000000000 + YYMMDDHHMMSS` 形式的安全整数 `id` 主键范围查询（中间等价于固定补一个 `0`，时间使用 UTC），并删除 `metrics_history` 上原来的二级索引。旧历史数据不会迁移，开启后历史图表只展示新写入的数据。
+
+> 风险提示：该编码依赖 JavaScript `Number.MAX_SAFE_INTEGER`，`history_partition_id` 最大支持 `900`，即最多约 900 个服务器分区；时间后缀只保留两位年份，适合 2000-2099 年范围内使用。
 
 修改该变量并重新部署后，建议在后台数据库管理中点击一次 **升级数据库**。
 
