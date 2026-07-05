@@ -1,5 +1,5 @@
 import { checkAuth, simpleAuthResponse, validateCredentials, generateToken } from '../middleware/auth.js';
-import { getLatestMetricsForAllServers } from '../database/schema.js';
+import { deleteMetricsHistoryForServer, getLatestMetricsForAllServers } from '../database/schema.js';
 import { getAllServers, clearServersListCache, clearServerDetailCache } from '../utils/cache.js';
 import { clearSiteSettingsCache, saveSiteOptions } from '../utils/settings.js';
 import { mergeMetricsIntoServer } from '../utils/metrics.js';
@@ -17,41 +17,11 @@ function isValidName(name) {
 }
 
 async function deleteServer(db, id) {
-  // 1. 先删 servers（fast path）
-  try {
-    await db.prepare('DELETE FROM servers WHERE id = ?').bind(id).run();
-    console.log('✅ servers 删除成功');
-    return { success: true, step: 1 };
-  } catch (err) {
-    // 只有 FOREIGN KEY 才进入 fallback
-    if (!err.message?.includes('FOREIGN KEY constraint failed')) {
-      throw err;
-    }
-  }
-
-  // 3. 删除 old 表（可能不存在）
-  await db.prepare('DELETE FROM metrics_history_old WHERE server_id = ?').bind(id).run();
-
-  // 4. 再试一次删除 servers
-  try {
-    await db.prepare('DELETE FROM servers WHERE id = ?').bind(id).run();
-    console.log('✅ servers 删除成功（after old cleanup）');
-    return { success: true, step: 4 };
-  } catch (err) {
-    if (!err.message?.includes('FOREIGN KEY constraint failed')) {
-      throw err;
-    }
-  }
-
-  // 5. 删除新表
-  await db.prepare('DELETE FROM metrics_history WHERE server_id = ?').bind(id).run();
-
-  // 6. 最终兜底删除
-  try {
-    await db.prepare('DELETE FROM servers WHERE id = ?').bind(id).run();
-  } catch (err) {
-    throw err;
-  }
+  await deleteMetricsHistoryForServer(db, id, 'metrics_history_old');
+  await deleteMetricsHistoryForServer(db, id, 'metrics_history');
+  await db.prepare('DELETE FROM servers WHERE id = ?').bind(id).run();
+  console.log('✅ servers 删除成功');
+  return { success: true };
 }
 
 function normalizeInterval(value, fallback, min = 1, max = 86400) {

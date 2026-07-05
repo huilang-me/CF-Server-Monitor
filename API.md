@@ -323,8 +323,9 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 **副作用**
 
 1. `metrics_history` 只写入本次请求中最新的一个样本，避免 1 秒采集时放大 D1 写入次数。
-2. 触发 Durable Object `MetricsBroadcaster` 内部广播，统一发送 `{type:"batchUpdate", ts, updates:[...]}` 格式，前端按样本时间逐个回放。
-3. 写入 `request.cf.country`（或 `cf-ipcountry` Header）作为该条记录的 `region` 字段（统一转大写）。
+2. 新版历史表使用 `server_id + "0" + UTC yyyyMMddHHmmss` 作为 `id` 主键，例如服务器 `1` 在 `2026-07-05T11:46:50Z` 写入 `1020260705114650`。
+3. 触发 Durable Object `MetricsBroadcaster` 内部广播，统一发送 `{type:"batchUpdate", ts, updates:[...]}` 格式，前端按样本时间逐个回放。
+4. 写入 `request.cf.country`（或 `cf-ipcountry` Header）作为该条记录的 `region` 字段（统一转大写）。
 
 ***
 
@@ -523,7 +524,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 | 1 \~ 6    | 1 分钟                   |
 | ≤ 1       | 10 秒                   |
 
-> 历史查询使用 `ROW_NUMBER() OVER (PARTITION BY ts/interval ORDER BY ts)` 取每个采样窗口的第一条。
+> 历史查询优先使用 `id` 主键范围（`server_id0<cutoff>` 到 `server_id099999999999999`）取数，并保留 `server_id` 精确过滤以避免可变长 ID 前缀碰撞；随后用 `ROW_NUMBER() OVER (PARTITION BY ts/interval ORDER BY ts)` 取每个采样窗口的第一条。未升级的旧表会临时回退到 `server_id + timestamp` 条件。
 
 **跨月查询**：当 `cutoff` 早于当月 1 号且存在 `metrics_history_old` 表时，自动 `UNION ALL` 两张表。
 
@@ -1044,7 +1045,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
 
 ### 4.1 `POST /updateDatabase` - 数据库迁移
 
-> 用于老版本升级时补齐 `metrics_history` 与 `servers` 表的字段、并清理废弃 settings。
+> 用于老版本升级时补齐 `metrics_history` 与 `servers` 表的字段，将历史表迁移为 `id TEXT PRIMARY KEY WITHOUT ROWID`，并清理废弃 settings / 非主键索引。
 
 **Request**
 
@@ -1063,7 +1064,8 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
     { "name": "servers 表列更新", "success": true, "added": 5 },
     { "name": "servers 表多余字段清理", "success": true, "cleaned": 30, "message": "..." },
     { "name": "metrics_history 表列更新", "success": true, "added": 14 },
-    { "name": "metrics_history 写入优化", "success": true, "optimized": 0, "message": "..." },
+    { "name": "metrics_history id 主键迁移", "success": true, "migrated": true, "rows": 1234, "message": "..." },
+    { "name": "metrics_history 非主键索引清理", "success": true, "dropped": 1, "message": "..." },
     { "name": "废弃 settings key 清理", "success": true, "cleaned": 0 },
     { "name": "删除弃用的 metrics_aggregated 表", "success": true, "dropped": 0, "message": "..." }
   ]

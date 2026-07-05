@@ -2,6 +2,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { buildHistoryId } from '../src/database/historyKey.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -196,7 +197,7 @@ for (let s = 0; s < servers.length; s++) {
 
     rows.push(`
 INSERT INTO metrics_history (
-  server_id, timestamp, cpu, load_avg,
+  id, server_id, timestamp, cpu, load_avg,
   net_in_speed, net_out_speed, net_rx, net_tx,
   processes, tcp_conn, udp_conn,
   ping_ct, ping_cu, ping_cm, ping_bd,
@@ -208,6 +209,7 @@ INSERT INTO metrics_history (
   net_rx_monthly, net_tx_monthly,
   region
 ) VALUES (
+  '${buildHistoryId(server.id, ts)}',
   '${server.id}',
   ${ts},
   ${parseFloat(metrics.cpu)},

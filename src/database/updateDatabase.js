@@ -1,22 +1,76 @@
+import {
+  buildHistoryIdSqlExpression,
+  createMetricsHistoryTableSql,
+  ensureServerHistoryPartitions,
+  HISTORY_COLUMN_NAMES,
+  historyTableExists,
+  isHistoryIdPrimaryKey,
+  quoteIdentifier,
+  SERVER_HISTORY_PARTITION_COLUMN,
+  selectHistoryColumnExpression,
+  setHistoryIdPrimaryKeyCache
+} from './historyKey.js';
+
 export async function updateDatabase(db) {
   console.log('开始执行数据库更新...');
   const results = [];
   
   try {
-    const historyIndex = await ensureHistoryIndex(db);
-    results.push({ name: 'metrics_history 索引检查', ...historyIndex });
-
     const migrateLoad = await migrateLoadToLoadAvg(db);
     results.push({ name: 'metrics_history load -> load_avg 迁移', ...migrateLoad });
+
+    const migrateOldLoad = await migrateLoadToLoadAvg(db, 'metrics_history_old');
+    if (!migrateOldLoad.skipped) {
+      results.push({ name: 'metrics_history_old load -> load_avg 迁移', ...migrateOldLoad });
+    }
     
     const serversCols = await addServerColumns(db);
     results.push({ name: 'servers 表列更新', ...serversCols });
+
+    const serverPartitions = await ensureServerHistoryPartitions(db);
+    results.push({ name: 'servers 历史分区 ID 检查', ...serverPartitions });
+    if (!serverPartitions.success) {
+      throw new Error(serverPartitions.error || 'servers 历史分区 ID 检查失败');
+    }
     
     const cleanupServers = await cleanupServerExtraColumns(db);
     results.push({ name: 'servers 表多余字段清理', ...cleanupServers });
     
     const historyCols = await addHistoryColumns(db);
     results.push({ name: 'metrics_history 表列更新', ...historyCols });
+
+    const oldHistoryCols = await addHistoryColumns(db, 'metrics_history_old');
+    if (!oldHistoryCols.skipped) {
+      results.push({ name: 'metrics_history_old 表列更新', ...oldHistoryCols });
+    }
+
+    const historyId = await migrateHistoryIdPrimaryKey(db);
+    results.push({ name: 'metrics_history id 主键迁移', ...historyId });
+    if (!historyId.success) {
+      throw new Error(historyId.error || 'metrics_history id 主键迁移失败');
+    }
+
+    const oldHistoryId = await migrateHistoryIdPrimaryKey(db, 'metrics_history_old');
+    if (!oldHistoryId.skipped) {
+      results.push({ name: 'metrics_history_old id 主键迁移', ...oldHistoryId });
+      if (!oldHistoryId.success) {
+        throw new Error(oldHistoryId.error || 'metrics_history_old id 主键迁移失败');
+      }
+    }
+
+    const historyIndexes = await dropHistorySecondaryIndexes(db);
+    results.push({ name: 'metrics_history 非主键索引清理', ...historyIndexes });
+    if (!historyIndexes.success) {
+      throw new Error(historyIndexes.error || 'metrics_history 非主键索引清理失败');
+    }
+
+    const oldHistoryIndexes = await dropHistorySecondaryIndexes(db, 'metrics_history_old');
+    if (!oldHistoryIndexes.skipped) {
+      results.push({ name: 'metrics_history_old 非主键索引清理', ...oldHistoryIndexes });
+      if (!oldHistoryIndexes.success) {
+        throw new Error(oldHistoryIndexes.error || 'metrics_history_old 非主键索引清理失败');
+      }
+    }
 
     // 无需清理metrics_history多余字段，消耗过大，不影响使用，每周执行weeklyCleanup的时候会自动清理
     
@@ -44,34 +98,113 @@ export async function updateDatabase(db) {
   }
 }
 
-// 确保 metrics_history 表有 索引
+// Backward-compatible name: this now removes secondary indexes instead of
+// creating (server_id, timestamp).
 export async function ensureHistoryIndex(db) {
-  try {
-    const index = await db.prepare(
-      `SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='metrics_history'`
-    ).first();
+  return dropHistorySecondaryIndexes(db);
+}
 
-    if (index) {
-      return { success: true, created: false, message: '索引已存在' };
+export async function dropHistorySecondaryIndexes(db, tableName = 'metrics_history') {
+  try {
+    if (!await historyTableExists(db, tableName)) {
+      return { success: true, dropped: 0, skipped: true, message: '表不存在' };
     }
 
-    const idxName = 'idx_history_server_time_' + Math.random().toString(36).substring(2);
-    await db.prepare(`DROP INDEX IF EXISTS ${idxName}`).run();
-    await db.prepare(`
-      CREATE INDEX IF NOT EXISTS ${idxName} 
-      ON metrics_history(server_id, timestamp)
-    `).run();
+    const { results: indexes = [] } = await db.prepare(
+      `SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ?`
+    ).bind(tableName).all();
+    const secondaryIndexes = indexes.filter(index => index.sql);
 
-    return { success: true, created: true, message: '已创建索引' };
+    for (const index of secondaryIndexes) {
+      await db.prepare(`DROP INDEX IF EXISTS ${quoteIdentifier(index.name)}`).run();
+    }
+
+    return {
+      success: true,
+      dropped: secondaryIndexes.length,
+      message: secondaryIndexes.length > 0 ? '已删除非主键索引' : '无需清理'
+    };
   } catch (e) {
-    console.error('检查/创建 metrics_history 索引失败:', e);
+    console.error(`清理 ${tableName} 非主键索引失败:`, e);
     return { success: false, error: e.message };
   }
 }
 
-async function migrateLoadToLoadAvg(db) {
+export async function migrateHistoryIdPrimaryKey(db, tableName = 'metrics_history') {
+  let tempTable = null;
+  let originalDropped = false;
+
   try {
-    const { results: columns } = await db.prepare(`PRAGMA table_info(metrics_history)`).all();
+    if (!await historyTableExists(db, tableName)) {
+      return { success: true, migrated: false, skipped: true, message: '表不存在' };
+    }
+
+    if (await isHistoryIdPrimaryKey(db, tableName, { force: true })) {
+      return { success: true, migrated: false, rows: 0, message: 'id 已是整数主键' };
+    }
+
+    const { results: columns = [] } = await db.prepare(
+      `PRAGMA table_info(${quoteIdentifier(tableName)})`
+    ).all();
+    const existingCols = columns.map(c => c.name);
+    if (!existingCols.includes('server_id') || !existingCols.includes('timestamp')) {
+      return { success: false, migrated: false, error: '缺少 server_id 或 timestamp 字段' };
+    }
+
+    tempTable = `${tableName}_id_migration_${Math.random().toString(36).slice(2, 8)}`;
+    const insertColumns = HISTORY_COLUMN_NAMES.map(quoteIdentifier).join(', ');
+    const dataColumns = HISTORY_COLUMN_NAMES
+      .filter(column => column !== 'id')
+      .map(column => `${selectHistoryColumnExpression(column, existingCols, 'h')} AS ${quoteIdentifier(column)}`)
+      .join(',\n        ');
+
+    await db.prepare(`DROP TABLE IF EXISTS ${quoteIdentifier(tempTable)}`).run();
+    await db.prepare(createMetricsHistoryTableSql(tempTable)).run();
+
+    const { meta } = await db.prepare(`
+      INSERT OR REPLACE INTO ${quoteIdentifier(tempTable)} (${insertColumns})
+      SELECT
+        ${buildHistoryIdSqlExpression(`s.${quoteIdentifier(SERVER_HISTORY_PARTITION_COLUMN)}`, `h.${quoteIdentifier('timestamp')}`)} AS ${quoteIdentifier('id')},
+        ${dataColumns}
+      FROM ${quoteIdentifier(tableName)} h
+      INNER JOIN servers s ON s.id = h.${quoteIdentifier('server_id')}
+      WHERE h.${quoteIdentifier('server_id')} IS NOT NULL
+        AND h.${quoteIdentifier('timestamp')} IS NOT NULL
+        AND s.${quoteIdentifier(SERVER_HISTORY_PARTITION_COLUMN)} > 0
+      ORDER BY s.${quoteIdentifier(SERVER_HISTORY_PARTITION_COLUMN)}, h.${quoteIdentifier('timestamp')}
+    `).run();
+
+    await db.prepare(`DROP TABLE ${quoteIdentifier(tableName)}`).run();
+    originalDropped = true;
+    await db.prepare(`ALTER TABLE ${quoteIdentifier(tempTable)} RENAME TO ${quoteIdentifier(tableName)}`).run();
+    setHistoryIdPrimaryKeyCache(tableName, true);
+
+    return {
+      success: true,
+      migrated: true,
+      rows: meta?.changes || 0,
+      message: `已迁移 ${meta?.changes || 0} 条历史记录到 id 主键`
+    };
+  } catch (e) {
+    if (tempTable && !originalDropped) {
+      try {
+        await db.prepare(`DROP TABLE IF EXISTS ${quoteIdentifier(tempTable)}`).run();
+      } catch (cleanupError) {
+        console.warn(`清理 ${tableName} id 迁移临时表失败:`, cleanupError);
+      }
+    }
+    console.error(`迁移 ${tableName} id 主键失败:`, e);
+    return { success: false, error: e.message };
+  }
+}
+
+async function migrateLoadToLoadAvg(db, tableName = 'metrics_history') {
+  try {
+    if (!await historyTableExists(db, tableName)) {
+      return { success: true, migrated: 0, skipped: true, message: '表不存在' };
+    }
+
+    const { results: columns } = await db.prepare(`PRAGMA table_info(${quoteIdentifier(tableName)})`).all();
     const existingCols = columns.map(c => c.name);
     
     if (!existingCols.includes('load')) {
@@ -81,15 +214,15 @@ async function migrateLoadToLoadAvg(db) {
     let migrated = 0;
     
     if (!existingCols.includes('load_avg')) {
-      await db.prepare(`ALTER TABLE metrics_history ADD COLUMN load_avg TEXT DEFAULT '0'`).run();
+      await db.prepare(`ALTER TABLE ${quoteIdentifier(tableName)} ADD COLUMN ${quoteIdentifier('load_avg')} TEXT DEFAULT '0'`).run();
     }
     
     const { meta: updateResult } = await db.prepare(
-      `UPDATE metrics_history SET load_avg = load WHERE load IS NOT NULL AND load_avg = '0'`
+      `UPDATE ${quoteIdentifier(tableName)} SET ${quoteIdentifier('load_avg')} = ${quoteIdentifier('load')} WHERE ${quoteIdentifier('load')} IS NOT NULL AND ${quoteIdentifier('load_avg')} = '0'`
     ).run();
     migrated = updateResult.changes;
     
-    await db.prepare(`ALTER TABLE metrics_history DROP COLUMN load`).run();
+    await db.prepare(`ALTER TABLE ${quoteIdentifier(tableName)} DROP COLUMN ${quoteIdentifier('load')}`).run();
     console.log(`✅ 已迁移 ${migrated} 条记录的 load -> load_avg`);
     
     return { success: true, migrated, message: `已迁移 ${migrated} 条记录并删除旧字段` };
@@ -111,7 +244,8 @@ export async function addServerColumns(db) {
       collect_interval: "INTEGER DEFAULT 0",
       report_interval: "INTEGER DEFAULT 60",
       ping_mode: "TEXT DEFAULT 'http'",
-      traffic_calc_type: "TEXT DEFAULT 'total'"
+      traffic_calc_type: "TEXT DEFAULT 'total'",
+      [SERVER_HISTORY_PARTITION_COLUMN]: "INTEGER DEFAULT 0"
     };
     
     let added = 0;
@@ -153,9 +287,13 @@ async function cleanupServerExtraColumns(db) {
   }
 }
 
-export async function addHistoryColumns(db) {
+export async function addHistoryColumns(db, tableName = 'metrics_history') {
   try {
-    const { results: historyColumns } = await db.prepare(`PRAGMA table_info(metrics_history)`).all();
+    if (!await historyTableExists(db, tableName)) {
+      return { success: true, added: 0, skipped: true, message: '表不存在' };
+    }
+
+    const { results: historyColumns } = await db.prepare(`PRAGMA table_info(${quoteIdentifier(tableName)})`).all();
     const existingHistoryCols = historyColumns.map(c => c.name);
     
     const newHistoryCols = {
@@ -180,7 +318,7 @@ export async function addHistoryColumns(db) {
     let added = 0;
     for (const [colName, colDef] of Object.entries(newHistoryCols)) {
       if (!existingHistoryCols.includes(colName)) {
-        await db.prepare(`ALTER TABLE metrics_history ADD COLUMN ${colName} ${colDef}`).run();
+        await db.prepare(`ALTER TABLE ${quoteIdentifier(tableName)} ADD COLUMN ${quoteIdentifier(colName)} ${colDef}`).run();
         added++;
       }
     }
