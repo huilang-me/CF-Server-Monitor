@@ -1417,6 +1417,40 @@ body::before {
     font-weight: 600;
 }
 
+.history-id-option-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.history-id-status {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.history-id-status-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.02);
+    font-size: 12px;
+}
+
+.history-id-status-row .status-badge {
+    flex: 0 0 auto;
+}
+
+.history-id-status-meta {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
 .highlight-box {
     background: rgba(255, 184, 112, 0.05);
     border-color: rgba(255, 184, 112, 0.3) !important;

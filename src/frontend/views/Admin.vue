@@ -434,6 +434,55 @@
             </div>
 
             <div class="settings-section">
+              <div class="section-title"><span>▸</span> {{ trans.historyIdOptimization }}</div>
+
+              <div class="form-group checkbox-item" :class="{ 'highlight-box': settings.history_id_optimized }">
+                <input
+                  type="checkbox"
+                  id="cfg_history_id_optimized"
+                  v-model="settings.history_id_optimized"
+                  :disabled="historyIdOptimizedLocked"
+                >
+                <label class="history-id-option-label">
+                  <b>{{ trans.enableHistoryIdOptimization }}</b>
+                  <span v-if="historyIdOptimizedLocked" class="checkbox-badge">{{ trans.historyIdLocked }}</span>
+                </label>
+              </div>
+
+              <p class="text-muted text-sm mt-2">
+                <span class="warning-icon">[!]</span>
+                {{ trans.historyIdOptimizedWarning }}
+              </p>
+
+              <div class="history-id-status">
+                <div class="history-id-status-row">
+                  <span>{{ trans.historyIdConditionNoIndex }}</span>
+                  <span class="status-badge" :class="historyIdStatus?.noServerTimeIndex ? 'online' : 'offline'">
+                    {{ formatHistoryCondition(historyIdStatus?.noServerTimeIndex) }}
+                  </span>
+                </div>
+                <div class="history-id-status-row">
+                  <span>{{ trans.historyIdConditionMinId }} ({{ trans.historyIdThreshold }}: {{ historyIdThreshold }})</span>
+                  <span class="status-badge" :class="historyIdStatus?.minIdAboveThreshold ? 'online' : 'offline'">
+                    {{ formatHistoryCondition(historyIdStatus?.minIdAboveThreshold) }}
+                  </span>
+                </div>
+                <div class="history-id-status-row">
+                  <span>{{ trans.historyIdConditionSetting }}</span>
+                  <span class="status-badge" :class="settings.history_id_optimized ? 'online' : 'offline'">
+                    {{ formatHistoryCondition(settings.history_id_optimized) }}
+                  </span>
+                </div>
+                <div class="history-id-status-meta">
+                  {{ trans.historyIdMinId }}: {{ historyIdMinIdText }}
+                </div>
+                <div class="history-id-status-meta">
+                  {{ trans.historyIdCurrentMode }}: <b>{{ historyIdWillUseIdQuery ? trans.historyIdModeId : trans.historyIdModeCompat }}</b>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-section">
               <div class="section-title"><span>▸</span> {{ trans.adminLoginSettings }}</div>
 
               <div class="form-group">
@@ -1037,6 +1086,7 @@ const settings = ref({
   show_tf: true,
   show_time: true,
   show_long_history: false,
+  history_id_optimized: false,
   tg_notify: 'false',
   expire_reminder: 'false',
   tg_bot_token: '',
@@ -1056,6 +1106,15 @@ const settings = ref({
   custom_bd: ''
 })
 const apiSecret = ref('')
+const historyIdStatus = ref(null)
+const historyIdOptimizedSaved = ref(false)
+const historyIdOptimizedLocked = computed(() => historyIdOptimizedSaved.value)
+const historyIdThreshold = computed(() => historyIdStatus.value?.threshold ?? 10000000000000)
+const historyIdMinIdText = computed(() => historyIdStatus.value?.minId ?? '-')
+const historyIdWillUseIdQuery = computed(() =>
+  Boolean(settings.value.history_id_optimized || historyIdStatus.value?.noServerTimeIndex || historyIdStatus.value?.minIdAboveThreshold)
+)
+const formatHistoryCondition = (value) => value ? trans.value.historyIdConditionOn : trans.value.historyIdConditionOff
 
 const { visibility: passwordVisible, toggle: togglePassword } = usePasswordVisibility([
   'login', 'tgBotToken', 'tgChatId', 'turnstileSecret', 'cloudflareToken', 'jwtSecret', 'password', 'confirmPassword'
@@ -1341,6 +1400,8 @@ const loadSettings = async () => {
     if (!result.error) {
       const data = result.data
       const settingsData = data.settings || {}
+      historyIdStatus.value = data.history_id_status || null
+      historyIdOptimizedSaved.value = settingsData.history_id_optimized === 'true'
       settings.value = {
         site_title: settingsData.site_title || '',
         custom_bg: settingsData.custom_bg || '',
@@ -1353,6 +1414,7 @@ const loadSettings = async () => {
         show_tf: settingsData.show_tf === 'true',
         show_time: settingsData.show_time === 'true',
         show_long_history: settingsData.show_long_history === 'true',
+        history_id_optimized: settingsData.history_id_optimized === 'true',
         tg_notify: settingsData.tg_notify || 'false',
         expire_reminder: settingsData.expire_reminder || 'false',
         tg_bot_token: settingsData.tg_bot_token || '',
@@ -1425,6 +1487,12 @@ const saveSettings = async () => {
       }
     }
 
+    if (!historyIdOptimizedSaved.value && settings.value.history_id_optimized) {
+      if (!confirm(trans.value.historyIdOptimizedConfirm)) {
+        return
+      }
+    }
+
     saving.value = true
     saveResult.value = null
 
@@ -1442,6 +1510,7 @@ const saveSettings = async () => {
         show_tf: settings.value.show_tf ? 'true' : 'false',
         show_time: settings.value.show_time ? 'true' : 'false',
         show_long_history: settings.value.show_long_history ? 'true' : 'false',
+        history_id_optimized: settings.value.history_id_optimized ? 'true' : 'false',
         tg_notify: settings.value.tg_notify,
         expire_reminder: settings.value.expire_reminder,
         tg_bot_token: settings.value.tg_bot_token,

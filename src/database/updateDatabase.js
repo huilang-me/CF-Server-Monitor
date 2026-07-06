@@ -1,14 +1,15 @@
 import {
   createMetricsHistoryTableSql,
   ensureServerHistoryPartitions,
+  getHistoryIdQueryStatus,
+  getHistoryServerTimeIndexStatus,
   HISTORY_COLUMN_NAMES,
   historyTableExists,
   isHistoryIdPrimaryKey,
-  isHistoryIdOptimized,
+  isHistoryIdOptimizedSettingEnabled,
   quoteIdentifier,
   resetHistoryIdAutoOptimizedCache,
-  SERVER_HISTORY_PARTITION_COLUMN,
-  shouldUseHistoryIdQueries
+  SERVER_HISTORY_PARTITION_COLUMN
 } from './historyKey.js';
 
 const OPTIMIZED_HISTORY_STORAGE_SETTING = 'history_id_optimized_storage_version';
@@ -18,7 +19,7 @@ export async function updateDatabase(db, env = {}) {
   console.log('开始执行数据库更新...');
   const results = [];
   resetHistoryIdAutoOptimizedCache();
-  let optimizedHistory = isHistoryIdOptimized(env);
+  let optimizedHistory = await isHistoryIdOptimizedSettingEnabled(db, env);
   
   try {
     if (!optimizedHistory) {
@@ -40,7 +41,8 @@ export async function updateDatabase(db, env = {}) {
       throw new Error(serverPartitions.error || 'servers 历史分区 ID 检查失败');
     }
 
-    optimizedHistory = await shouldUseHistoryIdQueries(db, env, { force: true });
+    const historyQueryStatus = await getHistoryIdQueryStatus(db, env, { force: true });
+    optimizedHistory = historyQueryStatus.useHistoryIdQueries;
     
     const cleanupServers = await cleanupServerExtraColumns(db);
     results.push({ name: 'servers 表多余字段清理', ...cleanupServers });
@@ -53,18 +55,28 @@ export async function updateDatabase(db, env = {}) {
       results.push({ name: 'metrics_history_old 表列更新', ...oldHistoryCols });
     }
 
-    if (optimizedHistory) {
+    if (historyQueryStatus.settingEnabled) {
       const optimizedStorage = await ensureOptimizedHistoryStorage(db, { allowReset: true });
       results.push({ name: 'metrics_history 优化模式准备', ...optimizedStorage });
       if (!optimizedStorage.success) {
         throw new Error(optimizedStorage.error || 'metrics_history 优化模式准备失败');
       }
-    } else {
+    } else if (historyQueryStatus.shouldEnsureSecondaryIndex) {
       const historyIndex = await ensureHistoryIndex(db);
       results.push({ name: 'metrics_history 索引检查', ...historyIndex });
       if (!historyIndex.success) {
         throw new Error(historyIndex.error || 'metrics_history 索引检查失败');
       }
+    } else {
+      results.push({
+        name: 'metrics_history 索引策略',
+        success: true,
+        skipped: true,
+        useHistoryIdQueries: optimizedHistory,
+        message: optimizedHistory
+          ? '当前使用 id 查询，未自动增删二级索引'
+          : 'server_id + timestamp 索引已存在'
+      });
     }
 
     // 无需清理metrics_history多余字段，消耗过大，不影响使用，每周执行weeklyCleanup的时候会自动清理
@@ -99,15 +111,8 @@ export async function ensureHistoryIndex(db) {
       await db.prepare(createMetricsHistoryTableSql()).run();
     }
 
-    const { results: indexes = [] } = await db.prepare(
-      `SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'metrics_history'`
-    ).all();
-    const hasServerTimeIndex = indexes.some(index => {
-      const sql = String(index.sql || '').toLowerCase().replace(/\s+/g, ' ');
-      return sql.includes('server_id') && sql.includes('timestamp');
-    });
-
-    if (hasServerTimeIndex) {
+    const indexStatus = await getHistoryServerTimeIndexStatus(db);
+    if (indexStatus.hasIndex) {
       return { success: true, created: false, message: '索引已存在' };
     }
 

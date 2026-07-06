@@ -1,13 +1,13 @@
 import { checkAuth, simpleAuthResponse, validateCredentials, generateToken } from '../middleware/auth.js';
 import { deleteMetricsHistoryForServer, getLatestMetricsForAllServers } from '../database/schema.js';
 import { getAllServers, clearServersListCache, clearServerDetailCache } from '../utils/cache.js';
-import { clearSiteSettingsCache, saveSiteOptions } from '../utils/settings.js';
+import { HISTORY_ID_OPTIMIZED_SETTING, saveSiteOptions } from '../utils/settings.js';
 import { mergeMetricsIntoServer } from '../utils/metrics.js';
 import { verifyTurnstileToken, hashPassword } from '../utils/common.js';
 import { AppError, createSuccessResponse, createBadRequestResponse, createUnauthorizedResponse, createErrorResponse } from '../utils/errors.js';
 import { addServerColumns } from '../database/updateDatabase.js';
 import { sendNotification } from '../services/notification.js';
-import { getNextServerHistoryPartitionId } from '../database/historyKey.js';
+import { getHistoryIdQueryStatus, getNextServerHistoryPartitionId, resetHistoryIdAutoOptimizedCache } from '../database/historyKey.js';
 
 function isValidUUID(id) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
@@ -29,6 +29,11 @@ function normalizeInterval(value, fallback, min = 1, max = 86400) {
   const num = parseInt(value, 10);
   if (!Number.isFinite(num)) return fallback;
   return Math.max(min, Math.min(max, num));
+}
+
+function isTruthySetting(value) {
+  if (value === true || value === 1) return true;
+  return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
 }
 
 function getUtcTodayRange() {
@@ -205,9 +210,11 @@ export async function handleAdminAPI(request, env, sys) {
 
     if (data.action === 'get_settings') {
       const { jwt_secret, ...safeSettings } = sys || {};
+      const historyIdStatus = await getHistoryIdQueryStatus(env.DB, sys, { force: true });
       return createSuccessResponse({
         success: true,
         settings: safeSettings,
+        history_id_status: historyIdStatus,
         api_secret: env.API_SECRET
       });
     }
@@ -309,6 +316,18 @@ export async function handleAdminAPI(request, env, sys) {
     }
     else if (data.action === 'save_settings') {
       const settings = data.settings || {};
+      const currentHistoryIdOptimized = isTruthySetting(sys?.[HISTORY_ID_OPTIMIZED_SETTING]);
+      let historyIdOptimizedChanged = false;
+
+      if (settings[HISTORY_ID_OPTIMIZED_SETTING] !== undefined) {
+        const requestedHistoryIdOptimized = isTruthySetting(settings[HISTORY_ID_OPTIMIZED_SETTING]);
+        if (currentHistoryIdOptimized && !requestedHistoryIdOptimized) {
+          return createBadRequestResponse('historyIdOptimizedCannotDisable');
+        }
+
+        settings[HISTORY_ID_OPTIMIZED_SETTING] = (currentHistoryIdOptimized || requestedHistoryIdOptimized) ? 'true' : 'false';
+        historyIdOptimizedChanged = !currentHistoryIdOptimized && requestedHistoryIdOptimized;
+      }
 
       // 如果 turnstile_enabled 或 turnstile_login_enabled 开启，验证 turnstile_site_key 和 turnstile_secret_key 都不为空
       if (settings.turnstile_enabled === 'true' || settings.turnstile_enabled === true || settings.turnstile_login_enabled === 'true' || settings.turnstile_login_enabled === true) {
@@ -328,7 +347,7 @@ export async function handleAdminAPI(request, env, sys) {
       }
 
       const APPEARANCE_FIELDS = ['site_title', 'custom_bg', 'custom_head', 'custom_script'];
-      const SITE_FIELDS = ['is_public', 'show_price', 'show_expire', 'show_bw', 'show_tf', 'show_time', 'show_long_history', 'tg_notify', 'tg_bot_token', 'tg_chat_id', 'turnstile_enabled', 'turnstile_login_enabled', 'turnstile_site_key', 'turnstile_secret_key', 'jwt_secret', 'username', 'password', 'cloudflare_account_id', 'cloudflare_token', 'custom_ct', 'custom_cu', 'custom_cm', 'custom_bd', 'cleanup_skip_count', 'expire_reminder'];
+      const SITE_FIELDS = ['is_public', 'show_price', 'show_expire', 'show_bw', 'show_tf', 'show_time', 'show_long_history', 'tg_notify', 'tg_bot_token', 'tg_chat_id', 'turnstile_enabled', 'turnstile_login_enabled', 'turnstile_site_key', 'turnstile_secret_key', 'jwt_secret', 'username', 'password', 'cloudflare_account_id', 'cloudflare_token', 'custom_ct', 'custom_cu', 'custom_cm', 'custom_bd', 'cleanup_skip_count', 'expire_reminder', HISTORY_ID_OPTIMIZED_SETTING];
 
       const appearanceOptions = {};
       for (const field of APPEARANCE_FIELDS) {
@@ -353,6 +372,9 @@ export async function handleAdminAPI(request, env, sys) {
         }
       }
       await saveSiteOptions(env.DB, siteOptions);
+      if (historyIdOptimizedChanged) {
+        resetHistoryIdAutoOptimizedCache();
+      }
       Object.assign(sys, appearanceOptions, siteOptions);
       return createSuccessResponse({
         success: true,

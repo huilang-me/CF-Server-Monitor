@@ -444,19 +444,17 @@ Windows 系统（Python 版）
 
 默认情况下，新写入的历史数据也会使用安全整数 `id`，但历史查询会继续使用原来的 `server_id + timestamp` 联合索引，以兼容已有历史数据。
 
-如需降低长历史查询的 D1 读行消耗，可在 Workers & Pages 的 **Settings** → **Variables and secrets** 中添加：
+如需降低长历史查询的 D1 读行消耗，可在后台 **设置** 中开启“历史查询优化”。该设置默认关闭；开启后不能再关闭，并会在页面上明确提示“不允许回滚代码”。
 
-```
-HISTORY_ID_OPTIMIZED=1
-```
+系统会为服务器分配 `history_partition_id`，新写入的历史数据使用 `history_partition_id * 10000000000000 + YYMMDDHHMMSS` 形式的安全整数 `id`（中间等价于固定补一个 `0`，时间使用 UTC）。
 
-系统会为服务器分配 `history_partition_id`，新写入的历史数据使用 `history_partition_id * 10000000000000 + YYMMDDHHMMSS` 形式的安全整数 `id`（中间等价于固定补一个 `0`，时间使用 UTC）。当 `metrics_history` 和 `metrics_history_old` 中已有数据的最小 `id` 都大于 `10000000000000` 时，系统会自动视为历史数据已覆盖并切换到 `id` 主键范围查询；此后新建历史表不会再创建 `metrics_history(server_id, timestamp)` 联合索引。
+历史查询会在任一条件满足时使用整数 `id` 主键范围查询：`metrics_history(server_id, timestamp)` 联合索引不存在；`metrics_history` 和 `metrics_history_old` 中已有数据的最小 `id` 都大于 `10000000000000`；后台设置已手动开启历史查询优化。后台设置页会展示这三个条件各自的状态。
 
-设置 `HISTORY_ID_OPTIMIZED=1` 会跳过自动覆盖检测，直接使用整数 `id` 主键范围查询，并清理 `metrics_history` 上原来的二级索引。旧历史数据不会迁移；未使用新 `id` 格式的旧记录不会出现在优化查询结果里。
+系统只会在“最小 `id` 小于 `10000000000000` 且后台开关未开启”时自动补建 `metrics_history(server_id, timestamp)` 联合索引，避免不必要的索引增删消耗。手动开启优化会跳过兼容期，直接使用整数 `id` 主键范围查询，并清理 `metrics_history` 上原来的二级索引。旧历史数据不会迁移；未使用新 `id` 格式的旧记录不会出现在优化查询结果里。
 
 > 风险提示：该编码依赖 JavaScript `Number.MAX_SAFE_INTEGER`，`history_partition_id` 最大支持 `900`，即最多约 900 个服务器分区；时间后缀只保留两位年份，适合 2000-2099 年范围内使用。
 
-修改该变量并重新部署后，建议在后台数据库管理中点击一次 **升级数据库**。
+开启该设置后，建议在后台数据库管理中点击一次 **升级数据库**。
 
 ### Cloudflare 额度查询（可选）
 

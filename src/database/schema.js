@@ -12,6 +12,7 @@ import {
   buildHistoryId,
   createMetricsHistoryTableSql,
   ensureServerHistoryPartitions,
+  getHistoryIdQueryStatus,
   getHistoryIdRange,
   getServerHistoryPartitionId,
   historyTableExists,
@@ -47,12 +48,16 @@ function buildHistorySource(tableName, useHistoryId, serverId, partitionId, cuto
   };
 }
 
-async function ensureHistoryStorage(db, optimizedHistory) {
-  if (optimizedHistory) {
+async function ensureHistoryStorage(db, historyStatus) {
+  if (historyStatus.settingEnabled) {
     const result = await dropHistorySecondaryIndexes(db);
     if (!result.success) {
       throw new Error(result.error || 'metrics_history optimized index cleanup failed');
     }
+    return;
+  }
+
+  if (!historyStatus.shouldEnsureSecondaryIndex) {
     return;
   }
 
@@ -94,8 +99,8 @@ export async function initDatabase(db, env = {}) {
     `).run();
 
     await db.prepare(createMetricsHistoryTableSql()).run();
-    const optimizedHistory = await shouldUseHistoryIdQueries(db, env, { force: true });
-    await ensureHistoryStorage(db, optimizedHistory);
+    const historyStatus = await getHistoryIdQueryStatus(db, env, { force: true });
+    await ensureHistoryStorage(db, historyStatus);
 
     debug('✅ 数据库初始化完成');
     dbInitialized = true;
@@ -435,9 +440,6 @@ export async function getLatestMetricsForAllServers(db, env = {}) {
   }
 
   const useHistoryId = await shouldUseHistoryIdQueries(db, env);
-  if (!useHistoryId) {
-    await ensureHistoryIndex(db);
-  }
 
   try {
     const servers = await getAllServers(db);

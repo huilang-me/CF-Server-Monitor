@@ -1,3 +1,5 @@
+import { HISTORY_ID_OPTIMIZED_SETTING, loadSiteSettings } from '../utils/settings.js';
+
 export const HISTORY_PARTITION_MULTIPLIER = 10000000000000;
 export const HISTORY_AUTO_OPTIMIZED_MIN_ID = HISTORY_PARTITION_MULTIPLIER;
 export const HISTORY_MIN_TIME_KEY = 0;
@@ -6,7 +8,6 @@ export const HISTORY_MAX_PARTITION_ID = 900;
 export const HISTORY_MIN_YEAR = 2000;
 export const HISTORY_MAX_YEAR = 2099;
 export const SERVER_HISTORY_PARTITION_COLUMN = 'history_partition_id';
-export const HISTORY_ID_OPTIMIZED_ENV = 'HISTORY_ID_OPTIMIZED';
 
 export const HISTORY_COLUMNS = [
   { name: 'id', definition: 'INTEGER PRIMARY KEY', defaultSql: null },
@@ -56,10 +57,28 @@ const serverHistoryPartitionCache = new Map();
 let historyIdAutoOptimizedCache = null;
 let serverHistoryPartitionColumnReady = false;
 
-export function isHistoryIdOptimized(env = {}) {
-  const value = env?.[HISTORY_ID_OPTIMIZED_ENV];
+function isTruthySetting(value) {
   if (value === true || value === 1) return true;
   return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
+}
+
+export function isHistoryIdOptimized(settings = {}) {
+  return isTruthySetting(settings?.[HISTORY_ID_OPTIMIZED_SETTING]);
+}
+
+async function loadHistoryIdSettings(db, settings = null) {
+  if (
+    settings
+    && Object.prototype.hasOwnProperty.call(settings, HISTORY_ID_OPTIMIZED_SETTING)
+  ) {
+    return settings;
+  }
+
+  return await loadSiteSettings(db);
+}
+
+export async function isHistoryIdOptimizedSettingEnabled(db, settings = null) {
+  return isHistoryIdOptimized(await loadHistoryIdSettings(db, settings));
 }
 
 export function quoteIdentifier(identifier) {
@@ -142,6 +161,47 @@ export async function historyTableExists(db, tableName = 'metrics_history') {
   return !!table;
 }
 
+function isServerTimeIndexSql(sql) {
+  const normalizedSql = String(sql || '').toLowerCase().replace(/\s+/g, ' ');
+  return normalizedSql.includes('server_id') && normalizedSql.includes('timestamp');
+}
+
+export async function getHistoryServerTimeIndexStatus(db, tableName = 'metrics_history') {
+  if (!await historyTableExists(db, tableName)) {
+    return {
+      tableName,
+      exists: false,
+      hasIndex: false,
+      noIndex: true,
+      indexes: []
+    };
+  }
+
+  try {
+    const { results: indexes = [] } = await db.prepare(
+      `SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ?`
+    ).bind(tableName).all();
+    const serverTimeIndexes = indexes.filter(index => isServerTimeIndexSql(index.sql));
+
+    return {
+      tableName,
+      exists: true,
+      hasIndex: serverTimeIndexes.length > 0,
+      noIndex: serverTimeIndexes.length === 0,
+      indexes: serverTimeIndexes.map(index => index.name)
+    };
+  } catch (e) {
+    return {
+      tableName,
+      exists: true,
+      hasIndex: false,
+      noIndex: true,
+      indexes: [],
+      error: e.message || String(e)
+    };
+  }
+}
+
 export function resetHistoryIdAutoOptimizedCache() {
   historyIdAutoOptimizedCache = null;
 }
@@ -191,19 +251,53 @@ export async function getHistoryIdAutoOptimizationStatus(db, { force = false } =
     tables.push(await getHistoryIdCoverageForTable(db, tableName));
   }
 
+  const populatedTables = tables.filter(table => table.rows > 0 && Number.isSafeInteger(Number(table.minId)));
+  const minId = populatedTables.length > 0
+    ? Math.min(...populatedTables.map(table => Number(table.minId)))
+    : null;
+
   historyIdAutoOptimizedCache = {
     ready: tables.every(table => table.ready),
+    minId,
     threshold: HISTORY_AUTO_OPTIMIZED_MIN_ID,
+    hasMinIdBelowThreshold: tables.some(table =>
+      table.rows > 0
+      && Number.isSafeInteger(Number(table.minId))
+      && Number(table.minId) < HISTORY_AUTO_OPTIMIZED_MIN_ID
+    ),
     checkedAt: Date.now(),
     tables
   };
   return historyIdAutoOptimizedCache;
 }
 
-export async function shouldUseHistoryIdQueries(db, env = {}, options = {}) {
-  if (isHistoryIdOptimized(env)) return true;
-  const status = await getHistoryIdAutoOptimizationStatus(db, options);
-  return status.ready;
+export async function getHistoryIdQueryStatus(db, settings = null, options = {}) {
+  const [autoStatus, indexStatus, settingEnabled] = await Promise.all([
+    getHistoryIdAutoOptimizationStatus(db, options),
+    getHistoryServerTimeIndexStatus(db),
+    isHistoryIdOptimizedSettingEnabled(db, settings)
+  ]);
+  const noServerTimeIndex = !indexStatus.hasIndex;
+  const minIdAboveThreshold = autoStatus.ready;
+
+  return {
+    useHistoryIdQueries: settingEnabled || noServerTimeIndex || minIdAboveThreshold,
+    settingEnabled,
+    noServerTimeIndex,
+    hasServerTimeIndex: indexStatus.hasIndex,
+    minIdAboveThreshold,
+    minId: autoStatus.minId,
+    threshold: autoStatus.threshold,
+    checkedAt: autoStatus.checkedAt,
+    tables: autoStatus.tables,
+    index: indexStatus,
+    shouldEnsureSecondaryIndex: !settingEnabled && autoStatus.hasMinIdBelowThreshold && !indexStatus.hasIndex
+  };
+}
+
+export async function shouldUseHistoryIdQueries(db, settings = null, options = {}) {
+  const status = await getHistoryIdQueryStatus(db, settings, options);
+  return status.useHistoryIdQueries;
 }
 
 export function normalizeHistoryPartitionId(value) {

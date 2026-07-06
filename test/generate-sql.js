@@ -2,10 +2,10 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { buildHistoryId, isHistoryIdOptimized } from '../src/database/historyKey.js';
+import { buildHistoryId } from '../src/database/historyKey.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const optimizedHistory = isHistoryIdOptimized(process.env);
+const optimizedHistory = true;
 
 function generateMetrics(baseTimestamp, serverIdx, hourOffset) {
   const baseHour = (new Date(baseTimestamp).getHours() + hourOffset / 60) % 24;
@@ -291,7 +291,7 @@ const outputPath = path.join(__dirname, 'mock-data.sql');
 fs.writeFileSync(outputPath, sql);
 
 console.log('✅ SQL 文件生成成功:', outputPath);
-console.log('历史查询模式:', optimizedHistory ? 'HISTORY_ID_OPTIMIZED=1' : '默认 server_id + timestamp 索引');
+console.log('历史写入模式: 安全整数 id');
 console.log('\n📝 使用说明:');
 console.log('  1. 确保你有 wrangler.toml 配置好 D1 数据库');
 console.log('  2. 创建本地 D1 数据库: wrangler d1 create server-monitor-db');
