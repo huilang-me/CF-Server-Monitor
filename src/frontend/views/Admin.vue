@@ -434,55 +434,6 @@
             </div>
 
             <div class="settings-section">
-              <div class="section-title"><span>▸</span> {{ trans.historyIdOptimization }}</div>
-
-              <div class="form-group checkbox-item" :class="{ 'highlight-box': settings.history_id_optimized }">
-                <input
-                  type="checkbox"
-                  id="cfg_history_id_optimized"
-                  v-model="settings.history_id_optimized"
-                  :disabled="historyIdOptimizedLocked"
-                >
-                <label class="history-id-option-label">
-                  <b>{{ trans.enableHistoryIdOptimization }}</b>
-                  <span v-if="historyIdOptimizedLocked" class="checkbox-badge">{{ trans.historyIdLocked }}</span>
-                </label>
-              </div>
-
-              <p class="text-muted text-sm mt-2">
-                <span class="warning-icon">[!]</span>
-                {{ trans.historyIdOptimizedWarning }}
-              </p>
-
-              <div class="history-id-status">
-                <div class="history-id-status-row">
-                  <span>{{ trans.historyIdConditionNoIndex }}</span>
-                  <span class="status-badge" :class="historyIdStatus?.noServerTimeIndex ? 'online' : 'offline'">
-                    {{ formatHistoryCondition(historyIdStatus?.noServerTimeIndex) }}
-                  </span>
-                </div>
-                <div class="history-id-status-row">
-                  <span>{{ trans.historyIdConditionMinId }} ({{ trans.historyIdThreshold }}: {{ historyIdThreshold }})</span>
-                  <span class="status-badge" :class="historyIdStatus?.minIdAboveThreshold ? 'online' : 'offline'">
-                    {{ formatHistoryCondition(historyIdStatus?.minIdAboveThreshold) }}
-                  </span>
-                </div>
-                <div class="history-id-status-row">
-                  <span>{{ trans.historyIdConditionSetting }}</span>
-                  <span class="status-badge" :class="settings.history_id_optimized ? 'online' : 'offline'">
-                    {{ formatHistoryCondition(settings.history_id_optimized) }}
-                  </span>
-                </div>
-                <div class="history-id-status-meta">
-                  {{ trans.historyIdMinId }}: {{ historyIdMinIdText }}
-                </div>
-                <div class="history-id-status-meta">
-                  {{ trans.historyIdCurrentMode }}: <b>{{ historyIdWillUseIdQuery ? trans.historyIdModeId : trans.historyIdModeCompat }}</b>
-                </div>
-              </div>
-            </div>
-
-            <div class="settings-section">
               <div class="section-title"><span>▸</span> {{ trans.adminLoginSettings }}</div>
 
               <div class="form-group">
@@ -541,6 +492,55 @@
                 <div class="form-group flex-1">
                   <label class="form-label">{{ trans.customBd }}</label>
                   <input type="text" v-model="settings.custom_bd" class="form-input" placeholder="lf3-ips.zstaticcdn.com">
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-section">
+              <div class="section-title"><span>▸</span> {{ trans.historyIdOptimization }}</div>
+
+              <div class="form-group checkbox-item" :class="{ 'highlight-box': settings.history_id_optimized }">
+                <input
+                  type="checkbox"
+                  id="cfg_history_id_optimized"
+                  v-model="settings.history_id_optimized"
+                  :disabled="historyIdOptimizedLocked"
+                >
+                <label class="history-id-option-label">
+                  <b>{{ trans.enableHistoryIdOptimization }}</b>
+                  <span v-if="historyIdOptimizedLocked" class="checkbox-badge">{{ trans.historyIdLocked }}</span>
+                </label>
+              </div>
+
+              <p class="text-muted text-sm mt-2">
+                <span class="warning-icon">[!]</span>
+                {{ trans.historyIdOptimizedWarning }}
+              </p>
+
+              <div class="history-id-status">
+                <div class="history-id-status-row">
+                  <span>{{ trans.historyIdConditionNoIndex }}</span>
+                  <span class="status-badge" :class="historyIdStatus?.noServerTimeIndex ? 'online' : 'offline'">
+                    {{ formatHistoryCondition(historyIdStatus?.noServerTimeIndex) }}
+                  </span>
+                </div>
+                <div class="history-id-status-row">
+                  <span>{{ trans.historyIdConditionMinId }}</span>
+                  <span class="status-badge" :class="historyIdStatus?.minIdAboveThreshold ? 'online' : 'offline'">
+                    {{ formatHistoryCondition(historyIdStatus?.minIdAboveThreshold) }}
+                  </span>
+                </div>
+                <div class="history-id-status-row">
+                  <span>{{ trans.historyIdConditionSetting }}</span>
+                  <span class="status-badge" :class="settings.history_id_optimized ? 'online' : 'offline'">
+                    {{ formatHistoryCondition(settings.history_id_optimized) }}
+                  </span>
+                </div>
+                <div class="history-id-status-meta">
+                  {{ trans.historyIdMinId }}：{{ historyIdMinIdText }}
+                </div>
+                <div class="history-id-status-meta">
+                  {{ trans.historyIdCurrentMode }}：<b>{{ historyIdWillUseIdQuery ? trans.historyIdModeId : trans.historyIdModeCompat }}</b>
                 </div>
               </div>
             </div>
@@ -1109,7 +1109,6 @@ const apiSecret = ref('')
 const historyIdStatus = ref(null)
 const historyIdOptimizedSaved = ref(false)
 const historyIdOptimizedLocked = computed(() => historyIdOptimizedSaved.value)
-const historyIdThreshold = computed(() => historyIdStatus.value?.threshold ?? 10000000000000)
 const historyIdMinIdText = computed(() => historyIdStatus.value?.minId ?? '-')
 const historyIdWillUseIdQuery = computed(() =>
   Boolean(settings.value.history_id_optimized || historyIdStatus.value?.noServerTimeIndex || historyIdStatus.value?.minIdAboveThreshold)
