@@ -197,7 +197,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 
 - 关闭时：默认继续使用原来的 `server_id + timestamp` 查询方式；只有当已有数据最小 `id` 小于 `10000000000000` 且后台开关未开启时，系统才会自动补建 `metrics_history(server_id, timestamp)` 联合索引。
 - 自动切换：当 `metrics_history(server_id, timestamp)` 联合索引不存在，或 `metrics_history` 和 `metrics_history_old` 中已有数据的最小 `id` 都大于 `10000000000000` 时，历史查询会使用整数 `id` 主键范围。
-- 开启时：为 `servers` 分配 `history_partition_id`，写入 `history_partition_id * 10000000000000 + YYMMDDHHMMSS` 形式的安全整数 `id`（时间使用 UTC，中间等价于固定补一个 `0`），删除 `metrics_history` 上的二级索引，并按 `id` 范围查询。该模式最多支持 `900` 个 `history_partition_id`，时间编码适用于 2000-2099 年。
+- 开启时：为 `servers` 分配 `history_partition_id`，写入 `history_partition_id * 10000000000000 + YYMMDDHHMMSS` 形式的安全整数 `id`（时间使用 UTC，中间等价于固定补一个 `0`），并按 `id` 范围查询；不会自动删除已有二级索引。该模式最多支持 `900` 个 `history_partition_id`，时间编码适用于 2000-2099 年。
 - 强制开启后不迁移旧历史数据；未使用新 `id` 格式的旧记录不会出现在优化查询结果里。优化模式跨周查询时会同时按 `id` 范围查询 `metrics_history` 和 `metrics_history_old`。
 - 修改该设置后，建议调用一次 `POST /updateDatabase` 或在后台点击“升级数据库”。
 
@@ -1067,7 +1067,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
 
 ### 4.1 `POST /updateDatabase` - 数据库迁移
 
-> 用于老版本升级时补齐 `metrics_history` 与 `servers` 表的字段，并清理废弃 settings。升级会始终分配 `history_partition_id`；只有当已有数据最小 `id` 小于 `10000000000000` 且后台开关未开启时，才会自动补建 `metrics_history(server_id, timestamp)` 联合索引。后台设置 `history_id_optimized=true` 后会清理 `metrics_history` 二级索引，并使用整数 `id` 范围查询。
+> 用于老版本升级时补齐 `metrics_history` 与 `servers` 表的字段，并清理废弃 settings。升级会始终分配 `history_partition_id`；只有当已有数据最小 `id` 小于 `10000000000000` 且后台开关未开启时，才会自动补建 `metrics_history(server_id, timestamp)` 联合索引。后台设置 `history_id_optimized=true` 后会使用整数 `id` 范围查询，但不会自动删除已有二级索引。
 
 **Request**
 
@@ -1096,7 +1096,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
 优化模式下会用下面的结果项替代“metrics_history 索引检查”：
 
 ```json
-{ "name": "metrics_history 优化模式准备", "success": true, "reset": false, "dropped": 1, "message": "..." }
+{ "name": "metrics_history 优化模式准备", "success": true, "reset": false, "added": 0, "message": "..." }
 ```
 
 **失败返回**：`500` + `error` 字段（任一步骤抛错时整体失败）。

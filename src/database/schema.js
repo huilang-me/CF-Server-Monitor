@@ -7,7 +7,7 @@ import {
   getCacheDuration
 } from '../utils/cache.js';
 import { saveSiteOptions, debug } from '../utils/settings.js';
-import { addHistoryColumns, dropHistorySecondaryIndexes, ensureHistoryIndex } from './updateDatabase.js';
+import { addHistoryColumns, ensureHistoryIndex } from './updateDatabase.js';
 import {
   buildHistoryId,
   createMetricsHistoryTableSql,
@@ -49,14 +49,6 @@ function buildHistorySource(tableName, useHistoryId, serverId, partitionId, cuto
 }
 
 async function ensureHistoryStorage(db, historyStatus) {
-  if (historyStatus.settingEnabled) {
-    const result = await dropHistorySecondaryIndexes(db);
-    if (!result.success) {
-      throw new Error(result.error || 'metrics_history optimized index cleanup failed');
-    }
-    return;
-  }
-
   if (!historyStatus.shouldEnsureSecondaryIndex) {
     return;
   }

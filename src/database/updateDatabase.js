@@ -129,32 +129,6 @@ export async function ensureHistoryIndex(db) {
   }
 }
 
-export async function dropHistorySecondaryIndexes(db, tableName = 'metrics_history') {
-  try {
-    if (!await historyTableExists(db, tableName)) {
-      return { success: true, dropped: 0, skipped: true, message: '表不存在' };
-    }
-
-    const { results: indexes = [] } = await db.prepare(
-      `SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ?`
-    ).bind(tableName).all();
-    const secondaryIndexes = indexes.filter(index => index.sql);
-
-    for (const index of secondaryIndexes) {
-      await db.prepare(`DROP INDEX IF EXISTS ${quoteIdentifier(index.name)}`).run();
-    }
-
-    return {
-      success: true,
-      dropped: secondaryIndexes.length,
-      message: secondaryIndexes.length > 0 ? '已删除非主键索引' : '无需清理'
-    };
-  } catch (e) {
-    console.error(`清理 ${tableName} 非主键索引失败:`, e);
-    return { success: false, error: e.message };
-  }
-}
-
 async function isOptimizedHistoryTableReady(db) {
   if (!await isHistoryIdPrimaryKey(db, 'metrics_history', { force: true })) {
     return false;
@@ -210,10 +184,6 @@ export async function ensureOptimizedHistoryStorage(db, { allowReset = false } =
       reset = true;
     }
 
-    const indexes = await dropHistorySecondaryIndexes(db);
-    if (!indexes.success) {
-      return indexes;
-    }
     if (allowReset) {
       await setOptimizedHistoryStorageVersion(db);
     }
@@ -222,9 +192,8 @@ export async function ensureOptimizedHistoryStorage(db, { allowReset = false } =
       success: true,
       reset,
       added,
-      dropped: indexes.dropped || 0,
       version: OPTIMIZED_HISTORY_STORAGE_VERSION,
-      message: reset ? '已重建优化历史表' : '优化历史表已就绪'
+      message: reset ? '已重建优化历史表' : '优化历史表已就绪，未增删二级索引'
     };
   } catch (e) {
     console.error('准备 metrics_history 优化模式失败:', e);

@@ -450,7 +450,7 @@ Windows 系统（Python 版）
 
 历史查询会在任一条件满足时使用整数 `id` 主键范围查询：`metrics_history(server_id, timestamp)` 联合索引不存在；`metrics_history` 和 `metrics_history_old` 中已有数据的最小 `id` 都大于 `10000000000000`；后台设置已手动开启历史查询优化。后台设置页会展示这三个条件各自的状态。
 
-系统只会在“最小 `id` 小于 `10000000000000` 且后台开关未开启”时自动补建 `metrics_history(server_id, timestamp)` 联合索引，避免不必要的索引增删消耗。手动开启优化会跳过兼容期，直接使用整数 `id` 主键范围查询，并清理 `metrics_history` 上原来的二级索引。旧历史数据不会迁移；未使用新 `id` 格式的旧记录不会出现在优化查询结果里。
+系统只会在“最小 `id` 小于 `10000000000000` 且后台开关未开启”时自动补建 `metrics_history(server_id, timestamp)` 联合索引，避免不必要的索引增删消耗。手动开启优化会跳过兼容期，直接使用整数 `id` 主键范围查询，不会自动删除已有二级索引。旧历史数据不会迁移；未使用新 `id` 格式的旧记录不会出现在优化查询结果里。
 
 > 风险提示：该编码依赖 JavaScript `Number.MAX_SAFE_INTEGER`，`history_partition_id` 最大支持 `900`，即最多约 900 个服务器分区；时间后缀只保留两位年份，适合 2000-2099 年范围内使用。
 
