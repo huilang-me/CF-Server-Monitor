@@ -4,9 +4,10 @@ import {
   setLatestMetricsCache,
   getMetricsHistoryCache,
   setMetricsHistoryCache,
-  getCacheDuration
+  getCacheDuration,
+  clearAllCaches
 } from '../utils/cache.js';
-import { saveSiteOptions, debug } from '../utils/settings.js';
+import { HISTORY_ID_OPTIMIZED_SETTING, saveSiteOptions, debug } from '../utils/settings.js';
 import { addHistoryColumns, ensureHistoryIndex } from './updateDatabase.js';
 import {
   buildHistoryId,
@@ -16,6 +17,7 @@ import {
   getHistoryIdRange,
   getServerHistoryPartitionId,
   historyTableExists,
+  isHistoryIdPrimaryKey,
   normalizeHistoryTimestamp,
   quoteIdentifier,
   resetHistoryIdAutoOptimizedCache,
@@ -48,14 +50,37 @@ function buildHistorySource(tableName, useHistoryId, serverId, partitionId, cuto
   };
 }
 
-async function ensureHistoryStorage(db, historyStatus) {
-  if (!historyStatus.shouldEnsureSecondaryIndex) {
-    return;
-  }
+async function ensureLegacyHistoryIndex(db) {
+  try {
+    if (!await historyTableExists(db)) {
+      return;
+    }
 
-  const result = await ensureHistoryIndex(db);
-  if (!result.success) {
-    throw new Error(result.error || 'metrics_history 索引检查失败');
+    const historyStatus = await getHistoryIdQueryStatus(db, {}, { force: true });
+    if (historyStatus.settingEnabled) {
+      return;
+    }
+
+    if (historyStatus.minIdAboveThreshold) {
+      await saveSiteOptions(db, { [HISTORY_ID_OPTIMIZED_SETTING]: 'true' });
+      resetHistoryIdAutoOptimizedCache();
+      return;
+    }
+
+    const hasOptimizedPrimaryKey = await isHistoryIdPrimaryKey(db, 'metrics_history', { force: true });
+    const needsCompatIndex = hasOptimizedPrimaryKey
+      ? historyStatus.shouldEnsureSecondaryIndex
+      : !historyStatus.hasServerTimeIndex;
+    if (!needsCompatIndex) {
+      return;
+    }
+
+    const result = await ensureHistoryIndex(db);
+    if (!result.success) {
+      console.warn('[History] 兼容索引检查失败:', result.error || 'unknown error');
+    }
+  } catch (e) {
+    console.warn('[History] 兼容索引检查失败:', e.message || e);
   }
 }
 
@@ -91,8 +116,10 @@ export async function initDatabase(db, env = {}) {
     `).run();
 
     await db.prepare(createMetricsHistoryTableSql()).run();
-    const historyStatus = await getHistoryIdQueryStatus(db, env, { force: true });
-    await ensureHistoryStorage(db, historyStatus);
+
+
+    debug('检查历史索引是否存在');
+    await ensureLegacyHistoryIndex(db);
 
     debug('✅ 数据库初始化完成');
     dbInitialized = true;
@@ -138,16 +165,52 @@ export async function rebuildDatabase(db, env = {}) {
   }
 }
 
+export async function optimizeHistoryIndex(db, env = {}) {
+  debug('开始执行历史索引优化...');
+
+  try {
+    await ensureServerHistoryPartitions(db);
+
+    await db.prepare(`DROP TABLE IF EXISTS metrics_history`).run();
+    debug('✅ 已删除 metrics_history 表');
+
+    await db.prepare(`DROP TABLE IF EXISTS metrics_history_old`).run();
+    debug('✅ 已删除 metrics_history_old 表');
+
+    await db.prepare(createMetricsHistoryTableSql()).run();
+    debug('✅ 已重建 metrics_history 表');
+
+    await saveSiteOptions(db, { [HISTORY_ID_OPTIMIZED_SETTING]: 'true' });
+    resetHistoryIdAutoOptimizedCache();
+    clearAllCaches();
+
+    debug('✅ 历史索引优化完成');
+
+    return {
+      success: true,
+      message: 'historyIndexOptimizedSuccess'
+    };
+  } catch (e) {
+    console.error('❌ 历史索引优化失败:', e);
+    return {
+      success: false,
+      message: 'historyIndexOptimizedFailed',
+      error: e.message
+    };
+  }
+}
+
 export async function getMetricsHistory(db, serverId, hours, columns, env = {}) {
   const now = Date.now();
   const cacheDuration = getCacheDuration(hours);
-  const optimizedHistory = await shouldUseHistoryIdQueries(db, env);
   
   const cached = getMetricsHistoryCache(serverId, hours, columns);
   if (cached && now - cached.timestamp < cacheDuration) {
     debug(`[History] CACHE HIT: ${serverId}, hours: ${hours}`);
     return cached.data;
   }
+
+  const optimizedHistory = await shouldUseHistoryIdQueries(db, env);
   
   let queryHours = hours;
   let intervalMs;

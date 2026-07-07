@@ -1,4 +1,4 @@
-import { initDatabase, weeklyCleanup, getMetricsHistory, rebuildDatabase } from './database/schema.js';
+import { initDatabase, weeklyCleanup, getMetricsHistory, rebuildDatabase, optimizeHistoryIndex } from './database/schema.js';
 import { checkOfflineNodes, checkExpiringServers } from './services/notification.js';
 import { updateDatabase } from './database/updateDatabase.js';
 import { handleAdminAPI } from './handlers/admin.js';
@@ -165,7 +165,7 @@ export default {
     ];
 
     const isApiRequest = path.startsWith('/api/') || path.startsWith('/admin/api');
-    if (path === '/api/config' || path === '/rebuild') {
+    if (path === '/api/config' || path === '/rebuild' || path === '/optimizeHistoryIndex') {
       await initDatabase(env.DB, env);
     }
 
@@ -290,6 +290,14 @@ export default {
           return simpleAuthResponse();
         }
         const result = await rebuildDatabase(env.DB, env);
+        return createSuccessResponse(result);
+      }},
+      { method: 'POST', path: '/optimizeHistoryIndex', handler: async () => {
+        await ensureFullSettings();
+        if (!await checkAuth(request, env, sys)) {
+          return simpleAuthResponse();
+        }
+        const result = await optimizeHistoryIndex(env.DB, env);
         return createSuccessResponse(result);
       }}
     ];

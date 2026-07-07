@@ -1,4 +1,4 @@
-const CURRENT_VERSION = 'V2.7.8';
+const CURRENT_VERSION = 'V2.7.9';
 export const DEFAULT_SITE_TITLE = 'Cloudflare Server Monitor';
 export const HISTORY_ID_OPTIMIZED_SETTING = 'history_id_optimized';
 const APPEARANCE_FIELDS = ['site_title', 'custom_bg', 'custom_head', 'custom_script'];

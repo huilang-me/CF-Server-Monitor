@@ -2,7 +2,20 @@
 
 一个基于 Cloudflare Workers + D1 + Durable Objects 的多服务器监控探针系统，支持实时监控、历史数据查看、延迟追踪、地图展示等功能。兼容主流Linux系统，Alpine Linux，OpenWrt，Windows系统。**演示地址**：<https://demo.huilang.me/>
 
-**当前版本：V2.7.8**
+**当前版本：V2.7.9**
+
+> [!NOTE]
+> **对比其他探针的优势**
+>
+> 免费托管在Cloudflare，稳定性比自己服务器还高，超出免费额度也不扣费，目前预计支持60台左右，调整成120秒上报间隔可以翻倍
+>
+> 安全，无webssh，命令下发，单向上报，没有所谓的“主控”，Workers项目只是一个纯收集数据和展示的平台
+>
+> 客户端只需一个非常简单的[install.sh](https://github.com/huilang-me/CF-Server-Monitor/blob/main/public/install.sh) (40k不到)脚本，不像需要go等支持，非常轻量
+>
+> 其他项目改有的功能基本都有了，后续不断完善
+
+
 
 > [!IMPORTANT]
 > **🚨 紧急安全/性能更新 (v2.7.8)**
@@ -36,6 +49,7 @@ cat /etc/config/cf-probe/config.conf
 <details>
 <summary>更新记录</summary>
 
+- V2.7.9 删除metrics_history表索引，改成id主键查询，压缩一半D1写入消耗，大幅增加可用额度。增加MacOS支持，其他优化。
 - V2.7.8 修复月度任务导致数据表索引丢失的严重 Bug
 - V2.7.7 添加GitHub Page部署支持，添加飞书，Bark通知支持
 - V2.7.6 添加多站点支持包括验证码登录等，添加Windows PowerShell无依赖安装脚本，一些安全优化
@@ -442,19 +456,15 @@ Windows 系统（Python 版）
 
 ### 历史查询优化（可选）
 
-默认情况下，新写入的历史数据也会使用安全整数 `id`，但历史查询会继续使用原来的 `server_id + timestamp` 联合索引，以兼容已有历史数据。
+默认情况下，新写入的历史数据使用安全整数 `id`。旧版本升级后的兼容期可能仍保留 `metrics_history(server_id, timestamp)` 联合索引，用于查询旧历史数据；该索引会让历史写入额外维护二级索引。
 
-如需降低长历史查询的 D1 读行消耗，可在后台 **设置** 中开启“历史查询优化”。该设置默认关闭；开启后不能再关闭，并会在页面上明确提示“不允许回滚代码”。
+如需降低 D1 写入消耗，可在后台 **数据库管理** 中点击 **优化索引**。该操作会清空 `metrics_history` 和 `metrics_history_old` 两张历史表，重建无兼容二级索引的 `metrics_history`，并设置 `history_id_optimized=true`。优化后历史查询直接使用整数 `id` 主键范围，历史数据写入通常可减少约一半的 D1 写入。
 
 系统会为服务器分配 `history_partition_id`，新写入的历史数据使用 `history_partition_id * 10000000000000 + YYMMDDHHMMSS` 形式的安全整数 `id`（中间等价于固定补一个 `0`，时间使用 UTC）。
 
-历史查询会在任一条件满足时使用整数 `id` 主键范围查询：`metrics_history(server_id, timestamp)` 联合索引不存在；`metrics_history` 和 `metrics_history_old` 中已有数据的最小 `id` 都大于 `10000000000000`；后台设置已手动开启历史查询优化。后台设置页会展示这三个条件各自的状态。
-
-系统只会在“最小 `id` 小于 `10000000000000` 且后台开关未开启”时自动补建 `metrics_history(server_id, timestamp)` 联合索引，避免不必要的索引增删消耗。手动开启优化会跳过兼容期，直接使用整数 `id` 主键范围查询，不会自动删除已有二级索引。旧历史数据不会迁移；未使用新 `id` 格式的旧记录不会出现在优化查询结果里。
+如果不手动执行，系统会随着每周历史表轮换自动进入优化状态，最晚两次周日表轮换后不再需要兼容索引。手动优化不会迁移旧历史数据，而是直接清空历史数据并进入优化状态。
 
 > 风险提示：该编码依赖 JavaScript `Number.MAX_SAFE_INTEGER`，`history_partition_id` 最大支持 `900`，即最多约 900 个服务器分区；时间后缀只保留两位年份，适合 2000-2099 年范围内使用。
-
-开启该设置后，建议在后台数据库管理中点击一次 **升级数据库**。
 
 ### Cloudflare 额度查询（可选）
 
@@ -519,13 +529,18 @@ Windows 系统（Python 版）
    - 点击「Upgrade Database」按钮
    - 确认升级操作
    - 系统会自动执行数据库升级脚本
-2. **重建数据库**：清空并重建整个数据库（⚠️ 危险操作）
+2. **优化索引**：清空历史数据并切换到 `id` 主键历史查询（⚠️ 危险操作）
+   - 点击「Optimize Index」按钮
+   - 确认优化操作（此操作将删除所有历史数据）
+   - 系统会重建历史表并停止兼容索引写入
+3. **重建数据库**：清空并重建整个数据库（⚠️ 危险操作）
    - 点击「Rebuild Database」按钮
    - 确认重建操作（此操作将删除所有数据）
    - 系统会清空并重新初始化数据库
 
 > **注意**：
 >
+> - 优化索引会删除全部历史数据，但不会删除服务器配置
 > - 重建数据库是不可逆操作，请确保已备份重要数据
 > - 升级数据库不会删除现有数据，仅会更新表结构
 > - 从旧版本升级到包含 GPU/丢包率监控的新版本后，需要先执行升级数据库，再重新安装或升级探针以采集新字段
@@ -826,4 +841,3 @@ MIT License
 - [Chart.js](https://www.chartjs.org/)
 - [Leaflet](https://leafletjs.com/)
 - 感谢 [LINUX DO](https://linux.do/) [NodeSeek](https://www.nodeseek.com/post-763025-1) 社区的支持与推广
-

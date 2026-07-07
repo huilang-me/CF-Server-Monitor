@@ -375,6 +375,7 @@ WebSocket 收到 `batchUpdate` 消息后，数据**不是立即应用**，而是
 | 操作 | API 调用 | 说明 |
 |------|---------|------|
 | 升级数据库 | `POST /updateDatabase` | 更新数据库结构 |
+| 优化索引 | `POST /optimizeHistoryIndex` | 清空历史数据并移除兼容索引写入（危险，二次确认） |
 | 重建数据库 | `POST /rebuild` | 删除所有表重建（危险，二次确认） |
 
 ---

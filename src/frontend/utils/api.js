@@ -407,4 +407,15 @@ export const rebuildDatabase = async (apiIndex = 0) => {
   return result.data
 }
 
+export const optimizeHistoryIndex = async (apiIndex = 0) => {
+  const result = await http.postByIndex('/optimizeHistoryIndex', {}, apiIndex, { autoRedirect: false })
+  if (result.error) {
+    if (result.status === 401) {
+      return { success: false, error: 'Unauthorized' }
+    }
+    return { success: false, error: 'Request failed' }
+  }
+  return result.data
+}
+
 export { isAdminLoggedIn }

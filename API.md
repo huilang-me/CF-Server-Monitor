@@ -22,7 +22,7 @@
   - [0.4 统一错误码](#04-统一错误码)
   - [0.5 限流与配额](#05-限流与配额)
   - [0.6 CORS](#06-cors)
-  - [0.7 历史查询优化开关与自动切换](#07-历史查询优化开关与自动切换)
+  - [0.7 历史索引优化与自动切换](#07-历史索引优化与自动切换)
 - [1. 探针上报接口](#1-探针上报接口)
   - [1.1](#11-post-update---指标上报agent-入口) [`POST /update`](#11-post-update---指标上报agent-入口) [- 指标上报（Agent 入口）](#11-post-update---指标上报agent-入口)
 - [2. 公开 API（前端/管理端共用）](#2-公开-api前端管理端共用)
@@ -45,8 +45,9 @@
   - [3.11](#311-action-save_order---保存服务器排序) [`action: save_order`](#311-action-save_order---保存服务器排序) [- 保存服务器排序](#311-action-save_order---保存服务器排序)
 - [4. 系统维护端点](#4-系统维护端点)
   - [4.1](#41-post-updatedatabase---数据库迁移) [`POST /updateDatabase`](#41-post-updatedatabase---数据库迁移) [- 数据库迁移](#41-post-updatedatabase---数据库迁移)
-  - [4.2](#42-post-rebuild---数据库重建) [`POST /rebuild`](#42-post-rebuild---数据库重建) [- 数据库重建](#42-post-rebuild---数据库重建)
-  - [4.3](#43-get-__dohealth---durable-object-健康检查) [`GET /__do/health`](#43-get-__dohealth---durable-object-健康检查) [- Durable Object 健康检查](#43-get-__dohealth---durable-object-健康检查)
+  - [4.2](#42-post-optimizehistoryindex---历史索引优化) [`POST /optimizeHistoryIndex`](#42-post-optimizehistoryindex---历史索引优化) [- 历史索引优化](#42-post-optimizehistoryindex---历史索引优化)
+  - [4.3](#43-post-rebuild---数据库重建) [`POST /rebuild`](#43-post-rebuild---数据库重建) [- 数据库重建](#43-post-rebuild---数据库重建)
+  - [4.4](#44-get-__dohealth---durable-object-健康检查) [`GET /__do/health`](#44-get-__dohealth---durable-object-健康检查) [- Durable Object 健康检查](#44-get-__dohealth---durable-object-健康检查)
 - [5. 数据结构](#5-数据结构)
   - [5.1 Server 对象](#51-server-对象)
   - [5.2 Metrics 对象（探针上报 payload）](#52-metrics-对象探针上报-payload)
@@ -86,7 +87,7 @@
 
 #### C. JWT Bearer（管理操作 → 后续管理请求）
 
-- **使用位置**：所有非 `login` 的 `POST /admin/api`、`POST /updateDatabase`、`POST /rebuild`
+- **使用位置**：所有非 `login` 的 `POST /admin/api`、`POST /updateDatabase`、`POST /optimizeHistoryIndex`、`POST /rebuild`
 - **方式**：`Authorization: Bearer <token>` Header
 - **Token 签发**：`HS256` JWT，默认有效期 **604800 秒（7 天）**
 - **签名密钥**（优先级）：
@@ -191,15 +192,14 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 - 预检请求 `OPTIONS` → 直接返回 `204`，并回显 `Access-Control-Request-Method` / `Access-Control-Request-Headers`，缓存 86400 秒。
 - 未配置或未命中 → 不会下发 CORS Header，浏览器侧会被同源策略拦截。
 
-### 0.7 历史查询优化开关与自动切换
+### 0.7 历史索引优化与自动切换
 
-后台设置 `site_options.history_id_optimized` 默认关闭。无论是否开启，新写入的历史数据都会使用安全整数 `id`；开关只控制是否跳过兼容期并直接使用整数 `id` 查询。该开关允许从关闭改为开启，开启后不能再关闭。
+新写入的历史数据始终使用安全整数 `id`。旧版本升级后的兼容期可能保留 `metrics_history(server_id, timestamp)` 联合索引，用于查询旧历史数据；该索引会让历史写入额外维护二级索引。
 
-- 关闭时：默认继续使用原来的 `server_id + timestamp` 查询方式；只有当已有数据最小 `id` 小于 `10000000000000` 且后台开关未开启时，系统才会自动补建 `metrics_history(server_id, timestamp)` 联合索引。
+- 手动优化：调用 `POST /optimizeHistoryIndex`，会为服务器分配 `history_partition_id`，清空 `metrics_history` 和 `metrics_history_old`，重建无兼容二级索引的 `metrics_history`，并设置 `site_options.history_id_optimized=true`。
 - 自动切换：当 `metrics_history(server_id, timestamp)` 联合索引不存在，或 `metrics_history` 和 `metrics_history_old` 中已有数据的最小 `id` 都大于 `10000000000000` 时，历史查询会使用整数 `id` 主键范围。
-- 开启时：为 `servers` 分配 `history_partition_id`，写入 `history_partition_id * 10000000000000 + YYMMDDHHMMSS` 形式的安全整数 `id`（时间使用 UTC，中间等价于固定补一个 `0`），并按 `id` 范围查询；不会自动删除已有二级索引。该模式最多支持 `900` 个 `history_partition_id`，时间编码适用于 2000-2099 年。
-- 强制开启后不迁移旧历史数据；未使用新 `id` 格式的旧记录不会出现在优化查询结果里。优化模式跨周查询时会同时按 `id` 范围查询 `metrics_history` 和 `metrics_history_old`。
-- 修改该设置后，建议调用一次 `POST /updateDatabase` 或在后台点击“升级数据库”。
+- 优化模式：写入 `history_partition_id * 10000000000000 + YYMMDDHHMMSS` 形式的安全整数 `id`（时间使用 UTC，中间等价于固定补一个 `0`），并按 `id` 范围查询。该模式最多支持 `900` 个 `history_partition_id`，时间编码适用于 2000-2099 年。
+- 手动优化会清空历史数据，不迁移旧历史；如不手动执行，最晚两次周日表轮换后会自动进入优化状态。
 
 ***
 
@@ -334,7 +334,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 **副作用**
 
 1. `metrics_history` 只写入本次请求中最新的一个样本，避免 1 秒采集时放大 D1 写入次数。
-2. 写入时始终使用 `history_partition_id * 10000000000000 + YYMMDDHHMMSS` 作为整数 `id` 主键（时间使用 UTC），例如分区 `1` 在 `2026-07-05T11:46:50Z` 写入 `10260705114650`。查询在兼容期仍可继续走 `server_id + timestamp`；联合索引不存在、覆盖完成或后台设置 `history_id_optimized=true` 后改走整数 `id` 范围。
+2. 写入时始终使用 `history_partition_id * 10000000000000 + YYMMDDHHMMSS` 作为整数 `id` 主键（时间使用 UTC），例如分区 `1` 在 `2026-07-05T11:46:50Z` 写入 `10260705114650`。查询在兼容期仍可继续走 `server_id + timestamp`；联合索引不存在、覆盖完成或执行 `POST /optimizeHistoryIndex` 后改走整数 `id` 范围。
 3. 触发 Durable Object `MetricsBroadcaster` 内部广播，统一发送 `{type:"batchUpdate", ts, updates:[...]}` 格式，前端按样本时间逐个回放。
 4. 写入 `request.cf.country`（或 `cf-ipcountry` Header）作为该条记录的 `region` 字段（统一转大写）。
 
@@ -535,7 +535,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 | 1 \~ 6    | 1 分钟                   |
 | ≤ 1       | 10 秒                   |
 
-> 兼容期历史查询使用 `server_id + timestamp` 条件取数；随后用 `ROW_NUMBER() OVER (PARTITION BY ts/interval ORDER BY ts)` 取每个采样窗口的第一条。当联合索引不存在、自动覆盖检测通过或后台设置 `history_id_optimized=true` 后，查询改为整数 `id` 主键范围（`history_partition_id * 10000000000000 + cutoff_YYMMDDHHMMSS` 到 `history_partition_id * 10000000000000 + 991231235959`）。
+> 兼容期历史查询使用 `server_id + timestamp` 条件取数；随后用 `ROW_NUMBER() OVER (PARTITION BY ts/interval ORDER BY ts)` 取每个采样窗口的第一条。当联合索引不存在、自动覆盖检测通过或执行 `POST /optimizeHistoryIndex` 后，查询改为整数 `id` 主键范围（`history_partition_id * 10000000000000 + cutoff_YYMMDDHHMMSS` 到 `history_partition_id * 10000000000000 + 991231235959`）。
 
 **跨周查询**：当 `cutoff` 早于本周日 00:00 UTC 且存在 `metrics_history_old` 表时，自动 `UNION ALL` 两张表；兼容期按 `server_id + timestamp` 查询，优化模式按 `id` 范围查询。
 
@@ -739,8 +739,6 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
 
 **Response 200**
 
-`results` 会根据当前历史查询模式返回不同的索引处理项：需要兼容索引时返回“索引检查”；后台设置 `history_id_optimized=true` 后返回“优化模式准备”；无联合索引或自动覆盖检测通过时会使用 `id` 查询且不自动增删二级索引。
-
 ```json
 {
   "success": true,
@@ -771,19 +769,11 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
 {
   "success": true,
   "settings": { /* Settings 对象，见 5.4 */ },
-  "history_id_status": {
-    "useHistoryIdQueries": true,
-    "settingEnabled": false,
-    "noServerTimeIndex": true,
-    "minIdAboveThreshold": false,
-    "minId": 10260705114650,
-    "threshold": 10000000000000
-  },
   "api_secret": "<env.API_SECRET>"
 }
 ```
 
-> `api_secret` 仅在 `get_settings` 中返回，方便前端展示/复制。`history_id_status` 用于后台设置页展示 ID 查询模式的三个触发条件状态。
+> `api_secret` 仅在 `get_settings` 中返回，方便前端展示/复制。
 
 ***
 
@@ -902,7 +892,6 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
     "show_bw": "true",
     "show_tf": "true",
     "show_long_history": "true",
-    "history_id_optimized": "false",
     "tg_notify": "false",
     "tg_bot_token": "",
     "tg_chat_id": "",
@@ -1067,7 +1056,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
 
 ### 4.1 `POST /updateDatabase` - 数据库迁移
 
-> 用于老版本升级时补齐 `metrics_history` 与 `servers` 表的字段，并清理废弃 settings。升级会始终分配 `history_partition_id`；只有当已有数据最小 `id` 小于 `10000000000000` 且后台开关未开启时，才会自动补建 `metrics_history(server_id, timestamp)` 联合索引。后台设置 `history_id_optimized=true` 后会使用整数 `id` 范围查询，但不会自动删除已有二级索引。
+> 用于老版本升级时补齐 `metrics_history` 与 `servers` 表的字段，并清理废弃 settings。升级会始终分配 `history_partition_id`；兼容期内如仍需查询旧历史数据，可能补建 `metrics_history(server_id, timestamp)` 联合索引。执行 [`POST /optimizeHistoryIndex`](#42-post-optimizehistoryindex---历史索引优化) 后会使用整数 `id` 范围查询，且不会再补建兼容二级索引。
 
 **Request**
 
@@ -1093,7 +1082,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
 }
 ```
 
-优化模式下会用下面的结果项替代“metrics_history 索引检查”：
+已执行历史索引优化后，可能用下面的结果项替代“metrics_history 索引检查”：
 
 ```json
 { "name": "metrics_history 优化模式准备", "success": true, "reset": false, "added": 0, "message": "..." }
@@ -1103,7 +1092,32 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
 
 ***
 
-### 4.2 `POST /rebuild` - 数据库重建
+### 4.2 `POST /optimizeHistoryIndex` - 历史索引优化
+
+> **危险操作**：会删除 `metrics_history` / `metrics_history_old` 全部历史数据，重建 `metrics_history`，并设置 `site_options.history_id_optimized=true`。不会删除 `servers` 或其他站点设置。
+
+**Request**
+
+- Method：`POST`
+- Path：`/optimizeHistoryIndex`
+- Headers：`Authorization: Bearer <jwt>`
+
+**Response 200**
+
+```json
+{ "success": true, "message": "historyIndexOptimizedSuccess" }
+```
+
+**副作用**
+
+- 为现有服务器分配缺失的 `history_partition_id`。
+- 删除 `metrics_history` 和 `metrics_history_old`。
+- 使用 `createMetricsHistoryTableSql()` 重建 `metrics_history`。
+- 写入 `site_options.history_id_optimized=true`，后续历史查询使用 `id` 主键范围。
+
+***
+
+### 4.3 `POST /rebuild` - 数据库重建
 
 > **危险操作**：会删除 `servers` / `metrics_history` / `metrics_history_old` / `settings` 全部数据后重建。
 
@@ -1121,7 +1135,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
 
 ***
 
-### 4.3 `GET /__do/health` - Durable Object 健康检查
+### 4.4 `GET /__do/health` - Durable Object 健康检查
 
 **Request**
 
@@ -1221,7 +1235,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
   show_bw: 'true' | 'false',
   show_tf: 'true' | 'false',
   show_long_history: 'true' | 'false',
-  history_id_optimized: 'true' | 'false', // 默认 false；开启后不能关闭
+  history_id_optimized: 'true' | 'false', // 默认 false；由 /optimizeHistoryIndex 写入，save_settings 不修改
   tg_notify: 'true' | 'false',
   tg_bot_token: string,
   tg_chat_id: string,
@@ -1449,4 +1463,4 @@ wscat -c "wss://status.example.com/api/ws?subscribe=9b2c4d3e-1a2b-4c5d-9e8f-7a6b
 
 ***
 
-> 文档同步：与源码 `src/index.js`、`src/handlers/{admin,dashboard,frontend,update}.js`、`src/durable/MetricsBroadcaster.js`、`src/utils/{auth,settings,errors,cors,cache,metrics,common}.js`、`src/database/{schema,updateDatabase}.js` 一一对应；后续修改任一文件时，请同步更新本文件。
+> 文档同步：与源码 `src/index.js`、`src/handlers/{admin,dashboard,frontend,update}.js`、`src/durable/MetricsBroadcaster.js`、`src/utils/{auth,settings,errors,cors,cache,metrics,common}.js`、`src/database/{schema,updateDatabase,historyKey}.js` 一一对应；后续修改任一文件时，请同步更新本文件。

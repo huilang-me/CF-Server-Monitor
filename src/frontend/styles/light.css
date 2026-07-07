@@ -81,10 +81,4 @@ body.light .form-textarea:focus {
   box-shadow: 0 0 0 2px rgba(13, 148, 136, 0.1);
 }
 
-/* Highlight Box - 浅色主题的特殊高亮 */
-body.light .highlight-box {
-  background: #fffbeb;
-  border-color: #fde68a !important;
-}
-
 /* 响应式布局 - 浅色主题继承 main.css 的响应式样式 */

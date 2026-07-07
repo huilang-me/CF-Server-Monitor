@@ -496,54 +496,6 @@
               </div>
             </div>
 
-            <div class="settings-section">
-              <div class="section-title"><span>▸</span> {{ trans.historyIdOptimization }}</div>
-
-              <div class="form-group checkbox-item" :class="{ 'highlight-box': settings.history_id_optimized }">
-                <input
-                  type="checkbox"
-                  id="cfg_history_id_optimized"
-                  v-model="settings.history_id_optimized"
-                  :disabled="historyIdOptimizedLocked"
-                >
-                <label class="history-id-option-label">
-                  <b>{{ trans.enableHistoryIdOptimization }}</b>
-                  <span v-if="historyIdOptimizedLocked" class="checkbox-badge">{{ trans.historyIdLocked }}</span>
-                </label>
-              </div>
-
-              <p class="text-muted text-sm mt-2">
-                <span class="warning-icon">[!]</span>
-                {{ trans.historyIdOptimizedWarning }}
-              </p>
-
-              <div class="history-id-status">
-                <div class="history-id-status-row">
-                  <span>{{ trans.historyIdConditionNoIndex }}</span>
-                  <span class="status-badge" :class="historyIdStatus?.noServerTimeIndex ? 'online' : 'offline'">
-                    {{ formatHistoryCondition(historyIdStatus?.noServerTimeIndex) }}
-                  </span>
-                </div>
-                <div class="history-id-status-row">
-                  <span>{{ trans.historyIdConditionMinId }}</span>
-                  <span class="status-badge" :class="historyIdStatus?.minIdAboveThreshold ? 'online' : 'offline'">
-                    {{ formatHistoryCondition(historyIdStatus?.minIdAboveThreshold) }}
-                  </span>
-                </div>
-                <div class="history-id-status-row">
-                  <span>{{ trans.historyIdConditionSetting }}</span>
-                  <span class="status-badge" :class="settings.history_id_optimized ? 'online' : 'offline'">
-                    {{ formatHistoryCondition(settings.history_id_optimized) }}
-                  </span>
-                </div>
-                <div class="history-id-status-meta">
-                  {{ trans.historyIdMinId }}：{{ historyIdMinIdText }}
-                </div>
-                <div class="history-id-status-meta">
-                  {{ trans.historyIdCurrentMode }}：<b>{{ historyIdWillUseIdQuery ? trans.historyIdModeId : trans.historyIdModeCompat }}</b>
-                </div>
-              </div>
-            </div>
           </div>
 
           <div class="text-right mt-5">
@@ -557,6 +509,12 @@
             
             <div class="settings-grid">
               <div class="form-group">
+                <div v-if="!settings.history_id_optimized">
+                  <label class="form-label danger-label">⚠️ {{ trans.optimizeIndex }}</label>
+                  <p class="text-muted mb-2">{{ trans.optimizeIndexDesc }}</p>
+                  <button @click="openDbModal('optimizeHistory')" class="btn btn-red btn-lg" :disabled="dbLoading">⚡ {{ trans.optimizeIndex }}</button><br><br><br>
+                </div>
+
                 <label class="form-label">{{ trans.upgradeDatabase }}</label>
                 <p class="text-muted mb-2">{{ trans.upgradeDesc }}</p>
                 <button @click="openDbModal('upgrade')" class="btn btn-primary btn-lg" :disabled="dbLoading">⬆️ {{ trans.upgradeDatabase }}</button>
@@ -815,7 +773,7 @@
       <div id="dbModal" class="modal-overlay" :class="{ active: showDbModal }">
         <div class="modal-dialog">
           <div class="modal-header">
-            <div class="modal-title">$ {{ dbOperation === 'rebuild' ? 'DROP DATABASE' : 'ALTER DATABASE' }}</div>
+            <div class="modal-title">$ {{ dbModalTitle }}</div>
             <button class="modal-close" @click="closeDbModal" :disabled="dbLoading">✕</button>
           </div>
 
@@ -839,6 +797,19 @@
             </p>
           </div>
 
+          <div v-if="dbOperation === 'optimizeHistory'" class="mb-4">
+            <div class="flex-center-gap-sm mb-3">
+              <span class="danger-icon text-xl">⚠️</span>
+              <span class="danger-label">{{ trans.optimizeIndex }}</span>
+            </div>
+            <p class="text-secondary text-sm line-height-1-6">
+              {{ trans.optimizeIndexWarning }}
+            </p>
+            <p class="text-secondary text-sm line-height-1-6 mt-2">
+              {{ trans.optimizeIndexDetails }}
+            </p>
+          </div>
+
           <div v-if="dbResult" :class="dbResult.success ? 'warning-box' : 'danger-box'" class="mb-4">
             <div class="flex-center-gap-sm">
               <span :style="{ color: dbResult.success ? 'var(--accent-green)' : 'var(--accent-red)', fontWeight: '600' }">
@@ -853,11 +824,11 @@
           <div class="modal-footer flex-justify-between">
             <button 
               v-if="!dbResult" 
-              @click="dbOperation === 'rebuild' ? handleRebuildDatabase() : handleUpgradeDatabase()" 
+              @click="handleDbOperation"
               class="btn btn-red" 
               :disabled="dbLoading"
             >
-              {{ dbLoading ? (dbOperation === 'rebuild' ? trans.rebuilding : trans.upgrading) : (dbOperation === 'rebuild' ? trans.confirmRebuild : trans.upgradeDatabase) }}
+              {{ dbLoading ? dbLoadingText : dbConfirmText }}
             </button>
             <button @click="closeDbModal" class="btn" :disabled="dbLoading">{{ trans.cancel }}</button>
           </div>
@@ -1006,7 +977,7 @@ import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import TerminalHeader from '../components/TerminalHeader.vue'
 import Footer from '../components/Footer.vue'
-import { adminApi, login, logout as apiLogout, formatBytes, upgradeDatabase, rebuildDatabase, getFlagRegionCode, getApiBases } from '../utils/api'
+import { adminApi, login, logout as apiLogout, formatBytes, upgradeDatabase, rebuildDatabase, optimizeHistoryIndex, getFlagRegionCode, getApiBases } from '../utils/api'
 import { hasMultipleApiBases } from '../utils/config.js'
 import { t, currentLang, useTranslation } from '../utils/i18n'
 import { http } from '../utils/http'
@@ -1107,14 +1078,6 @@ const settings = ref({
   custom_bd: ''
 })
 const apiSecret = ref('')
-const historyIdStatus = ref(null)
-const historyIdOptimizedSaved = ref(false)
-const historyIdOptimizedLocked = computed(() => historyIdOptimizedSaved.value)
-const historyIdMinIdText = computed(() => historyIdStatus.value?.minId ?? '-')
-const historyIdWillUseIdQuery = computed(() =>
-  Boolean(settings.value.history_id_optimized || historyIdStatus.value?.noServerTimeIndex || historyIdStatus.value?.minIdAboveThreshold)
-)
-const formatHistoryCondition = (value) => value ? trans.value.historyIdConditionOn : trans.value.historyIdConditionOff
 
 const { visibility: passwordVisible, toggle: togglePassword } = usePasswordVisibility([
   'login', 'tgBotToken', 'tgChatId', 'turnstileSecret', 'cloudflareToken', 'jwtSecret', 'password', 'confirmPassword'
@@ -1149,6 +1112,21 @@ const showDbModal = ref(false)
 const dbOperation = ref('')
 const dbLoading = ref(false)
 const dbResult = ref(null)
+const dbModalTitle = computed(() => ({
+  rebuild: 'DROP DATABASE',
+  upgrade: 'ALTER DATABASE',
+  optimizeHistory: 'DROP HISTORY'
+}[dbOperation.value] || 'DATABASE'))
+const dbConfirmText = computed(() => ({
+  rebuild: trans.value.confirmRebuild,
+  upgrade: trans.value.upgradeDatabase,
+  optimizeHistory: trans.value.confirmOptimizeIndex
+}[dbOperation.value] || trans.value.operationSuccess))
+const dbLoadingText = computed(() => ({
+  rebuild: trans.value.rebuilding,
+  upgrade: trans.value.upgrading,
+  optimizeHistory: trans.value.optimizing
+}[dbOperation.value] || trans.value.saving))
 const d1UsageLoading = ref(false)
 const d1UsageResult = ref(null)
 const validationError = ref(null)
@@ -1400,8 +1378,6 @@ const loadSettings = async () => {
     if (!result.error) {
       const data = result.data
       const settingsData = data.settings || {}
-      historyIdStatus.value = data.history_id_status || null
-      historyIdOptimizedSaved.value = settingsData.history_id_optimized === 'true'
       settings.value = {
         site_title: settingsData.site_title || '',
         custom_bg: settingsData.custom_bg || '',
@@ -1487,12 +1463,6 @@ const saveSettings = async () => {
       }
     }
 
-    if (!historyIdOptimizedSaved.value && settings.value.history_id_optimized) {
-      if (!confirm(trans.value.historyIdOptimizedConfirm)) {
-        return
-      }
-    }
-
     saving.value = true
     saveResult.value = null
 
@@ -1510,7 +1480,6 @@ const saveSettings = async () => {
         show_tf: settings.value.show_tf ? 'true' : 'false',
         show_time: settings.value.show_time ? 'true' : 'false',
         show_long_history: settings.value.show_long_history ? 'true' : 'false',
-        history_id_optimized: settings.value.history_id_optimized ? 'true' : 'false',
         tg_notify: settings.value.tg_notify,
         expire_reminder: settings.value.expire_reminder,
         tg_bot_token: settings.value.tg_bot_token,
@@ -1891,6 +1860,34 @@ const handleRebuildDatabase = async () => {
   } finally {
     dbLoading.value = false
   }
+}
+
+const handleOptimizeHistoryIndex = async () => {
+  dbOperation.value = 'optimizeHistory'
+  dbLoading.value = true
+  dbResult.value = null
+
+  try {
+    const result = await optimizeHistoryIndex(selectedApiIndex.value)
+    dbResult.value = result
+    if (result.success) {
+      settings.value.history_id_optimized = true
+    }
+  } catch (e) {
+    dbResult.value = { success: false, error: e.message }
+  } finally {
+    dbLoading.value = false
+  }
+}
+
+const handleDbOperation = () => {
+  if (dbOperation.value === 'rebuild') {
+    return handleRebuildDatabase()
+  }
+  if (dbOperation.value === 'optimizeHistory') {
+    return handleOptimizeHistoryIndex()
+  }
+  return handleUpgradeDatabase()
 }
 
 const openDbModal = (operation) => {

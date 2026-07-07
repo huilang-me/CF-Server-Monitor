@@ -1,6 +1,6 @@
 {
   "name": "cf-server-monitor",
-  "version": "2.7.8",
+  "version": "2.7.9",
   "description": "Cloudflare Workers Server Monitor - 多服务器监控探针",
   "type": "module",
   "scripts": {

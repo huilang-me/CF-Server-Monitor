@@ -213,11 +213,12 @@ async function getHistoryIdCoverageForTable(db, tableName) {
 
   try {
     const row = await db.prepare(`
-      SELECT COUNT(*) AS row_count, MIN(id) AS min_id
+      SELECT id AS min_id
       FROM ${quoteIdentifier(tableName)}
+      ORDER BY id ASC
+      LIMIT 1
     `).first();
-    const rows = Number(row?.row_count || 0);
-    if (!rows) {
+    if (!row || row.min_id === null || row.min_id === undefined) {
       return { tableName, exists: true, rows: 0, minId: null, ready: true };
     }
 
@@ -225,7 +226,7 @@ async function getHistoryIdCoverageForTable(db, tableName) {
     return {
       tableName,
       exists: true,
-      rows,
+      rows: 1,
       minId,
       ready: Number.isSafeInteger(minId) && minId > HISTORY_AUTO_OPTIMIZED_MIN_ID
     };
@@ -273,10 +274,27 @@ export async function getHistoryIdAutoOptimizationStatus(db, { force = false } =
 }
 
 export async function getHistoryIdQueryStatus(db, settings = null, options = {}) {
-  const [autoStatus, indexStatus, settingEnabled] = await Promise.all([
+  const historySettings = await loadHistoryIdSettings(db, settings);
+  const settingEnabled = isHistoryIdOptimized(historySettings);
+  if (settingEnabled) {
+    return {
+      useHistoryIdQueries: true,
+      settingEnabled: true,
+      noServerTimeIndex: false,
+      hasServerTimeIndex: null,
+      minIdAboveThreshold: true,
+      minId: null,
+      threshold: HISTORY_AUTO_OPTIMIZED_MIN_ID,
+      checkedAt: Date.now(),
+      tables: [],
+      index: { skipped: true },
+      shouldEnsureSecondaryIndex: false
+    };
+  }
+
+  const [autoStatus, indexStatus] = await Promise.all([
     getHistoryIdAutoOptimizationStatus(db, options),
-    getHistoryServerTimeIndexStatus(db),
-    isHistoryIdOptimizedSettingEnabled(db, settings)
+    getHistoryServerTimeIndexStatus(db)
   ]);
   const noServerTimeIndex = !indexStatus.hasIndex;
   const minIdAboveThreshold = autoStatus.ready;
@@ -297,7 +315,12 @@ export async function getHistoryIdQueryStatus(db, settings = null, options = {})
 }
 
 export async function shouldUseHistoryIdQueries(db, settings = null, options = {}) {
-  const status = await getHistoryIdQueryStatus(db, settings, options);
+  const historySettings = await loadHistoryIdSettings(db, settings);
+  if (isHistoryIdOptimized(historySettings)) {
+    return true;
+  }
+
+  const status = await getHistoryIdQueryStatus(db, historySettings, options);
   return status.useHistoryIdQueries;
 }
 
