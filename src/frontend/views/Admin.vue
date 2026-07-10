@@ -894,7 +894,8 @@
             {{ getMessage(d1UsageResult.error) }}
           </div>
 
-          <div class="modal-footer flex-justify-end">
+          <div class="modal-footer flex-justify-between">
+            <div></div>
             <button @click="d1UsageResult = null" class="btn">{{ trans.close }}</button>
           </div>
         </div>
@@ -914,7 +915,8 @@
             </div>
           </div>
 
-          <div class="modal-footer flex-justify-end">
+          <div class="modal-footer flex-justify-between">
+            <div></div>
             <button @click="validationError = null" class="btn">{{ trans.close }}</button>
           </div>
         </div>
@@ -941,8 +943,27 @@
             </div>
           </div>
 
-          <div class="modal-footer flex-justify-end">
+          <div class="modal-footer flex-justify-between">
+            <div></div>
             <button @click="saveResult = null" class="btn">{{ trans.close }}</button>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="alertMessage" class="modal-overlay active">
+        <div class="modal-dialog">
+          <div class="modal-header">
+            <div class="modal-title">$ alert</div>
+            <button class="modal-close" @click="alertMessage = null">✕</button>
+          </div>
+
+          <div class="mb-4">
+            <p class="text-secondary text-sm">{{ alertMessage }}</p>
+          </div>
+
+          <div class="modal-footer flex-justify-between">
+            <div></div>
+            <button @click="alertMessage = null" class="btn">{{ trans.close }}</button>
           </div>
         </div>
       </div>
@@ -1094,6 +1115,7 @@ const dbResult = ref(null)
 const d1UsageLoading = ref(false)
 const d1UsageResult = ref(null)
 const validationError = ref(null)
+const alertMessage = ref(null)
 
 const testNotificationLoading = ref(false)
 
@@ -1720,7 +1742,10 @@ const saveEdit = async () => {
   }
 
   const batchDelete = async () => {
-    if (selectedServers.value.length === 0) return alert(trans.value.selectServers)
+    if (selectedServers.value.length === 0) {
+      alertMessage.value = trans.value.selectServers
+      return
+    }
     if (!confirm(trans.value.confirmDeleteServers + selectedServers.value.length + trans.value.irreversible)) return
 
     try {
@@ -1794,7 +1819,8 @@ const getStatusText = (server) => {
     const file = e.target.files[0]
     if (!file) return
     if (file.size > 800 * 1024) {
-      alert(trans.value.imageSizeWarning)
+      alertMessage.value = trans.value.imageSizeWarning
+      return
     }
     const reader = new FileReader()
     reader.onload = function(event) {
@@ -1874,12 +1900,12 @@ const sendTestNotification = async () => {
       tg_chat_id: settings.value.tg_chat_id
     })
     if (!result.error) {
-      alert(getMessage(result.data.message) || trans.value.testNotificationSent)
+      alertMessage.value = getMessage(result.data.message) || trans.value.testNotificationSent
     } else {
-      alert(getMessage(result.error) || trans.value.testNotificationFailed)
+      alertMessage.value = getMessage(result.error) || trans.value.testNotificationFailed
     }
   } catch (e) {
-    alert(trans.value.testNotificationFailed + ': ' + e.message)
+    alertMessage.value = trans.value.testNotificationFailed + ': ' + e.message
   } finally {
     testNotificationLoading.value = false
   }
