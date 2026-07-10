@@ -273,9 +273,9 @@
         <div class="modal-body-content">
           <p class="modal-body-text">{{ trans.loginRequired }}</p>
         </div>
-        <div class="modal-footer">
-          <button @click="showLoginModal = false" class="btn modal-btn-full">{{ trans.cancel }}</button>
-          <button @click="goToLogin" class="btn btn-blue modal-btn-full">{{ trans.login }}</button>
+        <div class="modal-footer flex-justify-between">
+          <button @click="goToLogin" class="btn btn-primary">{{ trans.login }}</button>
+          <button @click="showLoginModal = false" class="btn">{{ trans.cancel }}</button>
         </div>
       </div>
     </div>
