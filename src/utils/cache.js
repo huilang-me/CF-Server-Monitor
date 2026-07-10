@@ -19,6 +19,8 @@ let latestAllCacheTime = 0;
 
 const metricsHistoryCache = new Map();
 
+const serverDetailCache = new Map();
+
 export function getCacheDuration(hours) {
   if (hours >= 120) {
     return 10 * 60 * 1000;
@@ -60,12 +62,50 @@ export async function getAllServers(db, includeHidden = true) {
 
 export function clearServersListCache() {
   serversListCache = null;
+  serverDetailCache.clear();
+}
+
+export function clearServerDetailCache() {
+  serverDetailCache.clear();
 }
 
 export async function getServerDetail(db, id, includeHidden = false) {
-  const servers = await getAllServers(db, includeHidden);
-  const server = servers.find(item => item.id === id);
-  return server ? { ...server } : null;
+  const now = Date.now();
+  const cached = serverDetailCache.get(id);
+  
+  if (cached) {
+    if (now - cached.time < SERVERS_LIST_TTL) {
+      debug('服务器详情缓存命中');
+      const server = cached.data;
+      
+      if (!server) {
+        return null;
+      }
+      
+      if (!includeHidden && (server.is_hidden === 1 || server.is_hidden === '1')) {
+        return null;
+      }
+      
+      return { ...server };
+    }
+    
+    serverDetailCache.delete(id);
+  }
+  
+  const server = await db.prepare('SELECT * FROM servers WHERE id = ?').bind(id).first();
+
+  serverDetailCache.set(id, { data: server, time: now });
+  debug('服务器详情缓存更新');
+  
+  if (!server) {
+    return null;
+  }
+  
+  if (!includeHidden && (server.is_hidden === 1 || server.is_hidden === '1')) {
+    return null;
+  }
+  
+  return { ...server };
 }
 
 export async function checkServerExists(db, id) {
