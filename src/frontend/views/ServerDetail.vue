@@ -292,7 +292,7 @@ import { hasMultipleApiBases } from '../utils/config.js'
 import Chart from 'chart.js/auto'
 import 'chartjs-adapter-date-fns'
 import { t, currentLang, useTranslation } from '../utils/i18n'
-import { CHART, HISTORY_SAMPLE_INTERVAL } from '../utils/constants'
+import { CHART } from '../utils/constants'
 import { formatDateTime } from '../utils/time.js'
 import useTheme from '../composables/useTheme'
 
@@ -642,20 +642,21 @@ const updateChartsTheme = (theme) => {
   })
 }
 
+// ≤1h: 5分钟阈值; >1h: 总时长/80 * 1.1
 const getHistoryGapBreakMs = (hours = currentHours.value) => {
-  if (hours > 168) return HISTORY_SAMPLE_INTERVAL.OVER_168_HOURS
-  if (hours >= 96) return HISTORY_SAMPLE_INTERVAL.FROM_96_HOURS
-  if (hours >= 48) return HISTORY_SAMPLE_INTERVAL.FROM_48_HOURS
-  if (hours >= 24) return HISTORY_SAMPLE_INTERVAL.FROM_24_HOURS
-  if (hours >= 12) return HISTORY_SAMPLE_INTERVAL.FROM_12_HOURS
-  return HISTORY_SAMPLE_INTERVAL.BELOW_12_HOURS
+  if (hours <= 1) return 5 * 60 * 1000
+  return Math.ceil(hours * 60 * 60 * 1000 / 80) * 1.1
 }
 
 const shouldBreakGap = (prevPoint, nextPoint) => {
   if (!prevPoint || !nextPoint) return false
   const prevTime = Number(prevPoint.x)
   const nextTime = Number(nextPoint.x)
-  return Number.isFinite(prevTime) && Number.isFinite(nextTime) && nextTime - prevTime > getHistoryGapBreakMs()
+  if (!Number.isFinite(prevTime) || !Number.isFinite(nextTime)) return false
+  const gap = nextTime - prevTime
+  const breakThreshold = getHistoryGapBreakMs()
+  if (breakThreshold < 5 * 60 * 1000) return false
+  return gap > breakThreshold * 2
 }
 
 const applyGapBreak = (data) => {
@@ -779,8 +780,7 @@ const updateLoadChart = (chart, dataPoints) => {
 
 const loadAllHistory = async (hours) => {
   try {
-    const res = await fetchAllHistory(serverId, hours, apiIndex.value)
-    const allData = Array.isArray(res) ? res : []
+    const allData = await fetchAllHistory(serverId, hours, apiIndex.value)
 
     if (allData.length > 0) {
       hasLossHistoryData.value = allData.some(item => ['loss_ct', 'loss_cu', 'loss_cm', 'loss_bd'].some(key => isLossValid(item[key])))

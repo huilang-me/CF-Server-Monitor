@@ -352,7 +352,7 @@ export const fetchAllHistory = async (id, hours, apiIndex = 0) => {
     error.message = result.message || result.error
     throw error
   }
-  return result.data
+  return Array.isArray(result.data) ? result.data : []
 }
 
 export const adminApi = async (data, apiIndex = 0) => {

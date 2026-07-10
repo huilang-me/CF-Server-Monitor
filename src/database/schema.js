@@ -189,27 +189,11 @@ export async function getMetricsHistory(db, serverId, hours, columns, server = n
     return cached.data;
   }
   
-  let queryHours = hours;
-  let intervalMs;
-  
-  if (hours > 168) {
-    queryHours = 168;
-    intervalMs = 80 * 60 * 1000;
-  } else if (hours >= 96) {
-    intervalMs = 60 * 60 * 1000;
-  } else if (hours >= 48) {
-    intervalMs = 40 * 60 * 1000;
-  } else if (hours >= 24) {
-    intervalMs = 15 * 60 * 1000;
-  } else if (hours >= 12) {
-    intervalMs = 10 * 60 * 1000;
-  } else if (hours >= 6) {
-    intervalMs = 5 * 60 * 1000;
-  } else if (hours > 1) {
-    intervalMs = 1 * 60 * 1000;
-  } else {
-    intervalMs = 10 * 1000;
-  }
+  // 最多返回80个数据点,前端需要配合这个计算断点阈值
+  const queryHours = Math.min(hours, 168);
+  const MAX_POINTS = 80;
+  const totalMs = queryHours * 60 * 60 * 1000;
+  const intervalMs = Math.max(10_000, Math.ceil(totalMs / MAX_POINTS));
 
   const cutoff = now - queryHours * 60 * 60 * 1000;
   const historyInfo = await getServerHistoryInfo(db, serverId, server);
@@ -299,10 +283,10 @@ export async function getMetricsHistory(db, serverId, hours, columns, server = n
   }));
 
   result.sort((a, b) => a.timestamp - b.timestamp);
-  
+
   setMetricsHistoryCache(serverId, hours, columns, result);
 
-  debug(`[History] FINAL: ${result.length}`);
+  debug(`[History] FINAL: ${result.length}, interval: ${intervalMs}ms`);
 
   return result;
 }
