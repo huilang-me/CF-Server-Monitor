@@ -203,7 +203,7 @@ git push origin main
 部署成功后，访问管理后台：
 
 ```
-https://你的项目名.你的子域.workers.dev/#admin
+https://你的项目名.你的子域.workers.dev/#/admin
 ```
 
 - 用户名：默认admin，如果设置了环境变量 `API_USER_NAME`，则使用该值
