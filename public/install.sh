@@ -207,6 +207,7 @@ while IFS='=' read -r key value; do
         BD_NODE) BD_NODE="${value%\"}"; BD_NODE="${BD_NODE#\"}" ;;
         RESET_DAY) RESET_DAY="${value%\"}"; RESET_DAY="${RESET_DAY#\"}" ;;
         DEBUG_MODE) DEBUG_MODE="${value%\"}"; DEBUG_MODE="${DEBUG_MODE#\"}" ;;
+        CONFIG_MD5) CONFIG_MD5="${value%\"}"; CONFIG_MD5="${CONFIG_MD5#\"}" ;;
     esac
 done < "${CONFIG_FILE}"
 
@@ -227,6 +228,7 @@ if [ "$COLLECT_INTERVAL" -gt 0 ] && [ "$REPORT_INTERVAL" -lt "$COLLECT_INTERVAL"
 fi
 ACTIVE_INTERVAL="$REPORT_INTERVAL"
 [ "$COLLECT_INTERVAL" -gt 0 ] && ACTIVE_INTERVAL="$COLLECT_INTERVAL"
+CONFIG_MD5=${CONFIG_MD5:-none}
 
 log_ts() {
     date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%d %H:%M:%S'
@@ -242,6 +244,72 @@ log_debug() {
 
 log_warn_debug() {
     [ "$DEBUG_MODE" = "1" ] && echo "[WARN] $(log_ts) $*"
+}
+
+persist_dynamic_config() {
+    local tmp_file="${CONFIG_FILE}.tmp.$$"
+    awk \
+        -v collect="$1" \
+        -v report="$2" \
+        -v ping="$3" \
+        -v reset="$4" \
+        -v md5="$5" '
+        BEGIN { c=0; r=0; p=0; d=0; m=0 }
+        /^COLLECT_INTERVAL=/ { print "COLLECT_INTERVAL=\"" collect "\""; c=1; next }
+        /^REPORT_INTERVAL=/ { print "REPORT_INTERVAL=\"" report "\""; r=1; next }
+        /^PING_TYPE=/ { print "PING_TYPE=\"" ping "\""; p=1; next }
+        /^RESET_DAY=/ { print "RESET_DAY=\"" reset "\""; d=1; next }
+        /^CONFIG_MD5=/ { print "CONFIG_MD5=\"" md5 "\""; m=1; next }
+        { print }
+        END {
+            if (!c) print "COLLECT_INTERVAL=\"" collect "\""
+            if (!r) print "REPORT_INTERVAL=\"" report "\""
+            if (!p) print "PING_TYPE=\"" ping "\""
+            if (!d) print "RESET_DAY=\"" reset "\""
+            if (!m) print "CONFIG_MD5=\"" md5 "\""
+        }
+    ' "$CONFIG_FILE" > "$tmp_file" || { rm -f "$tmp_file"; return 1; }
+    chmod 600 "$tmp_file" 2>/dev/null || true
+    mv "$tmp_file" "$CONFIG_FILE"
+}
+
+apply_remote_config() {
+    local response_file="$1" header_file="$2" body bytes new_md5
+    local new_collect new_ping new_report new_reset new_schema canonical
+
+    bytes=$(wc -c < "$response_file" 2>/dev/null || echo 9999)
+    [ "$bytes" -le 512 ] || return 1
+    body=$(cat "$response_file" 2>/dev/null) || return 1
+    case "$body" in ''|*[!a-z0-9_=\&]*) return 1 ;; esac
+
+    new_md5=$(awk 'tolower($1)=="x-agent-config-md5:" { gsub("\r", "", $2); print tolower($2); exit }' "$header_file")
+    [ "${#new_md5}" -eq 32 ] || return 1
+    case "$new_md5" in *[!0-9a-f]*) return 1 ;; esac
+
+    new_collect=$(printf '%s' "$body" | cut -d '&' -f 1); new_collect=${new_collect#collect_interval=}
+    new_ping=$(printf '%s' "$body" | cut -d '&' -f 2); new_ping=${new_ping#ping_mode=}
+    new_report=$(printf '%s' "$body" | cut -d '&' -f 3); new_report=${new_report#report_interval=}
+    new_reset=$(printf '%s' "$body" | cut -d '&' -f 4); new_reset=${new_reset#reset_day=}
+    new_schema=$(printf '%s' "$body" | cut -d '&' -f 5); new_schema=${new_schema#schema_version=}
+    canonical="collect_interval=${new_collect}&ping_mode=${new_ping}&report_interval=${new_report}&reset_day=${new_reset}&schema_version=${new_schema}"
+    [ "$body" = "$canonical" ] || return 1
+
+    case "$new_collect" in 0|1|2|5|10) ;; *) return 1 ;; esac
+    case "$new_report" in 30|60|120|180) ;; *) return 1 ;; esac
+    case "$new_ping" in http|tcp) ;; *) return 1 ;; esac
+    case "$new_reset" in 0|[1-9]|1[0-9]|2[0-9]|30|31) ;; *) return 1 ;; esac
+    [ "$new_schema" = "1" ] || return 1
+    [ "$new_report" -ge "$new_collect" ] || return 1
+
+    persist_dynamic_config "$new_collect" "$new_report" "$new_ping" "$new_reset" "$new_md5" || return 1
+    COLLECT_INTERVAL="$new_collect"
+    REPORT_INTERVAL="$new_report"
+    PING_TYPE="$new_ping"
+    RESET_DAY="$new_reset"
+    CONFIG_MD5="$new_md5"
+    ACTIVE_INTERVAL="$REPORT_INTERVAL"
+    [ "$COLLECT_INTERVAL" -gt 0 ] && ACTIVE_INTERVAL="$COLLECT_INTERVAL"
+    log_info "Dynamic configuration applied: md5=${CONFIG_MD5}"
 }
 
 # 严苛环境下的规范 JSON 字段转义函数
@@ -781,19 +849,26 @@ EOF
         log_debug "Report attempt: url=${WORKER_URL} samples=${SAMPLE_COUNT} payload_bytes=${PAYLOAD_BYTES}"
 
         REPORT_RESPONSE_FILE="/dev/shm/.cf_probe_response.$$"
+        REPORT_HEADER_FILE="/dev/shm/.cf_probe_headers.$$"
         REPORT_ERROR_FILE="/dev/shm/.cf_probe_error.$$"
-        REPORT_HTTP_CODE=$(curl -sS -o "$REPORT_RESPONSE_FILE" -w "%{http_code}" -X POST -H "Content-Type: application/json" -d "$PAYLOAD" -m 10 --connect-timeout 5 "$WORKER_URL" 2>"$REPORT_ERROR_FILE")
+        REPORT_HTTP_CODE=$(curl -sS -D "$REPORT_HEADER_FILE" -o "$REPORT_RESPONSE_FILE" -w "%{http_code}" -X POST \
+            -H "Content-Type: application/json" \
+            -H "X-Agent-Config-Schema: 1" \
+            -H "X-Agent-Config-Md5: ${CONFIG_MD5:-none}" \
+            -d "$PAYLOAD" -m 8 --connect-timeout 3 "$WORKER_URL" 2>"$REPORT_ERROR_FILE")
         REPORT_CURL_EXIT=$?
         case "$REPORT_HTTP_CODE" in ''|*[!0-9]*) REPORT_HTTP_CODE=000 ;; esac
         REPORT_RESPONSE=$(head -c 300 "$REPORT_RESPONSE_FILE" 2>/dev/null | tr '\r\n' '  ')
         REPORT_ERROR=$(head -c 300 "$REPORT_ERROR_FILE" 2>/dev/null | tr '\r\n' '  ')
-        rm -f "$REPORT_RESPONSE_FILE" "$REPORT_ERROR_FILE" 2>/dev/null || true
-
         if [ "$REPORT_CURL_EXIT" -ne 0 ] || [ "$REPORT_HTTP_CODE" -lt 200 ] || [ "$REPORT_HTTP_CODE" -ge 300 ]; then
             log_warn_debug "Report failed: curl_exit=${REPORT_CURL_EXIT} http=${REPORT_HTTP_CODE} samples=${SAMPLE_COUNT} payload_bytes=${PAYLOAD_BYTES} response=${REPORT_RESPONSE} error=${REPORT_ERROR}"
         else
+            if [ "$REPORT_HTTP_CODE" = "200" ] && ! apply_remote_config "$REPORT_RESPONSE_FILE" "$REPORT_HEADER_FILE"; then
+                log_warn_debug "Dynamic configuration rejected"
+            fi
             log_debug "Report success: http=${REPORT_HTTP_CODE} samples=${SAMPLE_COUNT} payload_bytes=${PAYLOAD_BYTES} response=${REPORT_RESPONSE}"
         fi
+        rm -f "$REPORT_RESPONSE_FILE" "$REPORT_HEADER_FILE" "$REPORT_ERROR_FILE" 2>/dev/null || true
         SAMPLES_JSON=""
         SAMPLE_COUNT=0
         LAST_REPORT_TIME=$LOOP_START_TIME
@@ -949,7 +1024,9 @@ CM_NODE="${CM_NODE:-}"
 BD_NODE="${BD_NODE:-}"
 RESET_DAY="${RESET_DAY}"
 DEBUG_MODE="${DEBUG_MODE}"
+CONFIG_MD5="none"
 EOF
+            chmod 600 "${CONFIG_FILE}" 2>/dev/null || true
             info "配置文件已更新: ${CONFIG_FILE}"
         else
             step "从配置文件读取参数..."
@@ -1035,7 +1112,9 @@ CM_NODE="${CM_NODE:-}"
 BD_NODE="${BD_NODE:-}"
 RESET_DAY="${RESET_DAY}"
 DEBUG_MODE="${DEBUG_MODE}"
+CONFIG_MD5="none"
 EOF
+        chmod 600 "${CONFIG_FILE}" 2>/dev/null || true
         info "配置文件已生成: ${CONFIG_FILE}"
     fi
 

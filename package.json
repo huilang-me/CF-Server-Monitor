@@ -10,6 +10,7 @@
     "dev:frontend": "vite",
     "build:frontend": "node scripts/build.js",
     "build:github-page": "node scripts/build-github-page.js",
+    "test:agent-config": "node test/agent-config.js",
     "preview": "vite preview"
   },
   "keywords": [

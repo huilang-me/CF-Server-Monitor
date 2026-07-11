@@ -397,6 +397,7 @@ CU_NODE=""
 CM_NODE=""
 BD_NODE=""
 RESET_DAY=""
+CONFIG_MD5=""
 
 while IFS='=' read -r key value; do
     case "$key" in
@@ -411,6 +412,7 @@ while IFS='=' read -r key value; do
         CM_NODE) CM_NODE="${value%\"}"; CM_NODE="${CM_NODE#\"}" ;;
         BD_NODE) BD_NODE="${value%\"}"; BD_NODE="${BD_NODE#\"}" ;;
         RESET_DAY) RESET_DAY="${value%\"}"; RESET_DAY="${RESET_DAY#\"}" ;;
+        CONFIG_MD5) CONFIG_MD5="${value%\"}"; CONFIG_MD5="${CONFIG_MD5#\"}" ;;
     esac
 done < "${CONFIG_FILE}"
 
@@ -443,8 +445,64 @@ if [ "$COLLECT_INTERVAL" -gt 0 ] && [ "$REPORT_INTERVAL" -lt "$COLLECT_INTERVAL"
 fi
 ACTIVE_INTERVAL="$REPORT_INTERVAL"
 [ "$COLLECT_INTERVAL" -gt 0 ] && ACTIVE_INTERVAL="$COLLECT_INTERVAL"
+CONFIG_MD5=${CONFIG_MD5:-none}
 
 SHM_DIR="/tmp"
+
+persist_dynamic_config() {
+    _cf_tmp_file="${CONFIG_FILE}.tmp.$$"
+    awk -v collect="$1" -v report="$2" -v ping="$3" -v reset="$4" -v md5="$5" '
+        BEGIN { c=0; r=0; p=0; d=0; m=0 }
+        /^COLLECT_INTERVAL=/ { print "COLLECT_INTERVAL=\"" collect "\""; c=1; next }
+        /^REPORT_INTERVAL=/ { print "REPORT_INTERVAL=\"" report "\""; r=1; next }
+        /^PING_TYPE=/ { print "PING_TYPE=\"" ping "\""; p=1; next }
+        /^RESET_DAY=/ { print "RESET_DAY=\"" reset "\""; d=1; next }
+        /^CONFIG_MD5=/ { print "CONFIG_MD5=\"" md5 "\""; m=1; next }
+        { print }
+        END {
+            if (!c) print "COLLECT_INTERVAL=\"" collect "\""
+            if (!r) print "REPORT_INTERVAL=\"" report "\""
+            if (!p) print "PING_TYPE=\"" ping "\""
+            if (!d) print "RESET_DAY=\"" reset "\""
+            if (!m) print "CONFIG_MD5=\"" md5 "\""
+        }
+    ' "$CONFIG_FILE" > "$_cf_tmp_file" || { rm -f "$_cf_tmp_file"; return 1; }
+    chmod 600 "$_cf_tmp_file" 2>/dev/null || true
+    mv "$_cf_tmp_file" "$CONFIG_FILE"
+}
+
+apply_remote_config() {
+    _cf_response_file="$1"
+    _cf_header_file="$2"
+    _cf_bytes=$(wc -c < "$_cf_response_file" 2>/dev/null || echo 9999)
+    [ "$_cf_bytes" -le 512 ] || return 1
+    _cf_body=$(cat "$_cf_response_file" 2>/dev/null) || return 1
+    case "$_cf_body" in ''|*[!a-z0-9_=\&]*) return 1 ;; esac
+    _cf_md5=$(awk 'tolower($1)=="x-agent-config-md5:" { gsub("\r", "", $2); print tolower($2); exit }' "$_cf_header_file")
+    [ "${#_cf_md5}" -eq 32 ] || return 1
+    case "$_cf_md5" in *[!0-9a-f]*) return 1 ;; esac
+    _cf_collect=$(printf '%s' "$_cf_body" | cut -d '&' -f 1); _cf_collect=${_cf_collect#collect_interval=}
+    _cf_ping=$(printf '%s' "$_cf_body" | cut -d '&' -f 2); _cf_ping=${_cf_ping#ping_mode=}
+    _cf_report=$(printf '%s' "$_cf_body" | cut -d '&' -f 3); _cf_report=${_cf_report#report_interval=}
+    _cf_reset=$(printf '%s' "$_cf_body" | cut -d '&' -f 4); _cf_reset=${_cf_reset#reset_day=}
+    _cf_schema=$(printf '%s' "$_cf_body" | cut -d '&' -f 5); _cf_schema=${_cf_schema#schema_version=}
+    _cf_canonical="collect_interval=${_cf_collect}&ping_mode=${_cf_ping}&report_interval=${_cf_report}&reset_day=${_cf_reset}&schema_version=${_cf_schema}"
+    [ "$_cf_body" = "$_cf_canonical" ] || return 1
+    case "$_cf_collect" in 0|1|2|5|10) ;; *) return 1 ;; esac
+    case "$_cf_report" in 30|60|120|180) ;; *) return 1 ;; esac
+    case "$_cf_ping" in http|tcp) ;; *) return 1 ;; esac
+    case "$_cf_reset" in 0|[1-9]|1[0-9]|2[0-9]|30|31) ;; *) return 1 ;; esac
+    [ "$_cf_schema" = "1" ] || return 1
+    [ "$_cf_report" -ge "$_cf_collect" ] || return 1
+    persist_dynamic_config "$_cf_collect" "$_cf_report" "$_cf_ping" "$_cf_reset" "$_cf_md5" || return 1
+    COLLECT_INTERVAL="$_cf_collect"
+    REPORT_INTERVAL="$_cf_report"
+    PING_TYPE="$_cf_ping"
+    RESET_DAY="$_cf_reset"
+    CONFIG_MD5="$_cf_md5"
+    ACTIVE_INTERVAL="$REPORT_INTERVAL"
+    [ "$COLLECT_INTERVAL" -gt 0 ] && ACTIVE_INTERVAL="$COLLECT_INTERVAL"
+}
 
 escape_json() {
     printf '%s' "${1:-}" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n\r' '  '
@@ -876,7 +934,18 @@ EOF
 EOF
 )
         fi
-        curl -s -o /dev/null -X POST -H "Content-Type: application/json" -d "$PAYLOAD" -m 10 --connect-timeout 5 "$WORKER_URL" 2>/dev/null || true
+        REPORT_RESPONSE_FILE="/tmp/.cf_probe_response.$$"
+        REPORT_HEADER_FILE="/tmp/.cf_probe_headers.$$"
+        REPORT_HTTP_CODE=$(curl -sS -D "$REPORT_HEADER_FILE" -o "$REPORT_RESPONSE_FILE" -w "%{http_code}" -X POST \
+            -H "Content-Type: application/json" \
+            -H "X-Agent-Config-Schema: 1" \
+            -H "X-Agent-Config-Md5: ${CONFIG_MD5:-none}" \
+            -d "$PAYLOAD" -m 8 --connect-timeout 3 "$WORKER_URL" 2>/dev/null || echo 000)
+        case "$REPORT_HTTP_CODE" in ''|*[!0-9]*) REPORT_HTTP_CODE=000 ;; esac
+        if [ "$REPORT_HTTP_CODE" = "200" ]; then
+            apply_remote_config "$REPORT_RESPONSE_FILE" "$REPORT_HEADER_FILE" || true
+        fi
+        rm -f "$REPORT_RESPONSE_FILE" "$REPORT_HEADER_FILE" 2>/dev/null || true
         SAMPLES_JSON=""
         SAMPLE_COUNT=0
         LAST_REPORT_TIME=$LOOP_START_TIME
@@ -1148,7 +1217,9 @@ CU_NODE="${CU_NODE:-}"
 CM_NODE="${CM_NODE:-}"
 BD_NODE="${BD_NODE:-}"
 RESET_DAY="${RESET_DAY}"
+CONFIG_MD5="none"
 EOF
+            chmod 600 "${CONFIG_FILE}" 2>/dev/null || true
             info "配置文件已更新: ${CONFIG_FILE}"
         else
             step "从配置文件读取参数..."
@@ -1221,7 +1292,9 @@ CU_NODE="${CU_NODE:-}"
 CM_NODE="${CM_NODE:-}"
 BD_NODE="${BD_NODE:-}"
 RESET_DAY="${RESET_DAY}"
+CONFIG_MD5="none"
 EOF
+        chmod 600 "${CONFIG_FILE}" 2>/dev/null || true
         info "配置文件已生成: ${CONFIG_FILE}"
     fi
 

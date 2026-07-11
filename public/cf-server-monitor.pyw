@@ -5,6 +5,7 @@ import os
 import sys
 import json
 import time
+import calendar
 import socket
 import shutil
 import ctypes
@@ -14,7 +15,7 @@ import platform
 import subprocess
 import urllib.request
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -24,6 +25,7 @@ TASK_NAME = "CFProbe"
 
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_FILE = BASE_DIR / "cf_probe_config.json"
+TRAFFIC_FILE = BASE_DIR / "cf_probe_traffic.json"
 LOG_FILE = BASE_DIR / "cf_probe.log"
 AGENT_FILE = Path(__file__).resolve()
 
@@ -40,7 +42,19 @@ DEFAULT_CONFIG = {
     "report_interval": 60,
     "silent_start": False,
     "ping_type": "tcp",
+    "reset_day": 1,
+    "config_md5": "none",
 }
+
+REMOTE_CONFIG_KEYS = (
+    "collect_interval",
+    "ping_mode",
+    "report_interval",
+    "reset_day",
+    "schema_version",
+)
+ALLOWED_COLLECT_INTERVALS = {0, 1, 2, 5, 10}
+ALLOWED_REPORT_INTERVALS = {30, 60, 120, 180}
 
 CT_NODE = "gd-ct-dualstack.ip.zstaticcdn.com"
 CU_NODE = "gd-cu-dualstack.ip.zstaticcdn.com"
@@ -189,8 +203,108 @@ def load_config():
 
 def save_config(config):
     ensure_base_dir()
-    with CONFIG_FILE.open("w", encoding="utf-8") as f:
-        json.dump(config, f, ensure_ascii=False, indent=2)
+    temp_file = CONFIG_FILE.with_name(CONFIG_FILE.name + ".tmp")
+    try:
+        with temp_file.open("w", encoding="utf-8") as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(str(temp_file), str(CONFIG_FILE))
+    finally:
+        try:
+            if temp_file.exists():
+                temp_file.unlink()
+        except Exception:
+            pass
+
+
+def load_traffic_state():
+    try:
+        if TRAFFIC_FILE.exists():
+            with TRAFFIC_FILE.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                return data
+    except Exception as e:
+        log(f"读取月流量状态失败，将重新初始化: {e}")
+    return {}
+
+
+def save_traffic_state(state):
+    ensure_base_dir()
+    temp_file = TRAFFIC_FILE.with_name(TRAFFIC_FILE.name + ".tmp")
+    try:
+        with temp_file.open("w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, separators=(",", ":"))
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(str(temp_file), str(TRAFFIC_FILE))
+    finally:
+        try:
+            if temp_file.exists():
+                temp_file.unlink()
+        except Exception:
+            pass
+
+
+def get_period_start_timestamp(reset_day, now_ts):
+    if reset_day == 0:
+        return 0
+
+    now = datetime.fromtimestamp(now_ts, tz=timezone.utc)
+    year = now.year
+    month = now.month
+    target_day = min(reset_day, calendar.monthrange(year, month)[1])
+
+    if now.day < target_day:
+        month -= 1
+        if month == 0:
+            month = 12
+            year -= 1
+        target_day = min(reset_day, calendar.monthrange(year, month)[1])
+
+    period_start = datetime(year, month, target_day, tzinfo=timezone.utc)
+    return int(period_start.timestamp())
+
+
+def update_monthly_traffic(current_rx, current_tx, reset_day, state, now_ts=None):
+    now_ts = int(time.time() if now_ts is None else now_ts)
+
+    def state_int(key):
+        try:
+            return max(int(state.get(key, 0)), 0)
+        except (TypeError, ValueError):
+            return 0
+
+    previous_rx = state_int("rx_previous")
+    previous_tx = state_int("tx_previous")
+    monthly_rx = state_int("rx_period")
+    monthly_tx = state_int("tx_period")
+    last_check = state_int("last_check")
+    previous_period_start = state_int("period_start")
+    period_start = get_period_start_timestamp(reset_day, now_ts)
+
+    if last_check:
+        rx_delta = current_rx - previous_rx if current_rx >= previous_rx else 0
+        tx_delta = current_tx - previous_tx if current_tx >= previous_tx else 0
+        if period_start and previous_period_start and period_start != previous_period_start:
+            monthly_rx = rx_delta
+            monthly_tx = tx_delta
+        else:
+            monthly_rx += rx_delta
+            monthly_tx += tx_delta
+
+    state.clear()
+    state.update({
+        "rx_previous": current_rx,
+        "tx_previous": current_tx,
+        "rx_period": monthly_rx,
+        "tx_period": monthly_tx,
+        "last_check": now_ts,
+        "period_start": period_start,
+    })
+    save_traffic_state(state)
+    return monthly_rx, monthly_tx
 
 
 def install_self():
@@ -248,7 +362,58 @@ def delete_startup_task():
         log("自动启动任务不存在或删除失败。")
 
 
-def http_post_json(url, payload):
+def parse_remote_config(body, config_md5):
+    if not isinstance(body, str) or not body or len(body.encode("utf-8")) > 512:
+        raise ValueError("invalid configuration size")
+    if not config_md5 or len(config_md5) != 32 or any(c not in "0123456789abcdef" for c in config_md5):
+        raise ValueError("invalid configuration md5")
+    if any(c not in "abcdefghijklmnopqrstuvwxyz0123456789_=&" for c in body):
+        raise ValueError("invalid configuration characters")
+
+    parts = body.split("&")
+    if len(parts) != len(REMOTE_CONFIG_KEYS):
+        raise ValueError("invalid configuration field count")
+    pairs = []
+    for part in parts:
+        if part.count("=") != 1:
+            raise ValueError("invalid configuration field")
+        pairs.append(part.split("=", 1))
+    if tuple(pair[0] for pair in pairs) != REMOTE_CONFIG_KEYS:
+        raise ValueError("invalid configuration field order")
+
+    values = {key: value for key, value in pairs}
+    numeric_keys = ("collect_interval", "report_interval", "reset_day", "schema_version")
+    if not all(values[key].isdigit() for key in numeric_keys):
+        raise ValueError("invalid numeric configuration")
+    collect_interval = int(values["collect_interval"])
+    report_interval = int(values["report_interval"])
+    reset_day = int(values["reset_day"])
+    schema_version = int(values["schema_version"])
+    if collect_interval not in ALLOWED_COLLECT_INTERVALS:
+        raise ValueError("invalid collect_interval")
+    if report_interval not in ALLOWED_REPORT_INTERVALS or report_interval < collect_interval:
+        raise ValueError("invalid report_interval")
+    if values["ping_mode"] not in ("http", "tcp"):
+        raise ValueError("invalid ping_mode")
+    if reset_day < 0 or reset_day > 31 or schema_version != 1:
+        raise ValueError("invalid configuration version or reset_day")
+
+    canonical = (
+        f"collect_interval={collect_interval}&ping_mode={values['ping_mode']}"
+        f"&report_interval={report_interval}&reset_day={reset_day}&schema_version={schema_version}"
+    )
+    if body != canonical:
+        raise ValueError("configuration is not canonical")
+    return {
+        "collect_interval": collect_interval,
+        "ping_type": values["ping_mode"],
+        "report_interval": report_interval,
+        "reset_day": reset_day,
+        "config_md5": config_md5,
+    }
+
+
+def http_post_json(url, payload, config_md5="none"):
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(
         url,
@@ -257,15 +422,24 @@ def http_post_json(url, payload):
         headers={
             "Content-Type": "application/json",
             "User-Agent": "CF-Server-Monitor-Windows-CN",
+            "X-Agent-Config-Schema": "1",
+            "X-Agent-Config-Md5": config_md5 or "none",
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=4) as resp:
-            resp.read()
-        return True
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            body_bytes = resp.read(513)
+            if len(body_bytes) > 512:
+                raise ValueError("configuration response is too large")
+            remote_config = None
+            if resp.status == 200 and resp.headers.get("X-Agent-Config-Md5"):
+                body = body_bytes.decode("ascii", errors="strict")
+                md5 = resp.headers.get("X-Agent-Config-Md5", "").strip().lower()
+                remote_config = parse_remote_config(body, md5)
+        return True, remote_config
     except Exception as e:
         log(f"上报失败: {e}")
-        return False
+        return False, None
 
 
 def fetch_text(url, timeout=3):
@@ -429,7 +603,7 @@ def mb_to_gb_text(mb_text):
         return "-"
 
 
-def collect_metrics(psutil, previous_net):
+def collect_metrics(psutil, previous_net, traffic_state, reset_day):
     now = time.time()
 
     cpu_percent = psutil.cpu_percent(interval=None)
@@ -453,6 +627,14 @@ def collect_metrics(psutil, previous_net):
     previous_net["rx"] = rx_now
     previous_net["tx"] = tx_now
 
+    monthly_rx, monthly_tx = update_monthly_traffic(
+        rx_now,
+        tx_now,
+        reset_day,
+        traffic_state,
+        int(now),
+    )
+
     tcp_conn, udp_conn = get_connection_count(psutil)
 
     try:
@@ -474,6 +656,8 @@ def collect_metrics(psutil, previous_net):
         "boot_time": get_boot_time_ms(psutil),
         "net_rx": str(rx_now),
         "net_tx": str(tx_now),
+        "net_rx_monthly": str(monthly_rx),
+        "net_tx_monthly": str(monthly_tx),
         "net_in_speed": str(rx_speed),
         "net_out_speed": str(tx_speed),
         "os": get_os_name(),
@@ -487,8 +671,11 @@ def collect_metrics(psutil, previous_net):
     return metrics
 
 
-def probe_loop(status_callback=None):
+def probe_loop(status_callback=None, loop_stop_event=None):
     import psutil
+
+    if loop_stop_event is None:
+        loop_stop_event = stop_event
 
     config = load_config()
     server_id = config.get("server_id", "").strip()
@@ -508,12 +695,20 @@ def probe_loop(status_callback=None):
         report_interval = max(report_interval, collect_interval)
     active_interval = collect_interval if collect_interval > 0 else report_interval
     ping_type = config.get("ping_type", "tcp").strip().lower() or "tcp"
+    try:
+        reset_day = int(config.get("reset_day", 1))
+    except Exception:
+        reset_day = 1
+    if reset_day < 0 or reset_day > 31:
+        reset_day = 1
+    config_md5 = str(config.get("config_md5", "none") or "none").strip().lower()
 
     if not server_id or not secret or not worker_url:
         log("配置不完整，请先填写并保存。")
         return
 
     previous_net = {}
+    traffic_state = load_traffic_state()
     cache = {
         "ip_v4": "0",
         "ip_v6": "0",
@@ -550,7 +745,7 @@ def probe_loop(status_callback=None):
 
     log("探针已启动。")
 
-    while not stop_event.is_set():
+    while not loop_stop_event.is_set():
         loop_start = time.time()
 
         try:
@@ -568,7 +763,7 @@ def probe_loop(status_callback=None):
                 ping_thread = threading.Thread(target=refresh_ping_cache, daemon=True)
                 ping_thread.start()
 
-            metrics = collect_metrics(psutil, previous_net)
+            metrics = collect_metrics(psutil, previous_net, traffic_state, reset_day)
             with cache_lock:
                 cache_snapshot = dict(cache)
             metrics["ip_v4"] = cache_snapshot["ip_v4"]
@@ -600,7 +795,19 @@ def probe_loop(status_callback=None):
                 }
                 if collect_interval > 0:
                     payload["samples"] = samples
-                last_report_ok = http_post_json(worker_url, payload)
+                last_report_ok, remote_config = http_post_json(worker_url, payload, config_md5)
+                if last_report_ok and remote_config:
+                    updated_config = dict(config)
+                    updated_config.update(remote_config)
+                    save_config(updated_config)
+                    config = updated_config
+                    collect_interval = remote_config["collect_interval"]
+                    report_interval = remote_config["report_interval"]
+                    ping_type = remote_config["ping_type"]
+                    reset_day = remote_config["reset_day"]
+                    config_md5 = remote_config["config_md5"]
+                    active_interval = collect_interval if collect_interval > 0 else report_interval
+                    log(f"Dynamic configuration applied: md5={config_md5}")
                 samples = []
                 last_report_time = now
 
@@ -620,7 +827,7 @@ def probe_loop(status_callback=None):
 
         used = time.time() - loop_start
         sleep_time = max(active_interval - used, 1)
-        stop_event.wait(sleep_time)
+        loop_stop_event.wait(sleep_time)
 
     log("探针已停止。")
 
@@ -634,6 +841,7 @@ class ProbeGUI:
 
         self.config = load_config()
         self.worker_thread = None
+        self.worker_stop_event = None
 
         self.server_id_var = tk.StringVar(value=self.config.get("server_id", ""))
         self.secret_var = tk.StringVar(value=self.config.get("secret", ""))
@@ -641,6 +849,7 @@ class ProbeGUI:
         self.collect_interval_var = tk.StringVar(value=str(self.config.get("collect_interval", DEFAULT_COLLECT_INTERVAL)))
         self.interval_var = tk.StringVar(value=str(self.config.get("report_interval", DEFAULT_INTERVAL)))
         self.ping_type_var = tk.StringVar(value=self.config.get("ping_type", "tcp"))
+        self.reset_day_var = tk.StringVar(value=str(self.config.get("reset_day", 1)))
         self.silent_start_var = tk.BooleanVar(value=self.config.get("silent_start", True))
         self.autostart_var = tk.BooleanVar(value=task_exists())
 
@@ -689,6 +898,12 @@ class ProbeGUI:
         ping_frame.grid(row=4, column=1, sticky=tk.W, pady=5)
         ttk.Radiobutton(ping_frame, text="TCP", variable=self.ping_type_var, value="tcp").pack(side=tk.LEFT)
         ttk.Radiobutton(ping_frame, text="HTTP", variable=self.ping_type_var, value="http").pack(side=tk.LEFT, padx=(12, 0))
+
+        ttk.Label(form, text="流量重置日：").grid(row=5, column=0, sticky=tk.W, pady=5)
+        reset_frame = ttk.Frame(form)
+        reset_frame.grid(row=5, column=1, sticky=tk.W, pady=5)
+        ttk.Entry(reset_frame, textvariable=self.reset_day_var, width=8).pack(side=tk.LEFT)
+        ttk.Label(reset_frame, text="0=不重置，1-31=每月重置日（UTC）").pack(side=tk.LEFT, padx=(6, 0))
 
         form.columnconfigure(1, weight=1)
 
@@ -814,11 +1029,14 @@ class ProbeGUI:
         try:
             collect_interval = int(self.collect_interval_var.get().strip() or DEFAULT_COLLECT_INTERVAL)
             interval = int(self.interval_var.get().strip() or DEFAULT_INTERVAL)
+            reset_day = int(self.reset_day_var.get().strip() or "1")
 
             if collect_interval < 0:
                 collect_interval = 0
             if collect_interval > 0 and interval < collect_interval:
                 interval = collect_interval
+            if reset_day < 0 or reset_day > 31:
+                raise ValueError("流量重置日必须是 0 到 31 的整数")
 
             ping_type = self.ping_type_var.get().strip().lower()
 
@@ -833,6 +1051,8 @@ class ProbeGUI:
                 "report_interval": interval,
                 "silent_start": bool(self.silent_start_var.get()),
                 "ping_type": ping_type,
+                "reset_day": reset_day,
+                "config_md5": "none",
             }
 
             if (
@@ -868,32 +1088,22 @@ class ProbeGUI:
             if running:
                 log("配置已变更，正在重启探针...")
 
-                stop_event.set()
+                if self.worker_stop_event:
+                    self.worker_stop_event.set()
 
                 self.worker_thread.join(timeout=5)
 
-                stop_event.clear()
+                self.worker_stop_event = threading.Event()
 
                 self.worker_thread = threading.Thread(
                     target=probe_loop,
-                    args=(self.update_metrics,),
+                    args=(self.update_metrics, self.worker_stop_event),
                     daemon=True,
                 )
 
                 self.worker_thread.start()
 
                 log("探针已重新启动。")
-
-            else:
-                stop_event.clear()
-                self.worker_thread = threading.Thread(
-                    target=probe_loop,
-                    args=(self.update_metrics,),
-                    daemon=True,
-                )
-                self.worker_thread.start()
-                self.status_var.set("运行中")
-                log("探针已启动。")
 
             log("配置已保存。")
 
@@ -924,6 +1134,7 @@ class ProbeGUI:
             self.interval_var.set(str(cfg.get("report_interval", DEFAULT_CONFIG["report_interval"])))
             self.silent_start_var.set(bool(cfg.get("silent_start", True)))
             self.ping_type_var.set(cfg.get("ping_type", "tcp"))
+            self.reset_day_var.set(str(cfg.get("reset_day", 1)))
 
             log("已导入配置。")
             messagebox.showinfo("完成", "配置导入成功。")
@@ -941,10 +1152,13 @@ class ProbeGUI:
         try:
             collect_interval = int(self.collect_interval_var.get().strip() or DEFAULT_COLLECT_INTERVAL)
             interval = int(self.interval_var.get().strip() or DEFAULT_INTERVAL)
+            reset_day = int(self.reset_day_var.get().strip() or "1")
             if collect_interval < 0:
                 collect_interval = 0
             if collect_interval > 0 and interval < collect_interval:
                 interval = collect_interval
+            if reset_day < 0 or reset_day > 31:
+                raise ValueError("流量重置日必须是 0 到 31 的整数")
             ping_type = self.ping_type_var.get().strip().lower()
             if ping_type not in ("tcp", "http"):
                 ping_type = "tcp"
@@ -957,6 +1171,7 @@ class ProbeGUI:
                 "report_interval": interval,
                 "silent_start": bool(self.silent_start_var.get()),
                 "ping_type": ping_type,
+                "reset_day": reset_day,
             }
             with open(file_path, "w", encoding="utf-8") as f:
                 json.dump(cfg, f, ensure_ascii=False, indent=2)
@@ -975,10 +1190,10 @@ class ProbeGUI:
             messagebox.showwarning("提示", "请先填写完整配置。")
             return
 
-        stop_event.clear()
+        self.worker_stop_event = threading.Event()
         self.worker_thread = threading.Thread(
             target=probe_loop,
-            args=(self.update_metrics,),
+            args=(self.update_metrics, self.worker_stop_event),
             daemon=True,
         )
         self.worker_thread.start()
@@ -986,7 +1201,8 @@ class ProbeGUI:
         log("已点击启动探针。")
 
     def stop_probe(self):
-        stop_event.set()
+        if self.worker_stop_event:
+            self.worker_stop_event.set()
 
         if self.worker_thread and self.worker_thread.is_alive():
             self.worker_thread.join(timeout=5)
@@ -1084,6 +1300,8 @@ class ProbeGUI:
     def exit_app(self):
         if messagebox.askyesno("退出", "确定要退出程序吗？"):
             stop_event.set()
+            if self.worker_stop_event:
+                self.worker_stop_event.set()
             global tray_icon
             if tray_icon:
                 try:
@@ -1163,6 +1381,7 @@ def uninstall_cli():
 
     files_to_remove = [
         CONFIG_FILE,
+        TRAFFIC_FILE,
         LOG_FILE,
     ]
 

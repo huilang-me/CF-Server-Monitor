@@ -3,6 +3,12 @@ import { getServerDetail } from '../utils/cache.js';
 import { mergeMetricsIntoServer } from '../utils/metrics.js';
 import { createErrorResponse, createUnauthorizedResponse, createNotFoundResponse, createBadRequestResponse } from '../utils/errors.js';
 import { ensureServerOptimization } from '../database/indexOptimization.js';
+import {
+  AGENT_CONFIG_MD5_HEADER,
+  AGENT_CONFIG_SCHEMA_HEADER,
+  AGENT_CONFIG_SCHEMA_VERSION,
+  describeAgentConfig
+} from '../utils/agentConfig.js';
 
 // 将最新一次上报打包成前端可直接消费的 "当前状态" 对象
 // 与 /api/server 和 /api/servers 返回的字段保持一致，便于页面直接合并
@@ -173,7 +179,41 @@ export async function handleUpdate(request, env, ctx) {
     queueBroadcastSamples(id, broadcastSamples);
     ctx.waitUntil(_ensureBatchFlush(env));
 
-    return new Response('OK', { status: 200 });
+    const clientConfigSchema = request.headers.get(AGENT_CONFIG_SCHEMA_HEADER);
+    if (clientConfigSchema !== String(AGENT_CONFIG_SCHEMA_VERSION)) {
+      return new Response('OK', {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+      });
+    }
+
+    try {
+      const descriptor = await describeAgentConfig(serverDetail);
+      const clientConfigMd5 = (request.headers.get(AGENT_CONFIG_MD5_HEADER) || '').trim().toLowerCase();
+      const responseHeaders = {
+        'Cache-Control': 'no-store',
+        [AGENT_CONFIG_SCHEMA_HEADER]: String(AGENT_CONFIG_SCHEMA_VERSION),
+        [AGENT_CONFIG_MD5_HEADER]: descriptor.md5
+      };
+
+      if (clientConfigMd5 === descriptor.md5) {
+        return new Response(null, { status: 204, headers: responseHeaders });
+      }
+
+      return new Response(descriptor.serialized, {
+        status: 200,
+        headers: {
+          ...responseHeaders,
+          'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8'
+        }
+      });
+    } catch (configError) {
+      console.warn('[Update] Failed to build agent configuration:', configError?.message || configError);
+      return new Response('OK', {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+      });
+    }
   } catch (e) {
     return createErrorResponse(e);
   }

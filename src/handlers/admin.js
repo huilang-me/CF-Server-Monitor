@@ -8,6 +8,7 @@ import { AppError, createSuccessResponse, createBadRequestResponse, createUnauth
 import { addServerColumns } from '../database/updateDatabase.js';
 import { sendNotification } from '../services/notification.js';
 import { getNextServerHistoryPartitionId } from '../database/indexOptimization.js';
+import { validateAgentConfigInput } from '../utils/agentConfig.js';
 
 function isValidUUID(id) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
@@ -35,12 +36,6 @@ async function deleteServer(db, id) {
   } catch (err) {
     throw err;
   }
-}
-
-function normalizeInterval(value, fallback, min = 1, max = 86400) {
-  const num = parseInt(value, 10);
-  if (!Number.isFinite(num)) return fallback;
-  return Math.max(min, Math.min(max, num));
 }
 
 function getUtcTodayRange() {
@@ -439,8 +434,16 @@ export async function handleAdminAPI(request, env, sys) {
       if (!id || !isValidUUID(id)) {
         return createBadRequestResponse('invalidServerId');
       }
-      const normalizedCollectInterval = normalizeInterval(collect_interval, 0, 0);
-      const normalizedReportInterval = Math.max(normalizedCollectInterval, normalizeInterval(report_interval, 60));
+      const agentConfigResult = validateAgentConfigInput({
+        collect_interval,
+        report_interval,
+        ping_mode,
+        reset_day
+      });
+      if (!agentConfigResult.valid) {
+        return createBadRequestResponse(agentConfigResult.error);
+      }
+      const normalizedAgentConfig = agentConfigResult.config;
       
       try {
         await env.DB.prepare(`
@@ -455,10 +458,10 @@ export async function handleAdminAPI(request, env, sys) {
           bandwidth || '',
           traffic_limit || '',
           traffic_calc_type || 'total',
-          reset_day !== undefined && reset_day !== null && reset_day !== '' ? reset_day : 1,
-          normalizedCollectInterval,
-          normalizedReportInterval,
-          ping_mode || 'http',
+          normalizedAgentConfig.reset_day,
+          normalizedAgentConfig.collect_interval,
+          normalizedAgentConfig.report_interval,
+          normalizedAgentConfig.ping_mode,
           is_hidden || '0',
           id
         ).run();

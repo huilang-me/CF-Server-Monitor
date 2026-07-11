@@ -17,7 +17,7 @@
 .PARAMETER Url
     Worker 上报地址
 .PARAMETER CollectInterval
-    保留参数。Windows PowerShell 版不使用 samples 采样缓存，始终按上报间隔采集并上报。
+    数据采集间隔（秒），0 表示不额外缓存采样。
 .PARAMETER ReportInterval
     上报间隔（秒），默认 60
 .PARAMETER PingType
@@ -184,17 +184,75 @@ function Load-Config {
 
 function Save-Config {
     param($Config)
+    $tempFile = "$CONFIG_FILE.tmp"
+    $backupFile = "$CONFIG_FILE.bak"
     try {
-        if (-not (Test-Path $CONFIG_DIR)) { 
-            New-Item -ItemType Directory -Path $CONFIG_DIR -Force | Out-Null 
+        if (-not (Test-Path $CONFIG_DIR)) {
+            New-Item -ItemType Directory -Path $CONFIG_DIR -Force | Out-Null
         }
         $json = $Config | ConvertTo-Json -Depth 10
-        $json | Set-Content $CONFIG_FILE -Encoding UTF8
+        [System.IO.File]::WriteAllText($tempFile, $json, (New-Object System.Text.UTF8Encoding($false)))
+        if (Test-Path $CONFIG_FILE) {
+            Remove-Item -LiteralPath $backupFile -Force -ErrorAction SilentlyContinue
+            [System.IO.File]::Replace($tempFile, $CONFIG_FILE, $backupFile)
+            Remove-Item -LiteralPath $backupFile -Force -ErrorAction SilentlyContinue
+        } else {
+            Move-Item -LiteralPath $tempFile -Destination $CONFIG_FILE
+        }
         Write-Log "配置文件已保存: $CONFIG_FILE" "DEBUG"
         return $true
     } catch {
+        Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        if (-not (Test-Path -LiteralPath $CONFIG_FILE) -and (Test-Path -LiteralPath $backupFile)) {
+            Move-Item -LiteralPath $backupFile -Destination $CONFIG_FILE -Force -ErrorAction SilentlyContinue
+        } else {
+            Remove-Item -LiteralPath $backupFile -Force -ErrorAction SilentlyContinue
+        }
         Write-Log "保存配置文件失败: $_" "ERROR"
         return $false
+    }
+}
+
+function ConvertFrom-AgentConfigResponse {
+    param([string]$Body, [string]$ConfigMd5)
+
+    if ([string]::IsNullOrEmpty($Body) -or [Text.Encoding]::UTF8.GetByteCount($Body) -gt 512) {
+        throw "动态配置响应长度无效"
+    }
+    $ConfigMd5 = $ConfigMd5.Trim().ToLowerInvariant()
+    if ($ConfigMd5 -notmatch '^[a-f0-9]{32}$') { throw "动态配置 MD5 无效" }
+    if ($Body -notmatch '^[a-z0-9_=&]+$') { throw "动态配置包含非法字符" }
+
+    $expectedKeys = @('collect_interval', 'ping_mode', 'report_interval', 'reset_day', 'schema_version')
+    $parts = $Body.Split('&')
+    if ($parts.Count -ne $expectedKeys.Count) { throw "动态配置字段数量无效" }
+    $values = @{}
+    for ($i = 0; $i -lt $parts.Count; $i++) {
+        $pair = $parts[$i].Split('=')
+        if ($pair.Count -ne 2 -or $pair[0] -ne $expectedKeys[$i]) { throw "动态配置字段无效" }
+        $values[$pair[0]] = $pair[1]
+    }
+
+    foreach ($key in @('collect_interval', 'report_interval', 'reset_day', 'schema_version')) {
+        if ($values[$key] -notmatch '^(0|[1-9][0-9]*)$') { throw "动态配置数值无效" }
+    }
+    $collect = [int]$values.collect_interval
+    $report = [int]$values.report_interval
+    $reset = [int]$values.reset_day
+    $schema = [int]$values.schema_version
+    if (@(0, 1, 2, 5, 10) -notcontains $collect) { throw "collect_interval 无效" }
+    if (@(30, 60, 120, 180) -notcontains $report -or $report -lt $collect) { throw "report_interval 无效" }
+    if (@('http', 'tcp') -notcontains $values.ping_mode) { throw "ping_mode 无效" }
+    if ($reset -lt 0 -or $reset -gt 31 -or $schema -ne 1) { throw "reset_day 或 schema_version 无效" }
+
+    $canonical = "collect_interval=$collect&ping_mode=$($values.ping_mode)&report_interval=$report&reset_day=$reset&schema_version=$schema"
+    if ($Body -cne $canonical) { throw "动态配置不是规范格式" }
+    return @{
+        collect_interval = $collect
+        ping_type = $values.ping_mode
+        report_interval = $report
+        reset_day = $reset
+        config_md5 = $ConfigMd5
     }
 }
 
@@ -756,10 +814,11 @@ function Start-TimerCollectLoop {
             server_id = $Id
             secret = $Secret
             worker_url = $Url
-            collect_interval = 0
+            collect_interval = [int]$CollectInterval
             report_interval = [int]$ReportInterval
             ping_type = $PingType
             reset_day = [int]$ResetDay
+            config_md5 = "none"
             ct_node = if ($CtNode) { $CtNode } else { $DEFAULT_CT }
             cu_node = if ($CuNode) { $CuNode } else { $DEFAULT_CU }
             cm_node = if ($CmNode) { $CmNode } else { $DEFAULT_CM }
@@ -773,31 +832,30 @@ function Start-TimerCollectLoop {
     $secret = if ($Secret) { $Secret } else { $config.secret }
     $workerUrl = if ($Url) { $Url.Trim().Trim("'").Trim('"') } else { $config.worker_url.Trim().Trim("'").Trim('"') }
 
-    $collectInterval = 0
+    if ($null -ne $config.collect_interval) {
+        $collectInterval = [int]$config.collect_interval
+    } else {
+        $collectInterval = 0
+    }
 
-    if ($PSBoundParameters.ContainsKey('ReportInterval')) {
-        $reportInterval = [int]$ReportInterval
-    } elseif ($config.report_interval) {
+    if ($config.report_interval) {
         $reportInterval = [int]$config.report_interval
     } else {
         $reportInterval = 60
     }
 
-    if ($PSBoundParameters.ContainsKey('PingType')) {
-        $pingType = $PingType
-    } elseif ($config.ping_type) {
+    if ($config.ping_type) {
         $pingType = $config.ping_type
     } else {
         $pingType = "tcp"
     }
 
-    if ($PSBoundParameters.ContainsKey('ResetDay')) {
-        $resetDay = [int]$ResetDay
-    } elseif ($config.reset_day) {
+    if ($null -ne $config.reset_day) {
         $resetDay = [int]$config.reset_day
     } else {
         $resetDay = 1
     }
+    $configMd5 = if ($config.config_md5) { $config.config_md5.ToString().Trim().ToLowerInvariant() } else { "none" }
     $ctNode = if ($CtNode) { $CtNode } elseif ($config.ct_node) { $config.ct_node } else { $DEFAULT_CT }
     $cuNode = if ($CuNode) { $CuNode } elseif ($config.cu_node) { $config.cu_node } else { $DEFAULT_CU }
     $cmNode = if ($CmNode) { $CmNode } elseif ($config.cm_node) { $config.cm_node } else { $DEFAULT_CM }
@@ -821,12 +879,10 @@ function Start-TimerCollectLoop {
         Write-Log "配置不完整，请填写 server_id, secret, worker_url" "ERROR"
         return
     }
-    if ($collectInterval -lt 0) { $collectInterval = 0 }
-    if ($reportInterval -lt 1) { $reportInterval = 60 }
-    if ($reportInterval -lt 60) {
-        Write-Log "上报间隔 ${reportInterval}s 过低，托盘模式最低 60 秒，已自动调整为 60 秒" "WARN"
-        $reportInterval = 60
-    }
+    if (@(0, 1, 2, 5, 10) -notcontains $collectInterval) { $collectInterval = 0 }
+    if (@(30, 60, 120, 180) -notcontains $reportInterval) { $reportInterval = 60 }
+    if (@('http', 'tcp') -notcontains $pingType) { $pingType = 'tcp' }
+    if ($resetDay -lt 0 -or $resetDay -gt 31) { $resetDay = 1 }
     if ($collectInterval -gt 0 -and $reportInterval -lt $collectInterval) {
         $reportInterval = $collectInterval
     }
@@ -848,6 +904,12 @@ function Start-TimerCollectLoop {
     $script:cs_lossCm = ""
     $script:cs_lossBd = ""
     $script:cs_lastReportTime = 0
+    $script:cs_collectInterval = $collectInterval
+    $script:cs_reportInterval = $reportInterval
+    $script:cs_pingType = $pingType
+    $script:cs_resetDay = $resetDay
+    $script:cs_configMd5 = $configMd5
+    $script:cs_samples = @()
 
     $pingTempFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "cf_probe_ping_results.json")
 
@@ -864,7 +926,8 @@ function Start-TimerCollectLoop {
     # Timer 驱动采集：每次 Tick 执行一轮采集+上报
     # ========================================
     $timer = New-Object System.Windows.Forms.Timer
-    $timer.Interval = $reportInterval * 1000
+    $activeInterval = if ($collectInterval -gt 0) { $collectInterval } else { $reportInterval }
+    $timer.Interval = $activeInterval * 1000
     $timer.Add_Tick({
         try {
             # 捕获外部参数到局部变量，避免作用域问题
@@ -875,9 +938,10 @@ function Start-TimerCollectLoop {
             $cuN = $cuNode
             $cmN = $cmNode
             $bdN = $bdNode
-            $pType = $pingType
-            $rDay = $resetDay
-            $rInterval = $reportInterval
+            $cInterval = $script:cs_collectInterval
+            $pType = $script:cs_pingType
+            $rDay = $script:cs_resetDay
+            $rInterval = $script:cs_reportInterval
             $pFile = $pingTempFile
 
             $now = [DateTimeOffset]::Now.ToUnixTimeSeconds()
@@ -978,6 +1042,13 @@ function Start-TimerCollectLoop {
                 loss_bd = $script:cs_lossBd
             }
 
+            if ($cInterval -gt 0) {
+                $script:cs_samples += @{
+                    ts = $now * 1000
+                    metrics = $metrics.Clone()
+                }
+            }
+
             # 上报
             $shouldReport = ($script:cs_lastReportTime -eq 0) -or ($now - $script:cs_lastReportTime -ge $rInterval)
             if ($shouldReport) {
@@ -985,15 +1056,50 @@ function Start-TimerCollectLoop {
                     id = $srvId
                     secret = $sec
                     metrics = $metrics
-                    collect_interval = 0
+                    collect_interval = $cInterval
                     report_interval = $rInterval
+                }
+                if ($cInterval -gt 0) {
+                    $payload.samples = @($script:cs_samples)
                 }
                 $json = $payload | ConvertTo-Json -Depth 10 -Compress
                 try {
-                    $null = Invoke-RestMethod -Uri $wUrl -Method Post -Body $json -ContentType "application/json; charset=utf-8" -TimeoutSec 4 -ErrorAction Stop
+                    $requestHeaders = @{
+                        'X-Agent-Config-Schema' = '1'
+                        'X-Agent-Config-Md5' = if ($script:cs_configMd5) { $script:cs_configMd5 } else { 'none' }
+                    }
+                    $response = Invoke-WebRequest -UseBasicParsing -Uri $wUrl -Method Post -Body $json `
+                        -ContentType "application/json; charset=utf-8" -Headers $requestHeaders -TimeoutSec 8 -ErrorAction Stop
+                    if ([int]$response.StatusCode -eq 200 -and $response.Headers['X-Agent-Config-Md5']) {
+                        $remoteConfig = ConvertFrom-AgentConfigResponse `
+                            -Body ([string]$response.Content) `
+                            -ConfigMd5 ([string]$response.Headers['X-Agent-Config-Md5'])
+                        foreach ($entry in $remoteConfig.GetEnumerator()) {
+                            if ($config -is [hashtable]) {
+                                $config[$entry.Key] = $entry.Value
+                            } else {
+                                $config | Add-Member -NotePropertyName $entry.Key -NotePropertyValue $entry.Value -Force
+                            }
+                        }
+                        if (Save-Config -Config $config) {
+                            $script:cs_collectInterval = $remoteConfig.collect_interval
+                            $script:cs_reportInterval = $remoteConfig.report_interval
+                            $script:cs_pingType = $remoteConfig.ping_type
+                            $script:cs_resetDay = $remoteConfig.reset_day
+                            $script:cs_configMd5 = $remoteConfig.config_md5
+                            $nextActiveInterval = if ($remoteConfig.collect_interval -gt 0) {
+                                $remoteConfig.collect_interval
+                            } else {
+                                $remoteConfig.report_interval
+                            }
+                            $timer.Interval = $nextActiveInterval * 1000
+                            Write-Log "动态配置已应用: md5=$($remoteConfig.config_md5)" "INFO"
+                        }
+                    }
                 } catch {
                     Write-Log "上报失败: $_" "WARN"
                 }
+                $script:cs_samples = @()
                 $script:cs_lastReportTime = $now
             }
         } catch {
@@ -1042,10 +1148,11 @@ function Install-Service {
         server_id = if ($cleanId) { $cleanId } elseif ($existingConfig) { $existingConfig.server_id } else { "" }
         secret = if ($cleanSecret) { $cleanSecret } elseif ($existingConfig) { $existingConfig.secret } else { "" }
         worker_url = if ($cleanUrl) { $cleanUrl } elseif ($existingConfig) { $existingConfig.worker_url } else { "" }
-        collect_interval = 0
+        collect_interval = [int]$CollectInterval
         report_interval = [int]$ReportInterval
         ping_type = $PingType
         reset_day = [int]$ResetDay
+        config_md5 = "none"
         ct_node = if ($CtNode) { $CtNode } elseif ($existingConfig -and $existingConfig.ct_node) { $existingConfig.ct_node } else { $DEFAULT_CT }
         cu_node = if ($CuNode) { $CuNode } elseif ($existingConfig -and $existingConfig.cu_node) { $existingConfig.cu_node } else { $DEFAULT_CU }
         cm_node = if ($CmNode) { $CmNode } elseif ($existingConfig -and $existingConfig.cm_node) { $existingConfig.cm_node } else { $DEFAULT_CM }
