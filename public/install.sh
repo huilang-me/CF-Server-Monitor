@@ -32,7 +32,7 @@ RUNTIME_MODE="systemd"
 
 print_banner() {
     echo -e "${CYAN}╔══════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║     CF-Server-Monitor 探针管理工具 (Enterprise) ║${NC}"
+    echo -e "${CYAN}║     CF-Server-Monitor 探针管理工具 (Enterprise)    ║${NC}"
     echo -e "${CYAN}╚══════════════════════════════════════════════════╝${NC}"
 }
 
