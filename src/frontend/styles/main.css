@@ -855,6 +855,11 @@ body::before {
     color: var(--color-inherit);
 }
 
+.badge-v4-v6 {
+    background: var(--accent-cyan);
+    color: var(--color-inherit);
+}
+
 /* --------------------------------------------------------------------------
    13. Stat Bar Components
    -------------------------------------------------------------------------- */
@@ -903,6 +908,10 @@ body::before {
 
 .net-up {
     color: var(--accent-blue);
+}
+
+.stat-limit {
+    color: var(--accent-yellow);
 }
 
 .stat-time-row {
@@ -1334,8 +1343,6 @@ body::before {
     gap: 4px;
     font-weight: 600;
     margin-bottom: 6px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
 }
 
 .form-label .required {

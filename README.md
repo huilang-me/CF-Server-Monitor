@@ -433,6 +433,69 @@ Windows 系统（Python 版）
 </details>
 
 <details>
+<summary>通知设置</summary>
+
+## 🔔 通知设置
+
+在管理后台 → 全局设置 → 通知 中配置。支持以下通知方式，通过 Bot Token 字段自动识别平台类型：
+
+### Telegram
+
+1. 创建 Telegram Bot（通过 [@BotFather](https://t.me/BotFather)）
+2. 获取 Bot Token，填入 **Bot Token** 字段
+3. （通过 [@idbot](https://t.me/idbot)）获取 ID，填入 **Chat ID** 字段
+
+### 飞书
+
+1. 创建飞书群机器人，获取 Webhook URL
+2. 将 Webhook URL 填入 **Bot Token** 字段
+3. **Chat ID** 留空
+
+### 企业微信
+
+1. [创建企业微信群机器人](https://open.work.weixin.qq.com/help2/pc/14931) 并配置，获取 Webhook URL
+2. 将 Webhook URL 填入 **Bot Token** 字段
+3. **Chat ID** 留空
+
+### Bark
+
+1. 获取 Bark 推送链接，比如 `https://api.day.app/xxxxxxx/自定义内容`，删掉中文，保留 `https://api.day.app/xxxxxxx/`
+2. 将链接填入 **Bot Token** 字段
+3. **Chat ID** 留空
+
+### Server 酱
+
+1. 注册 [Server 酱](https://sct.ftqq.com/) 获取 SendKey
+2. 将 SendKey 填入 **Bot Token** 字段，格式为 `https://sctapi.ftqq.com/你的SendKey.send`
+3. **Chat ID** 留空
+
+### WxPusher
+
+1. 注册 [WxPusher](https://wxpusher.zjiecode.com/) 获取 SPT Token
+2. 将 SPT Token 填入 **Bot Token** 字段，格式为 `https://wxpusher.zjiecode.com/api/send/message/[SPT_你的Token]/Hello%20WxPusher`
+3. **Chat ID** 留空
+
+### Gotify
+
+1. 部署或使用已有的 [Gotify](https://gotify.net/) 服务
+2. 在 Gotify 中创建 Application，获取 Token
+3. 将推送 URL 填入 **Bot Token** 字段，格式为 `https://你的Gotify地址/message?token=你的Token`
+4. **Chat ID** 留空
+
+### 告警类型
+
+| 类型 | 说明 |
+| --- | --- |
+| 离线告警 | 节点离线 5 分钟后发送告警，恢复后发送恢复通知 |
+| 到期提醒 | 服务器到期前 7 天内每天发送提醒 |
+
+### 测试通知
+
+配置完成后，可点击 **发送测试通知** 按钮验证配置是否正确。测试成功后记得点击 **保存**。
+
+</details>
+
+<details>
 <summary>其他设置</summary>
 
 ### 前台大盘
@@ -494,31 +557,6 @@ Windows 系统（Python 版）
 > - 重建数据库是不可逆操作，请确保已备份重要数据
 > - 升级数据库不会删除现有数据，仅会更新表结构
 > - 从旧版本升级到包含 GPU/丢包率监控的新版本后，需要先执行升级数据库，再重新安装或升级探针以采集新字段
-
-## 🔔 离线告警配置
-
-在管理后台 → 全局设置中配置：
-
-**Telegram 告警：**
-
-1. 创建 Telegram Bot（通过 [@BotFather](https://t.me/BotFather)）
-2. 获取 Bot Token
-3. 获取 Chat ID（通过 [@idbot](https://t.me/idbot)）
-4. 填入后台设置并开启
-
-**企业微信 / 飞书 告警：**
-
-1. 创建群机器人，获取 Webhook URL
-2. 填入 Bot Token 字段
-3. Chat ID 留空
-
-**Bark 告警：**
-
-1. 获取 Bark 推送链接，比如 `https://api.day.app/xxxxxxx/这里改成你自己的推送内容` 删掉中文，保留 `https://api.day.app/xxxxxxx/`
-2. 填入 Bot Token 字段
-3. Chat ID 留空
-
-
 
 </details>
 
@@ -622,7 +660,7 @@ CF-Server-Monitor/
 
 **Q: 探针安装后不显示数据？**
 
-检查服务器是否能访问 Worker URL，查看探针日志：`journalctl -u cf-probe -f`
+检查服务器是否能访问 Worker URL，在安装命令参数后面加入` -debug=1`（目前仅支持linux系统），再查看探针日志：`journalctl -u cf-probe -f`，将错误信息发到Issue或者TG群，调试结束后删掉debug=1参数重新安装，避免日志过大。
 
 **Q: 如何更换 API\_SECRET？**
 
@@ -778,11 +816,11 @@ node test/api-check.js --help
 
 MIT License
 
-## � 社区
+## 🌐 社区
 
 - [Telegram 群组](https://t.me/cfServerMonitor)
 
-## �🙏 致谢
+## 🙏 致谢
 
 - [CF-Server-Monitor-Pro](https://github.com/a63414262/CF-Server-Monitor-Pro)
 - [Cloudflare Workers](https://workers.cloudflare.com/)

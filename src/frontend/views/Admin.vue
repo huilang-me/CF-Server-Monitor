@@ -152,7 +152,7 @@
                   <th>{{ trans.hostname.toUpperCase() }}</th>
                   <th>{{ trans.group.toUpperCase() }}</th>
                   <th>{{ trans.price.toUpperCase() }}</th>
-                  <th>{{ trans.expire.toUpperCase() }}</th>
+                  <th>{{ trans.expirationDate.toUpperCase() }}</th>
                   <th>{{ trans.bandwidth.toUpperCase() }}</th>
                   <th>{{ trans.traffic.toUpperCase() }}</th>
                   <th>{{ trans.status.toUpperCase() }}</th>
@@ -190,10 +190,6 @@
                   </td>
                   <td>
                     <div class="action-group">
-                      <div class="cmd-input-wrapper" :class="{ copied: copiedServerId === server.id }">
-                        <span class="cmd-prompt">$</span>
-                        <input @click="copyCmd(server.id)" type="text" readonly :value="getInstallCommand(server.id)" class="cmd-input">
-                      </div>
                       <div class="action-btns">
                         <button @click="copyCmd(server.id)" class="btn btn-icon btn-green" :title="trans.copy">{{ copiedServerId === server.id ? '✅' : '📋' }}</button>
                         <button @click="openEditModal(server)" class="btn btn-icon btn-blue" :title="trans.edit">✏️</button>
@@ -324,7 +320,7 @@
                   <div class="form-group flex-1">
                     <label class="form-label">{{ trans.chatId }}</label>
                     <div class="password-input-wrapper">
-                      <input :type="passwordVisible.tgChatId ? 'text' : 'password'" name="tg_chat_id" autocomplete="off" v-model="settings.tg_chat_id" class="form-input" placeholder="Telegram Chat ID (optional for WeChat)">
+                      <input :type="passwordVisible.tgChatId ? 'text' : 'password'" name="tg_chat_id" autocomplete="off" v-model="settings.tg_chat_id" class="form-input" placeholder="Optional Chat ID">
                       <button type="button" class="password-toggle" @click="togglePassword('tgChatId')">
                         {{ passwordVisible.tgChatId ? '🙈' : '👁️' }}
                       </button>
@@ -615,13 +611,25 @@
             <span class="warning-icon">[i]</span> {{ trans.collectIntervalHint }}<br>
             <span class="warning-icon">[i]</span> {{ trans.trafficResetDayTip }}
           </div>
-          <div class="form-group">
-            <div class="checkbox-item no-margin">
-              <input type="checkbox" v-model="editForm.is_hidden">
-              <label>
-                <b>{{ trans.hideFromPublic }}</b><br>
-                <span class="text-xs text-muted">{{ trans.hideDesc }}</span>
-              </label>
+          <div class="form-row">
+            <div class="form-group">
+              <div class="checkbox-item no-margin">
+                <input type="checkbox" v-model="editForm.is_hidden">
+                <label>
+                  <b>{{ trans.hideFromPublic }}</b><br>
+                  <span class="text-xs text-muted">{{ trans.hideDesc }}</span>
+                </label>
+              </div>
+            </div>
+
+            <div v-if="settings.tg_notify === 'true' && settings.tg_bot_token" class="form-group">
+              <div class="checkbox-item no-margin">
+                <input type="checkbox" v-model="editForm.offline_notify_disabled">
+                <label>
+                  <b>{{ trans.disableOfflineNotify }}</b><br>
+                  <span class="text-xs text-muted">{{ trans.disableOfflineNotifyDesc }}</span>
+                </label>
+              </div>
             </div>
           </div>
 
@@ -652,8 +660,19 @@
             </p>
           </div>
 
+          <div class="form-group mb-3">
+            <label class="form-label">{{ trans.targetOs }}</label>
+            <select v-model="deleteTargetOs" class="form-select">
+              <option value="linux">Linux (Ubuntu/Debian/CentOS)</option>
+              <option value="alpine">Alpine Linux</option>
+              <option value="openwrt">OpenWrt / LEDE / ImmortalWrt</option>
+              <option value="mac">macOS (Intel / Apple Silicon)</option>
+              <option value="windows">Windows</option>
+            </select>
+          </div>
+
           <div class="cmd-input-wrapper mb-3" :class="{ copied: uninstallCopied }">
-            <span class="cmd-prompt">$</span>
+            <span class="cmd-prompt">{{ deleteTargetOs === 'windows' ? 'PS' : '$' }}</span>
             <input type="text" readonly :value="getUninstallCommand()" class="cmd-input flex-1">
             <button @click="copyUninstallCmd" class="btn btn-icon btn-green ml-2" :title="trans.copy">{{ uninstallCopied ? '✅' : '📋' }}</button>
           </div>
@@ -1098,13 +1117,15 @@ const editForm = ref({
   collect_interval: 0,
   report_interval: 60,
   ping_mode: 'http',
-  is_hidden: false
+  is_hidden: false,
+  offline_notify_disabled: false
 })
 
 const showDeleteModal = ref(false)
 const deleteServerId = ref('')
 
 const copiedServerId = ref(null)
+const deleteTargetOs = ref('linux')
 const uninstallCopied = ref(false)
 const saving = ref(false)
 
@@ -1556,7 +1577,17 @@ const getInstallCommand = (serverId) => {
 }
 
 const getUninstallCommand = () => {
-  return `curl -sL ${selectedApiBase.value}/install.sh | bash -s uninstall`
+  const HOST = selectedApiBase.value
+  if (deleteTargetOs.value === 'windows') {
+    return `irm ${HOST}/cf-server-monitor.ps1 -OutFile cf-server-monitor.ps1; powershell -ExecutionPolicy Bypass -File .\\cf-server-monitor.ps1 uninstall`
+  }
+  const shell = deleteTargetOs.value === 'alpine' || deleteTargetOs.value === 'openwrt' ? 'sh' : 'bash'
+  const sudoPrefix = deleteTargetOs.value === 'mac' ? 'sudo ' : ''
+  const script = deleteTargetOs.value === 'alpine' ? 'install-alpine.sh'
+    : deleteTargetOs.value === 'openwrt' ? 'install-openwrt.sh'
+    : deleteTargetOs.value === 'mac' ? 'install-mac.sh'
+    : 'install.sh'
+  return `curl -sL ${HOST}/${script} | ${sudoPrefix}${shell} -s uninstall`
 }
 
 const copyCmd = (serverId) => {
@@ -1673,7 +1704,8 @@ const openEditModal = (server) => {
     collect_interval: server.collect_interval ?? 0,
     report_interval: server.report_interval || 60,
     ping_mode: server.ping_mode || 'http',
-    is_hidden: server.is_hidden === '1'
+    is_hidden: server.is_hidden === '1',
+    offline_notify_disabled: server.offline_notify_disabled === '1'
   }
   currentServerName.value = server.name || ''
   showEditModal.value = true
@@ -1698,7 +1730,8 @@ const saveEdit = async () => {
       collect_interval: editForm.value.collect_interval,
       report_interval: editForm.value.report_interval,
       ping_mode: editForm.value.ping_mode,
-      is_hidden: editForm.value.is_hidden ? '1' : '0'
+      is_hidden: editForm.value.is_hidden ? '1' : '0',
+      offline_notify_disabled: editForm.value.offline_notify_disabled ? '1' : '0'
     }
 
     try {
@@ -1719,6 +1752,8 @@ const saveEdit = async () => {
     deleteServerId.value = id
     const server = servers.value.find(s => s.id === id)
     currentServerName.value = server?.name || ''
+    deleteTargetOs.value = 'linux'
+    uninstallCopied.value = false
     showDeleteModal.value = true
   }
 

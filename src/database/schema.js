@@ -44,6 +44,7 @@ export async function initDatabase(db) {
           collect_interval INTEGER DEFAULT 0,
           report_interval INTEGER DEFAULT 60,
           ping_mode TEXT DEFAULT 'http',
+          offline_notify_disabled TEXT DEFAULT '0',
           is_hidden TEXT DEFAULT '0',
           sort_order INTEGER DEFAULT 0,
           history_partition_id INTEGER DEFAULT 0,

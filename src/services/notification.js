@@ -118,6 +118,23 @@ export async function sendNotification(settings, msg) {
     } catch (e) {
       return "WxPusher通知发送失败: " + e.message;
     }
+  }else if(settings.tg_bot_token.includes("/message?token=")) {
+    try {
+      await fetchWithRetry(settings.tg_bot_token, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: title,
+          message: msg,
+          priority: 5,
+          extras: {
+            "client::display": { "contentType": "text/markdown" }
+          }
+        })
+      });
+    } catch (e) {
+      return "Gotify通知发送失败: " + e.message;
+    }
   }else {
     return "未知的通知方式";
   }
@@ -151,6 +168,8 @@ export async function checkOfflineNodes(db) {
     const recoveredNodes = [];
 
     for (const s of allServers) {
+      if (s.offline_notify_disabled === '1') continue;
+
       const latestMetrics = latestMetricsMap.get(s.id);
       
       let isOffline = true;
