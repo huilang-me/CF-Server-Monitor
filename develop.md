@@ -321,9 +321,9 @@ WebSocket 收到 `batchUpdate` 消息后，数据**不是立即应用**，而是
 | 操作 | API 调用 | 说明 |
 |------|---------|------|
 | 添加服务器 | `POST /admin/api { action: 'add', name, server_group }` | 需要输入名称 |
-| 编辑服务器 | `POST /admin/api { action: 'edit', id, name, ... }` | 弹出编辑模态框 |
-| 删除服务器 | `POST /admin/api { action: 'delete', id }` | 弹出确认框 + 卸载命令 |
-| 批量删除 | `POST /admin/api { action: 'batch_delete', ids: [...] }` | 需先勾选 |
+| 编辑服务器 | `POST /admin/api { action: 'edit', id, version, name, ... }` | 使用 version 乐观锁，冲突后重新加载 |
+| 删除服务器 | `POST /admin/api { action: 'delete', id, version }` | 弹出确认框 + 卸载命令 |
+| 批量删除 | `POST /admin/api { action: 'batch_delete', ids: [...], versions: {...} }` | 需先勾选 |
 | 拖拽排序 | `POST /admin/api { action: 'save_order', orders: [id1, id2, ...] }` | HTML5 拖拽 |
 | 复制安装命令 | 本地生成 | 弹出配置模态框 |
 
@@ -361,10 +361,10 @@ WebSocket 收到 `batchUpdate` 消息后，数据**不是立即应用**，而是
 4. Turnstile：如果启用了，Site Key 和 Secret Key 都不能为空
 5. 通知：如果启用了离线告警或到期提醒，Telegram Bot Token 不能为空
 
-保存：`POST /admin/api { action: 'save_settings', settings: { ... } }`
+保存：`POST /admin/api { action: 'save_settings', versions: { site_options, appearance_options }, settings: { ... } }`
 - 布尔值转为 `'true'`/`'false'` 字符串传输
 - password 仅在用户输入了新密码时才包含
-- 成功后刷新页面
+- 成功后刷新页面；若返回 `409 VERSION_CONFLICT`，重新加载最新设置并提示用户确认后重试
 
 **背景图上传**：FileReader 读取为 base64 Data URL，> 800KB 时警告
 

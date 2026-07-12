@@ -136,7 +136,7 @@ export async function handleUpdate(request, env, ctx) {
 
     let regionCode = request.cf?.country || request.headers?.get('cf-ipcountry') || '';
 
-    const serverDetail = await getServerDetail(env.DB, id, true);
+    const serverDetail = await getServerDetail(env, id, true);
 
     if (!serverDetail) {
       return createNotFoundResponse('Server not found');
@@ -145,7 +145,7 @@ export async function handleUpdate(request, env, ctx) {
     // 从缓存中获取历史记录分区 ID
     const historyPartitionId = serverDetail.history_partition_id;
     if(!historyPartitionId) {
-      await ensureServerOptimization(env.DB, id);
+      await ensureServerOptimization(env);
       logUpdateBadRequest('Missing history_partition_id', {
         id,
         history_partition_id: serverDetail.history_partition_id

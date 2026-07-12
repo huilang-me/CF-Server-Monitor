@@ -1,6 +1,7 @@
 import { getLatestMetricsForAllServers } from '../database/schema.js';
 import { getAllServers } from '../utils/cache.js';
-import { loadSiteSettings, saveSiteOptions, debug } from '../utils/settings.js';
+import { readSettingsRows, setSettingValue } from './configStore.js';
+import { loadSiteSettings, debug } from '../utils/settings.js';
 
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 1000;
@@ -140,20 +141,18 @@ export async function sendNotification(settings, msg) {
   }
 }
 
-export async function checkOfflineNodes(db) {
-  const siteSettings = await loadSiteSettings(db);
+export async function checkOfflineNodes(env) {
+  const siteSettings = await loadSiteSettings(env);
 
   if (siteSettings.tg_notify !== 'true'|| !siteSettings.tg_bot_token) return;
 
   try {
-    const allServers = await getAllServers(db);
+    const allServers = await getAllServers(env);
     
-    const latestMetricsMap = await getLatestMetricsForAllServers(db);
+    const latestMetricsMap = await getLatestMetricsForAllServers(env);
     
     let alertState = {};
-    const stateRes = await db.prepare(
-      "SELECT value FROM settings WHERE key = 'alert_state'"
-    ).first();
+    const stateRes = (await readSettingsRows(env)).find(row => row.key === 'alert_state');
     
     if (stateRes) {
       try {
@@ -200,23 +199,21 @@ export async function checkOfflineNodes(db) {
     }
 
     if (offlineNodes.length > 0 || recoveredNodes.length > 0) {
-      await db.prepare(
-        'INSERT INTO settings (key, value) VALUES ("alert_state", ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
-      ).bind(JSON.stringify(alertState)).run();
+      await setSettingValue(env, 'alert_state', JSON.stringify(alertState));
     }
   } catch (e) {
     console.error('离线检测失败:', e);
   }
 }
 
-export async function checkExpiringServers(db) {
-  const siteSettings = await loadSiteSettings(db);
+export async function checkExpiringServers(env) {
+  const siteSettings = await loadSiteSettings(env);
 
   if (siteSettings.expire_reminder !== 'true' || !siteSettings.tg_bot_token) {
     return;
   }
   try {
-    const allServers = await getAllServers(db);
+    const allServers = await getAllServers(env);
     const now = Date.now();
     const REMINDER_DAYS = 7;
     const expiringServers = [];

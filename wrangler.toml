@@ -27,9 +27,18 @@ name = "METRICS_BROADCASTER"
 class_name = "MetricsBroadcaster"
 script_name = "cf-server-monitor"
 
+[[durable_objects.bindings]]
+name = "CONFIG_CACHE"
+class_name = "ConfigCache"
+script_name = "cf-server-monitor"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["MetricsBroadcaster"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["ConfigCache"]
 
 [vars]
 

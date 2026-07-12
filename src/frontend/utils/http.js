@@ -67,8 +67,10 @@ const handleResponse = async (res, options = {}) => {
     let errorMessage = DEFAULT_ERROR_MESSAGES[res.status] || 'Request failed'
     let errorCode = res.status
     let errorMessageKey = null
+    let errorDetails = null
     try {
       const data = await res.json()
+      errorDetails = data
       if (data.message) {
         errorMessageKey = data.message
       }
@@ -84,7 +86,7 @@ const handleResponse = async (res, options = {}) => {
     } catch (e) {
       // ignore
     }
-    return { error: errorMessage, code: errorCode, status: res.status, message: errorMessageKey }
+    return { error: errorMessage, code: errorCode, status: res.status, message: errorMessageKey, details: errorDetails }
   }
   
   try {

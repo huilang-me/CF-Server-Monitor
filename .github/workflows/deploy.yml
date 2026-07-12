@@ -75,9 +75,17 @@ jobs:
           name = "METRICS_BROADCASTER"
           class_name = "MetricsBroadcaster"
 
+          [[durable_objects.bindings]]
+          name = "CONFIG_CACHE"
+          class_name = "ConfigCache"
+
           [[migrations]]
           tag = "v1"
           new_sqlite_classes = ["MetricsBroadcaster"]
+
+          [[migrations]]
+          tag = "v2"
+          new_sqlite_classes = ["ConfigCache"]
 
           [vars]
           API_SECRET = "SECRET_PLACEHOLDER"
@@ -95,7 +103,7 @@ jobs:
 
       # wrangler v4 的 `deploy` 会自动根据 wrangler.toml 中的 [[durable_objects.bindings]]
       # 声明创建 DO namespace（幂等：已存在则跳过），无需单独命令。
-      # 前提：MetricsBroadcaster 类必须从 index.js 导出（已通过 src/index.js 实现）。
+      # 前提：MetricsBroadcaster / ConfigCache 类必须从 index.js 导出。
       - name: 🚀 Deploy to Cloudflare Workers
         uses: cloudflare/wrangler-action@v3
         with:

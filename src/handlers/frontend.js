@@ -82,7 +82,7 @@ export async function serveFrontend(request, env, settings = null) {
 
   if (html) {
     if (!settings) {
-      settings = await loadSettings(env.DB);
+      settings = await loadSettings(env);
     }
     html = injectAppearanceSettings(html, settings);
 

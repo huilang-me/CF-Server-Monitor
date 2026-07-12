@@ -1,15 +1,19 @@
 import { debug, getSettingByKey } from '../utils/settings.js';
+import { refreshConfigCache } from '../services/configStore.js';
 
 
-export async function updateDatabase(db) {
+export async function updateDatabase(env) {
+  const db = env.DB;
   debug('开始执行数据库更新...');
   const results = [];
   
   try {
-    const historyIndex = await ensureHistoryIndex(db);
+    const historyIndex = await ensureHistoryIndex(env);
     results.push({ name: 'metrics_history 索引检查', ...historyIndex });
     
     const serversCols = await addServerColumns(db);
+    const settingsCols = await addSettingsColumns(db);
+    results.push({ name: 'settings version column', ...settingsCols });
     results.push({ name: 'servers 表列更新', ...serversCols });
     
     const cleanupServers = await cleanupServerExtraColumns(db);
@@ -41,11 +45,18 @@ export async function updateDatabase(db) {
       error: e.message,
       results
     };
+  } finally {
+    try {
+      await refreshConfigCache(env, 'all');
+    } catch (cacheError) {
+      debug('Failed to refresh ConfigCache after database update:', cacheError);
+    }
   }
 }
 
-export async function isHistoryOptimized(db) {
-  const history_id_optimized = await getSettingByKey(db, 'history_id_optimized', true);
+export async function isHistoryOptimized(env) {
+  const db = env.DB;
+  const history_id_optimized = await getSettingByKey(env, 'history_id_optimized', true);
   if(history_id_optimized) return true;
   const minId = await db.prepare(`
     SELECT id AS min_id
@@ -58,8 +69,9 @@ export async function isHistoryOptimized(db) {
 }
 
 // 确保 旧版metrics_history 表有索引
-export async function ensureHistoryIndex(db) {
-  const history_id_optimized = await getSettingByKey(db, 'history_id_optimized', true);
+export async function ensureHistoryIndex(env) {
+  const db = env.DB;
+  const history_id_optimized = await getSettingByKey(env, 'history_id_optimized', true);
   if(history_id_optimized) {
     debug('metrics_history 表已优化，无需创建索引');
     return { success: true, created: false, message: 'metrics_history 表已优化，无需创建索引'};
@@ -122,7 +134,8 @@ export async function addServerColumns(db) {
       ping_mode: "TEXT DEFAULT 'http'",
       traffic_calc_type: "TEXT DEFAULT 'total'",
       history_partition_id: "INTEGER DEFAULT 0",
-      timestamp: "INTEGER DEFAULT 0"
+      timestamp: "INTEGER DEFAULT 0",
+      version: "INTEGER NOT NULL DEFAULT 1"
     };
     
     let added = 0;
@@ -160,6 +173,24 @@ async function cleanupServerExtraColumns(db) {
     return { success: true, cleaned: colsToDrop.length, message: `已删除 ${colsToDrop.join(', ')} 字段` };
   } catch (e) {
     debug('清理 servers 表多余字段失败:', e);
+    return { success: false, error: e.message };
+  }
+}
+
+export async function addSettingsColumns(db) {
+  try {
+    const { results: columns = [] } = await db.prepare('PRAGMA table_info(settings)').all();
+    const existingColumns = new Set(columns.map(column => column.name));
+    let added = 0;
+    if (existingColumns.size > 0 && !existingColumns.has('version')) {
+      await db.prepare(
+        'ALTER TABLE settings ADD COLUMN version INTEGER NOT NULL DEFAULT 1'
+      ).run();
+      added++;
+    }
+    return { success: true, added };
+  } catch (e) {
+    debug('Failed to add settings columns:', e);
     return { success: false, error: e.message };
   }
 }

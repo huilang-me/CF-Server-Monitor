@@ -104,7 +104,8 @@ DROP TABLE IF EXISTS settings;
 
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY, 
-  value TEXT
+  value TEXT,
+  version INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS servers (
@@ -121,7 +122,8 @@ CREATE TABLE IF NOT EXISTS servers (
   report_interval INTEGER DEFAULT 60,
   ping_mode TEXT DEFAULT 'http',
   is_hidden TEXT DEFAULT '0',
-  sort_order INTEGER DEFAULT 0
+  sort_order INTEGER DEFAULT 0,
+  version INTEGER NOT NULL DEFAULT 1
 );
 
 -- 这里模拟不插入history_partition_id和timestamp

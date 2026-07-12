@@ -15,8 +15,10 @@ import { getCorsAllowedOrigins, createOptionsResponse, applyCors } from './utils
 // 显式 import + extends，确保 wrangler 静态分析器能在入口文件直接识别此 DO 类
 import { MetricsBroadcaster as _MetricsBroadcaster }
   from './durable/MetricsBroadcaster.js';
+import { ConfigCache as _ConfigCache } from './durable/ConfigCache.js';
 
 export class MetricsBroadcaster extends _MetricsBroadcaster {}
+export class ConfigCache extends _ConfigCache {}
 
 async function getEncryptionKey(env, sys) {
   let secret = (sys && sys.jwt_secret) || env.TURNSTILE_SECRET_KEY || env.API_SECRET || 'default_secret_key_for_turnstile_encryption';
@@ -84,7 +86,7 @@ async function fetchHistoryData(env, request, id, hours, columns, sys = null) {
   if (!id) return createBadRequestResponse('Missing ID');
   
   if (!sys) {
-    sys = await loadSettings(env.DB);
+    sys = await loadSettings(env);
   }
   const isLoggedIn = await checkAuth(request, env, sys);
   
@@ -96,7 +98,7 @@ async function fetchHistoryData(env, request, id, hours, columns, sys = null) {
     return createUnauthorizedResponse();
   }
   
-  const server = await getServerDetail(env.DB, id, isLoggedIn);
+  const server = await getServerDetail(env, id, isLoggedIn);
   if (!server) return createNotFoundResponse();
   
   // 最多查询7天数据
@@ -110,7 +112,7 @@ async function fetchHistoryData(env, request, id, hours, columns, sys = null) {
   
   let data;
   try {
-    data = await getMetricsHistory(env.DB, id, clampedHours, columns, server);
+    data = await getMetricsHistory(env, id, clampedHours, columns, server);
   } catch (e) {
     const message = e && e.message ? e.message : String(e);
     if (/no such column/i.test(message)) {
@@ -166,7 +168,7 @@ export default {
 
     const isApiRequest = path.startsWith('/api/') || path.startsWith('/admin/api');
     if (path === '/api/config' || path === '/clearHistory') {
-      await initDatabase(env.DB);
+      await initDatabase(env);
     }
 
     // /api/config 在不带 X-Turnstile-Token 且不带 X-Turnstile-Verified 时仍然 bypass（用于初始化判断是否需要验证），
@@ -181,7 +183,7 @@ export default {
     let sys = null;
 
     if (isApiRequest && !isTurnstileBypassed(path)) {
-      sys = await loadSiteSettings(env.DB);
+      sys = await loadSiteSettings(env);
       const turnstileEnabled = sys.turnstile_enabled === 'true';
       const turnstileSecretKey = sys.turnstile_secret_key || '';
       
@@ -205,7 +207,7 @@ export default {
     }
 
     async function ensureFullSettings() {
-      sys = await loadSettings(env.DB);
+      sys = await loadSettings(env);
       return sys;
     }
 
@@ -218,6 +220,18 @@ export default {
         try {
           const id = env.METRICS_BROADCASTER.idFromName('global');
           const stub = env.METRICS_BROADCASTER.get(id);
+          return await stub.fetch('http://internal/health');
+        } catch (e) {
+          return createSuccessResponse({ ok: false, reason: e.message });
+        }
+      }},
+      { method: 'GET', path: '/__do/config-health', handler: async () => {
+        if (!env.CONFIG_CACHE) {
+          return createSuccessResponse({ ok: false, reason: 'ConfigCache DO not bound' });
+        }
+        try {
+          const id = env.CONFIG_CACHE.idFromName('global');
+          const stub = env.CONFIG_CACHE.get(id);
           return await stub.fetch('http://internal/health');
         } catch (e) {
           return createSuccessResponse({ ok: false, reason: e.message });
@@ -281,7 +295,7 @@ export default {
         if (!await checkAuth(request, env, sys)) {
           return simpleAuthResponse();
         }
-        const result = await updateDatabase(env.DB);
+        const result = await updateDatabase(env);
         return createSuccessResponse(result);
       }},
       { method: 'POST', path: '/clearHistory', handler: async () => {
@@ -289,7 +303,7 @@ export default {
         if (!await checkAuth(request, env, sys)) {
           return simpleAuthResponse();
         }
-        const result = await clearHistory(env.DB);
+        const result = await clearHistory(env);
         return createSuccessResponse(result);
       }}
     ];
@@ -343,29 +357,29 @@ export default {
         debug('[Cron] 每周日0:00-0:05表轮换期间，跳过离线节点检测');
       } else {
         debug('[Cron] 开始执行离线节点检测');
-        await checkOfflineNodes(env.DB);
+        await checkOfflineNodes(env);
         debug('[Cron] 离线节点检测完成');
       }
     } else if (cron === '0 * * * *') {
       if (day === 0 && hour === 0) {
         debug('[Cron] 开始执行每周数据清理任务（表轮换）');
-        await weeklyCleanup(env.DB);
+        await weeklyCleanup(env);
         debug('[Cron] 每周数据清理任务完成');
       }
       
       if (hour === 12) {
         debug('[Cron] 开始执行服务器到期检测');
-        await checkExpiringServers(env.DB);
+        await checkExpiringServers(env);
         debug('[Cron] 服务器到期检测完成');
       }
     }else if(env.DEBUG == 1){
       if (cron === '0 0 * * 0') {
         debug('[Cron DEBUG] 开始执行每周数据清理任务（表轮换）');
-        await weeklyCleanup(env.DB);
+        await weeklyCleanup(env);
         debug('[Cron DEBUG] 每周数据清理任务完成');
       } else if (cron === '0 12 * * *') {
         debug('[Cron DEBUG] 开始执行服务器到期检测');
-        await checkExpiringServers(env.DB);
+        await checkExpiringServers(env);
         debug('[Cron DEBUG] 服务器到期检测完成');
       }
     }

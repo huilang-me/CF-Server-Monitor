@@ -1096,6 +1096,7 @@ const settings = ref({
   custom_cm: '',
   custom_bd: ''
 })
+const settingsVersions = ref({ site_options: 0, appearance_options: 0 })
 const apiSecret = ref('')
 
 const { visibility: passwordVisible, toggle: togglePassword } = usePasswordVisibility([
@@ -1106,6 +1107,7 @@ const showEditModal = ref(false)
 const editResetDayRef = ref(null)
 const editForm = ref({
   id: '',
+  version: 0,
   name: '',
   server_group: '',
   price: '',
@@ -1386,6 +1388,10 @@ const loadSettings = async () => {
     if (!result.error) {
       const data = result.data
       const settingsData = data.settings || {}
+      settingsVersions.value = {
+        site_options: Number(settingsData._versions?.site_options || 0),
+        appearance_options: Number(settingsData._versions?.appearance_options || 0)
+      }
       settings.value = {
         site_title: settingsData.site_title || '',
         custom_bg: settingsData.custom_bg || '',
@@ -1475,6 +1481,7 @@ const saveSettings = async () => {
 
     const data = {
       action: 'save_settings',
+      versions: { ...settingsVersions.value },
       settings: {
         site_title: settings.value.site_title,
         custom_bg: settings.value.custom_bg,
@@ -1525,6 +1532,7 @@ const saveSettings = async () => {
         loadSettings()
       } else {
         saveResult.value = { success: false, error: getMessage(result.error) || 'fail' }
+        if (result.status === 409) await loadSettings()
       }
     } catch (e) {
       saveResult.value = { success: false, error: e.message }
@@ -1693,6 +1701,7 @@ const copyUninstallCmd = async () => {
 const openEditModal = (server) => {
   editForm.value = {
     id: server.id,
+    version: Number(server.version || 0),
     name: server.name || '',
     server_group: server.server_group || '',
     price: server.price || '',
@@ -1719,6 +1728,7 @@ const saveEdit = async () => {
     const data = {
       action: 'edit',
       id: editForm.value.id,
+      version: editForm.value.version,
       name: editForm.value.name,
       server_group: editForm.value.server_group,
       price: editForm.value.price,
@@ -1742,6 +1752,10 @@ const saveEdit = async () => {
         loadServers()
       } else {
         saveResult.value = { success: false, error: getMessage(result.error) || 'Fail' }
+        if (result.status === 409) {
+          showEditModal.value = false
+          await loadServers()
+        }
       }
     } catch (e) {
       saveResult.value = { success: false, error: e.message }
@@ -1763,13 +1777,22 @@ const saveEdit = async () => {
 
   const confirmDelete = async () => {
     try {
-      const result = await adminApiForSite({ action: 'delete', id: deleteServerId.value })
+      const server = servers.value.find(item => item.id === deleteServerId.value)
+      const result = await adminApiForSite({
+        action: 'delete',
+        id: deleteServerId.value,
+        version: server?.version
+      })
       if (!result.error) {
         saveResult.value = { success: true, message: getMessage(result.data.message) || trans.value.serverDeleted }
         showDeleteModal.value = false
         loadServers()
       } else {
         saveResult.value = { success: false, error: getMessage(result.error) || 'Fail' }
+        if (result.status === 409) {
+          showDeleteModal.value = false
+          await loadServers()
+        }
       }
     } catch (e) {
       saveResult.value = { success: false, error: e.message }
@@ -1784,13 +1807,23 @@ const saveEdit = async () => {
     if (!confirm(trans.value.confirmDeleteServers + selectedServers.value.length + trans.value.irreversible)) return
 
     try {
-      const result = await adminApiForSite({ action: 'batch_delete', ids: selectedServers.value })
+      const versions = Object.fromEntries(
+        servers.value
+          .filter(server => selectedServers.value.includes(server.id))
+          .map(server => [server.id, Number(server.version || 0)])
+      )
+      const result = await adminApiForSite({
+        action: 'batch_delete',
+        ids: selectedServers.value,
+        versions
+      })
       if (!result.error) {
         saveResult.value = { success: true, message: getMessage(result.data.message) || trans.value.serversDeleted }
         selectedServers.value = []
         loadServers()
       } else {
         saveResult.value = { success: false, error: getMessage(result.error) || 'Fail' }
+        if (result.status === 409) await loadServers()
       }
     } catch (e) {
       saveResult.value = { success: false, error: e.message }

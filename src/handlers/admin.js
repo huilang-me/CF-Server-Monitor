@@ -1,13 +1,21 @@
 import { checkAuth, simpleAuthResponse, validateCredentials, generateToken } from '../middleware/auth.js';
 import { getLatestMetricsForAllServers } from '../database/schema.js';
-import { getAllServers, clearServersListCache } from '../utils/cache.js';
-import { clearSiteSettingsCache, saveSiteOptions } from '../utils/settings.js';
+import { getAllServers } from '../utils/cache.js';
+import { APPEARANCE_FIELDS, SITE_FIELDS, saveAllSettings, saveSiteOptions } from '../utils/settings.js';
 import { mergeMetricsIntoServer } from '../utils/metrics.js';
 import { verifyTurnstileToken, hashPassword } from '../utils/common.js';
-import { AppError, createSuccessResponse, createBadRequestResponse, createUnauthorizedResponse, createErrorResponse } from '../utils/errors.js';
+import { AppError, createSuccessResponse, createBadRequestResponse, createUnauthorizedResponse, createErrorResponse, createConflictResponse } from '../utils/errors.js';
 import { addServerColumns } from '../database/updateDatabase.js';
 import { sendNotification } from '../services/notification.js';
 import { getNextServerHistoryPartitionId } from '../database/indexOptimization.js';
+import {
+  VersionConflictError,
+  insertServer,
+  removeServer,
+  removeServers,
+  saveServerOrder,
+  updateServer
+} from '../services/configStore.js';
 
 function isValidUUID(id) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
@@ -15,26 +23,6 @@ function isValidUUID(id) {
 
 function isValidName(name) {
   return name && typeof name === 'string' && name.trim().length > 0 && name.length <= 100;
-}
-
-async function deleteServer(db, id) {
-  try {
-    const stmt1 = db.prepare(`PRAGMA foreign_key_list(metrics_history)`);
-    const result1 = await stmt1.all();
-    if (result1.results.length > 0) {
-      await db.prepare('DELETE FROM metrics_history WHERE server_id = ?').bind(id).run();
-    }
-
-    const stmt2 = db.prepare(`PRAGMA foreign_key_list(metrics_history_old)`);
-    const result2 = await stmt2.all();
-    if (result2.results.length > 0) {
-      await db.prepare('DELETE FROM metrics_history_old WHERE server_id = ?').bind(id).run();
-    }
-
-    await db.prepare('DELETE FROM servers WHERE id = ?').bind(id).run();
-  } catch (err) {
-    throw err;
-  }
 }
 
 function normalizeInterval(value, fallback, min = 1, max = 86400) {
@@ -190,7 +178,7 @@ export async function handleAdminAPI(request, env, sys) {
       if (credentialResult.needsPasswordUpgrade) {
         try {
           const upgradedPasswordHash = await hashPassword(password);
-          await saveSiteOptions(env.DB, { password: upgradedPasswordHash });
+          await saveSiteOptions(env, { password: upgradedPasswordHash });
           if (sys) {
             sys.password = upgradedPasswordHash;
           }
@@ -224,8 +212,8 @@ export async function handleAdminAPI(request, env, sys) {
       });
     }
     else if (data.action === 'list') {
-      const servers = await getAllServers(env.DB);
-      const latestMetricsMap = await getLatestMetricsForAllServers(env.DB);
+      const servers = await getAllServers(env);
+      const latestMetricsMap = await getLatestMetricsForAllServers(env);
       
       const now = Date.now();
       const ONLINE_THRESHOLD = 300000;
@@ -339,19 +327,12 @@ export async function handleAdminAPI(request, env, sys) {
         }
       }
 
-      const APPEARANCE_FIELDS = ['site_title', 'custom_bg', 'custom_head', 'custom_script'];
-      const SITE_FIELDS = ['is_public', 'show_price', 'show_expire', 'show_bw', 'show_tf', 'show_time', 'show_long_history', 'tg_notify', 'tg_bot_token', 'tg_chat_id', 'turnstile_enabled', 'turnstile_login_enabled', 'turnstile_site_key', 'turnstile_secret_key', 'jwt_secret', 'username', 'password', 'cloudflare_account_id', 'cloudflare_token', 'custom_ct', 'custom_cu', 'custom_cm', 'custom_bd', 'expire_reminder'];
-
       const appearanceOptions = {};
       for (const field of APPEARANCE_FIELDS) {
         if (settings[field] !== undefined) {
           appearanceOptions[field] = settings[field];
         }
       }
-      await env.DB.prepare(
-        'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
-      ).bind('appearance_options', JSON.stringify(appearanceOptions)).run();
-
       const siteOptions = {};
       for (const field of SITE_FIELDS) {
         if (settings[field] !== undefined) {
@@ -364,11 +345,17 @@ export async function handleAdminAPI(request, env, sys) {
           }
         }
       }
-      await saveSiteOptions(env.DB, siteOptions);
-      Object.assign(sys, appearanceOptions, siteOptions);
+      const updatedSettings = await saveAllSettings(
+        env,
+        appearanceOptions,
+        siteOptions,
+        data.versions || settings._versions
+      );
+      Object.assign(sys, updatedSettings);
       return createSuccessResponse({
         success: true,
-        message: 'updateSuccess'
+        message: 'updateSuccess',
+        versions: updatedSettings._versions
       });
     } 
     else if (data.action === 'add') {
@@ -380,22 +367,28 @@ export async function handleAdminAPI(request, env, sys) {
       const id = crypto.randomUUID();
       const group = data.server_group || 'Default';
 
-      const { max_order } = await env.DB.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_order FROM servers').first();
-      const sortOrder = (max_order || 0) + 1;
+      const currentServers = await getAllServers(env, true);
+      const maxOrder = currentServers.reduce(
+        (max, server) => Math.max(max, Number(server.sort_order) || 0),
+        -1
+      );
+      const sortOrder = maxOrder + 1;
 
-      const historyPartitionId = await getNextServerHistoryPartitionId(env.DB);
+      const historyPartitionId = await getNextServerHistoryPartitionId(env);
 
-      await env.DB.prepare(`
-        INSERT INTO servers
-        (id, name, server_group, sort_order, history_partition_id, timestamp)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `).bind(id, name, group, sortOrder, historyPartitionId, Date.now()).run();
-      
-      clearServersListCache();
+      const server = await insertServer(env, {
+        id,
+        name,
+        server_group: group,
+        sort_order: sortOrder,
+        history_partition_id: historyPartitionId,
+        timestamp: Date.now()
+      });
       
       return createSuccessResponse({ 
         success: true, 
         id: id,
+        version: server?.version || 1,
         message: 'serverAdded'
       });
     } 
@@ -405,9 +398,7 @@ export async function handleAdminAPI(request, env, sys) {
         return createBadRequestResponse('invalidServerId');
       }
       
-      await deleteServer(env.DB, id);
-      
-      clearServersListCache();
+      await removeServer(env, id, data.version ?? null);
       
       return createSuccessResponse({ 
         success: true, 
@@ -424,10 +415,8 @@ export async function handleAdminAPI(request, env, sys) {
         if (!isValidUUID(orders[i])) {
           return createBadRequestResponse('invalidSortId');
         }
-        await env.DB.prepare('UPDATE servers SET sort_order = ? WHERE id = ?').bind(i, orders[i]).run();
       }
-      
-      clearServersListCache();
+      await saveServerOrder(env, orders);
       
       return createSuccessResponse({ 
         success: true, 
@@ -435,7 +424,7 @@ export async function handleAdminAPI(request, env, sys) {
       });
     }
     else if (data.action === 'edit') {
-      const { id, name, server_group, price, expire_date, bandwidth, traffic_limit, traffic_calc_type, reset_day, collect_interval, report_interval, ping_mode, offline_notify_disabled, is_hidden } = data;
+      const { id, name, server_group, price, expire_date, bandwidth, traffic_limit, traffic_calc_type, reset_day, collect_interval, report_interval, ping_mode, offline_notify_disabled, is_hidden, version } = data;
       if (!id || !isValidUUID(id)) {
         return createBadRequestResponse('invalidServerId');
       }
@@ -443,27 +432,23 @@ export async function handleAdminAPI(request, env, sys) {
       const normalizedReportInterval = Math.max(normalizedCollectInterval, normalizeInterval(report_interval, 60));
       
       try {
-        await env.DB.prepare(`
-          UPDATE servers
-          SET name = ?, server_group = ?, price = ?, expire_date = ?, bandwidth = ?, traffic_limit = ?, traffic_calc_type = ?, reset_day = ?, collect_interval = ?, report_interval = ?, ping_mode = ?, offline_notify_disabled = ?, is_hidden = ?
-          WHERE id = ?
-        `).bind(
-          name || '',
-          server_group || 'Default',
-          price || '',
-          expire_date || '',
-          bandwidth || '',
-          traffic_limit || '',
-          traffic_calc_type || 'total',
-          reset_day !== undefined && reset_day !== null && reset_day !== '' ? reset_day : 1,
-          normalizedCollectInterval,
-          normalizedReportInterval,
-          ping_mode || 'http',
-          offline_notify_disabled || '0',
-          is_hidden || '0',
-          id
-        ).run();
+        await updateServer(env, id, {
+          name: name || '',
+          server_group: server_group || 'Default',
+          price: price || '',
+          expire_date: expire_date || '',
+          bandwidth: bandwidth || '',
+          traffic_limit: traffic_limit || '',
+          traffic_calc_type: traffic_calc_type || 'total',
+          reset_day: reset_day !== undefined && reset_day !== null && reset_day !== '' ? reset_day : 1,
+          collect_interval: normalizedCollectInterval,
+          report_interval: normalizedReportInterval,
+          ping_mode: ping_mode || 'http',
+          offline_notify_disabled: offline_notify_disabled || '0',
+          is_hidden: is_hidden || '0'
+        }, version);
       } catch (e) {
+        if (e instanceof VersionConflictError) throw e;
         if (e.message && /no such column/i.test(e.message)) {
           console.warn('检测到数据库字段缺失，尝试添加缺失字段...');
           await addServerColumns(env.DB);
@@ -473,8 +458,6 @@ export async function handleAdminAPI(request, env, sys) {
           return createBadRequestResponse(errMsg || 'serverUpdateFailed');
         }
       }
-      
-      clearServersListCache();
       
       return createSuccessResponse({ 
         success: true, 
@@ -493,11 +476,7 @@ export async function handleAdminAPI(request, env, sys) {
         }
       }
       
-      for (const id of ids) {
-        await deleteServer(env.DB, id);
-      }
-      
-      clearServersListCache();
+      await removeServers(env, ids, data.versions || {});
       
       return createSuccessResponse({ 
         success: true, 
@@ -508,6 +487,15 @@ export async function handleAdminAPI(request, env, sys) {
     return createBadRequestResponse('unknownAction');
     
   } catch (e) {
+    if (e instanceof VersionConflictError) {
+      const currentVersion = Array.isArray(e.current)
+        ? Object.fromEntries(e.current.map(row => [row.key, Number(row.version || 0)]))
+        : Number(e.current?.version || 0);
+      return createConflictResponse('versionConflict', {
+        resource: e.resource,
+        currentVersion
+      });
+    }
     console.error('Admin API 错误:', e);
     return createErrorResponse(e);
   }

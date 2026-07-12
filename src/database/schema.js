@@ -1,11 +1,12 @@
 import { getAllServers, getLatestMetricsCache, setLatestMetricsCache, getMetricsHistoryCache, setMetricsHistoryCache, getCacheDuration, clearAllCaches } from '../utils/cache.js';
 import { saveSiteOptions, debug, getSettingByKey } from '../utils/settings.js';
 import { ensureServerOptimization, buildHistoryId, getServerHistoryInfo, getHistoryIdRange } from './indexOptimization.js';
-import { addHistoryColumns, ensureHistoryIndex, isHistoryOptimized } from './updateDatabase.js';
+import { addHistoryColumns, addServerColumns, addSettingsColumns, ensureHistoryIndex, isHistoryOptimized } from './updateDatabase.js';
 
 let dbInitialized = false;
 
-export async function initDatabase(db) {
+export async function initDatabase(env) {
+  const db = env.DB;
   if (dbInitialized) return;
 
   debug('初始化数据库');
@@ -18,11 +19,14 @@ export async function initDatabase(db) {
       await db.prepare(`
         CREATE TABLE IF NOT EXISTS settings (
           key TEXT PRIMARY KEY, 
-          value TEXT
+          value TEXT,
+          version INTEGER NOT NULL DEFAULT 1
         )
       `).run();
-      await saveSiteOptions(db, { servers_optimized: 'true' });
-      await saveSiteOptions(db, { history_id_optimized: 'true' });
+      await saveSiteOptions(env, { servers_optimized: 'true' });
+      await saveSiteOptions(env, { history_id_optimized: 'true' });
+    } else {
+      await addSettingsColumns(db);
     }
 
     // 判断servers表是否存在
@@ -48,12 +52,14 @@ export async function initDatabase(db) {
           is_hidden TEXT DEFAULT '0',
           sort_order INTEGER DEFAULT 0,
           history_partition_id INTEGER DEFAULT 0,
-          timestamp INTEGER DEFAULT 0
+          timestamp INTEGER DEFAULT 0,
+          version INTEGER NOT NULL DEFAULT 1
         )
       `).run();
     } else {
+      await addServerColumns(db);
       debug('检查servers表优化状态');
-      await ensureServerOptimization(db);
+      await ensureServerOptimization(env);
     }
 
     // 判断metrics_history表是否存在
@@ -104,7 +110,7 @@ export async function initDatabase(db) {
         )
       `).run();
     }else{
-      await ensureHistoryIndex(db);
+      await ensureHistoryIndex(env);
     }
 
     debug('✅ 数据库初始化完成');
@@ -114,7 +120,8 @@ export async function initDatabase(db) {
   }
 }
 
-export async function clearHistory(db) {
+export async function clearHistory(env) {
+  const db = env.DB;
   debug('开始清空历史数据...');
   
   try {
@@ -126,11 +133,11 @@ export async function clearHistory(db) {
     
     dbInitialized = false;
     
-    await initDatabase(db);
+    await initDatabase(env);
 
-    await saveSiteOptions(db, { history_id_optimized: 'true' });
+    await saveSiteOptions(env, { history_id_optimized: 'true' });
 
-    await clearAllCaches(db);
+    await clearAllCaches(env);
     
     debug('✅ 数据库重建完成');
     
@@ -180,7 +187,8 @@ function buildHistorySourceQuery(tableName, useIdRange, columns) {
   `;
 }
 
-export async function getMetricsHistory(db, serverId, hours, columns, server = null) {
+export async function getMetricsHistory(env, serverId, hours, columns, server = null) {
+  const db = env.DB;
   const now = Date.now();
   const cacheDuration = getCacheDuration(hours);
   
@@ -197,7 +205,7 @@ export async function getMetricsHistory(db, serverId, hours, columns, server = n
   const intervalMs = Math.max(10_000, Math.ceil(totalMs / MAX_POINTS));
 
   const cutoff = now - queryHours * 60 * 60 * 1000;
-  const historyInfo = await getServerHistoryInfo(db, serverId, server);
+  const historyInfo = await getServerHistoryInfo(env, serverId, server);
   const queryStart = Math.max(cutoff, historyInfo.startTimestamp);
 
   debug(
@@ -221,7 +229,7 @@ export async function getMetricsHistory(db, serverId, hours, columns, server = n
     `SELECT name FROM sqlite_master WHERE type='table' AND name='metrics_history_old'`
   ).first();
 
-  const history_id_optimized = await getSettingByKey(db, 'history_id_optimized', true);
+  const history_id_optimized = await getSettingByKey(env, 'history_id_optimized', true);
   const currentHasServerTimeIndex = history_id_optimized
     ? false
     : await hasHistoryServerTimeIndex(db, 'metrics_history');
@@ -293,7 +301,8 @@ export async function getMetricsHistory(db, serverId, hours, columns, server = n
 }
 
 
-export async function weeklyCleanup(db) {
+export async function weeklyCleanup(env) {
+  const db = env.DB;
   try {
     debug('[Cleanup] 开始执行表轮换操作...');
     
@@ -302,7 +311,7 @@ export async function weeklyCleanup(db) {
       `SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='metrics_history'`
     ).first();
     if(!index){
-      await saveSiteOptions(db, { history_id_optimized: 'true' });
+      await saveSiteOptions(env, { history_id_optimized: 'true' });
       debug('✅ 切换到优化模式');
     }else{
       debug('✅ 继续兼容模式');
@@ -324,7 +333,7 @@ export async function weeklyCleanup(db) {
   
     // 3. 重新初始化数据库以创建新的 metrics_history 表
     dbInitialized = false;
-    await initDatabase(db);
+    await initDatabase(env);
 
     debug('[Cleanup] 已创建新的 metrics_history 表');
     
@@ -432,14 +441,17 @@ export async function saveMetricsHistory(db, serverId, historyPartitionId, metri
   }
 }
 
-export async function getLatestMetrics(db, serverId, server = null) {
+export async function getLatestMetrics(env, serverId, server = null, historyOptimized = null) {
+  const db = env.DB;
   try {
-    const historyInfo = await getServerHistoryInfo(db, serverId, server);
+    const historyInfo = await getServerHistoryInfo(env, serverId, server);
     if (!historyInfo.partitionId) {
       throw new Error('Invalid history partition id');
     }
 
-    const useIdFilter = await isHistoryOptimized(db);
+    const useIdFilter = historyOptimized === null
+      ? await isHistoryOptimized(env)
+      : historyOptimized;
 
     const rangeStart = historyInfo.startTimestamp > 0 ? historyInfo.startTimestamp : null;
     const { startId, endId } = getHistoryIdRange(historyInfo.partitionId, rangeStart);
@@ -465,7 +477,8 @@ export async function getLatestMetrics(db, serverId, server = null) {
   }
 }
 
-export async function getLatestMetricsForAllServers(db) {
+export async function getLatestMetricsForAllServers(env) {
+  const db = env.DB;
   const now = Date.now();
   const cacheInfo = getLatestMetricsCache();
   if (cacheInfo.cache && now - cacheInfo.time < cacheInfo.ttl) {
@@ -473,14 +486,15 @@ export async function getLatestMetricsForAllServers(db) {
   }
 
   // 确保 metrics_history 表有 idx_history_server_time 索引
-  await ensureHistoryIndex(db);
+  await ensureHistoryIndex(env);
+  const historyOptimized = await isHistoryOptimized(env);
 
   try {
-    const servers = await getAllServers(db);
+    const servers = await getAllServers(env);
 
     const entries = await Promise.all(
       servers.map(s =>
-        getLatestMetrics(db, s.id, s).then(metrics => [s.id, metrics])
+        getLatestMetrics(env, s.id, s, historyOptimized).then(metrics => [s.id, metrics])
       )
     );
 

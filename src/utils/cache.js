@@ -1,17 +1,11 @@
 /**
- * 缓存管理模块
- * 集中管理所有内存缓存，包括：
- * - 服务器列表缓存
- * - 服务器详情（复用服务器列表缓存）
- * - 最新指标缓存
- * - 历史指标缓存
- * - 站点设置缓存
+ * 缓存管理模块。
+ *
+ * servers/settings 不再使用 Worker isolate 本地缓存，统一读取 ConfigCache DO。
+ * 最新指标和历史查询结果仍保留短期本地缓存，它们不属于低频配置数据。
  */
 
-import { clearSiteSettingsCache, debug } from './settings.js';
-
-const SERVERS_LIST_TTL = 60 * 1000;
-let serversListCache = null;
+import { readServers, refreshConfigCache } from '../services/configStore.js';
 
 const LATEST_ALL_TTL = 30 * 1000;
 let latestAllCache = null;
@@ -19,104 +13,48 @@ let latestAllCacheTime = 0;
 
 const metricsHistoryCache = new Map();
 
-const serverDetailCache = new Map();
-
 export function getCacheDuration(hours) {
-  if (hours >= 120) {
-    return 10 * 60 * 1000;
-  } else if (hours >= 60) {
-    return 5 * 60 * 1000;
-  } else if (hours >= 30) {
-    return 3 * 60 * 1000;
-  } else {
-    return 1 * 60 * 1000;
-  }
+  if (hours >= 120) return 10 * 60 * 1000;
+  if (hours >= 60) return 5 * 60 * 1000;
+  if (hours >= 30) return 3 * 60 * 1000;
+  return 1 * 60 * 1000;
 }
 
 function filterServersByHidden(servers, includeHidden) {
   if (!servers || servers.length === 0) return [];
-  if (includeHidden) {
-    return [...servers];
-  }
-  return servers.filter(s => s.is_hidden !== 1 && s.is_hidden !== '1');
+  if (includeHidden) return servers.map(server => ({ ...server }));
+  return servers
+    .filter(server => server.is_hidden !== 1 && server.is_hidden !== '1')
+    .map(server => ({ ...server }));
 }
 
-export async function getAllServers(db, includeHidden = true) {
-  const now = Date.now();
-  
-  if (serversListCache && now - serversListCache.time < SERVERS_LIST_TTL) {
-    debug('服务器列表缓存命中');
-    return filterServersByHidden(serversListCache.data, includeHidden);
-  }
-
-  try {
-    const { results } = await db.prepare('SELECT * FROM servers ORDER BY sort_order ASC').all();
-    serversListCache = { data: results, time: now };
-    debug('服务器列表缓存更新');
-    return filterServersByHidden(results, includeHidden);
-  } catch (e) {
-    debug('获取服务器列表失败:', e);
-    return filterServersByHidden(serversListCache?.data, includeHidden);
-  }
+export async function getAllServers(env, includeHidden = true) {
+  const servers = await readServers(env);
+  return filterServersByHidden(servers, includeHidden);
 }
 
-export function clearServersListCache() {
-  serversListCache = null;
-  serverDetailCache.clear();
+export async function clearServersListCache(env) {
+  if (env?.DB) await refreshConfigCache(env, 'servers');
 }
 
 export function clearServerDetailCache() {
-  serverDetailCache.clear();
+  // 兼容旧调用；服务器详情已经与列表统一存放在 ConfigCache DO。
 }
 
-export async function getServerDetail(db, id, includeHidden = false) {
-  const now = Date.now();
-  const cached = serverDetailCache.get(id);
-  
-  if (cached) {
-    if (now - cached.time < SERVERS_LIST_TTL) {
-      debug('服务器详情缓存命中');
-      const server = cached.data;
-      
-      if (!server) {
-        return null;
-      }
-      
-      if (!includeHidden && (server.is_hidden === 1 || server.is_hidden === '1')) {
-        return null;
-      }
-      
-      return { ...server };
-    }
-    
-    serverDetailCache.delete(id);
-  }
-  
-  const server = await db.prepare('SELECT * FROM servers WHERE id = ?').bind(id).first();
-
-  serverDetailCache.set(id, { data: server, time: now });
-  debug('服务器详情缓存更新');
-  
-  if (!server) {
-    return null;
-  }
-  
+export async function getServerDetail(env, id, includeHidden = false) {
+  const servers = await readServers(env);
+  const server = servers.find(item => item.id === id);
+  if (!server) return null;
   if (!includeHidden && (server.is_hidden === 1 || server.is_hidden === '1')) {
     return null;
   }
-  
   return { ...server };
 }
 
-export async function checkServerExists(db, id) {
-  const server = await getServerDetail(db, id, true);
-  return !!server;
+export async function checkServerExists(env, id) {
+  return !!(await getServerDetail(env, id, true));
 }
 
-/**
- * 获取最新指标缓存信息
- * @returns {object} 包含 cache、time、ttl 字段的对象
- */
 export function getLatestMetricsCache() {
   return { cache: latestAllCache, time: latestAllCacheTime, ttl: LATEST_ALL_TTL };
 }
@@ -137,26 +75,24 @@ function getCacheKey(serverId, hours, columns) {
 }
 
 export function getMetricsHistoryCache(serverId, hours, columns) {
-  const key = getCacheKey(serverId, hours, columns);
-  return metricsHistoryCache.get(key);
+  return metricsHistoryCache.get(getCacheKey(serverId, hours, columns));
 }
 
 export function setMetricsHistoryCache(serverId, hours, columns, data) {
-  const key = getCacheKey(serverId, hours, columns);
-  metricsHistoryCache.set(key, { data, timestamp: Date.now() });
+  metricsHistoryCache.set(getCacheKey(serverId, hours, columns), {
+    data,
+    timestamp: Date.now()
+  });
 }
 
 export function clearMetricsHistoryCache(serverId) {
   for (const key of metricsHistoryCache.keys()) {
-    if (key.startsWith(`${serverId}:`)) {
-      metricsHistoryCache.delete(key);
-    }
+    if (key.startsWith(`${serverId}:`)) metricsHistoryCache.delete(key);
   }
 }
 
-export function clearAllCaches() {
-  clearServersListCache();
+export async function clearAllCaches(env) {
   clearLatestMetricsCache();
   metricsHistoryCache.clear();
-  clearSiteSettingsCache();
+  if (env?.DB) await refreshConfigCache(env, 'all');
 }

@@ -46,6 +46,7 @@
   - [4.1](#41-post-updatedatabase---数据库迁移) [`POST /updateDatabase`](#41-post-updatedatabase---数据库迁移) [- 数据库迁移](#41-post-updatedatabase---数据库迁移)
   - [4.2](#42-post-clearhistory---清空历史数据) [`POST /clearHistory`](#42-post-clearhistory---清空历史数据) [- 清空历史数据](#42-post-clearhistory---清空历史数据)
   - [4.3](#43-get-__dohealth---durable-object-健康检查) [`GET /__do/health`](#43-get-__dohealth---durable-object-健康检查) [- Durable Object 健康检查](#43-get-__dohealth---durable-object-健康检查)
+  - [4.4](#44-get-__doconfig-health---全局配置缓存健康检查) [`GET /__do/config-health`](#44-get-__doconfig-health---全局配置缓存健康检查)
 - [5. 数据结构](#5-数据结构)
   - [5.1 Server 对象](#51-server-对象)
   - [5.2 Metrics 对象（探针上报 payload）](#52-metrics-对象探针上报-payload)
@@ -707,7 +708,7 @@ ws.onmessage = (ev) => {
 - 仅 `action: login` 启用 Turnstile 验证（请求头 `X-Turnstile-Token`）
 - 其他 action：**不**走 Turnstile 流程（白名单 bypass）
 
-**Response**：统一 `200 OK`，`Content-Type: application/json`，具体结构见下文各小节。
+**Response**：成功为 `200 OK`；乐观锁冲突为 `409 Conflict`；`Content-Type: application/json`，具体结构见下文各小节。
 
 ***
 
@@ -756,7 +757,13 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
 ```json
 {
   "success": true,
-  "settings": { /* Settings 对象，见 5.4 */ },
+  "settings": {
+    "_versions": {
+      "site_options": 5,
+      "appearance_options": 3
+    },
+    "site_title": "My Server Monitor"
+  },
   "api_secret": "<env.API_SECRET>"
 }
 ```
@@ -869,6 +876,10 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
 ```json
 {
   "action": "save_settings",
+  "versions": {
+    "site_options": 5,
+    "appearance_options": 3
+  },
   "settings": {
     "site_title": "My Server Monitor",
     "custom_bg": "https://...",
@@ -913,10 +924,17 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
 **Response 200**
 
 ```json
-{ "success": true, "message": "updateSuccess" }
+{
+  "success": true,
+  "message": "updateSuccess",
+  "versions": {
+    "site_options": 6,
+    "appearance_options": 4
+  }
+}
 ```
 
-> 副作用：清空 `site_options` 内存缓存，下一次请求会从 DB 重新加载。
+`versions` 来自 `get_settings` 返回的 `settings._versions`。保存采用乐观锁；若版本已变化，返回 `409 VERSION_CONFLICT`，服务端会从 D1 重载全局 DO 缓存，客户端应重新获取设置并提示用户确认后重试。
 
 ***
 
@@ -934,6 +952,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
 {
   "success": true,
   "id": "<newly generated UUID v4>",
+  "version": 1,
   "message": "serverAdded"
 }
 ```
@@ -954,6 +973,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
 {
   "action": "edit",
   "id": "<server UUID>",
+  "version": 3,
   "name": "HK-01",                   // 可选，1~100 字符
   "server_group": "HK",               // 默认 "Default"
   "price": "￥30/月",                  // 字符串
@@ -975,6 +995,20 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
 { "success": true, "message": "serverUpdated" }
 ```
 
+成功后该服务器的 `version` 自动加 1。若提交的版本已经过期：
+
+```json
+{
+  "error": "versionConflict",
+  "code": 409,
+  "conflictCode": "VERSION_CONFLICT",
+  "resource": "server:<server UUID>",
+  "currentVersion": 4
+}
+```
+
+客户端收到冲突后应重新获取服务器列表，不应自动重放旧表单。
+
 **Response 失败**
 
 - `400 { "error": "服务器 ID 无效" }` —— UUID 格式错
@@ -987,7 +1021,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
 **Request**
 
 ```json
-{ "action": "delete", "id": "<server UUID>" }
+{ "action": "delete", "id": "<server UUID>", "version": 4 }
 ```
 
 **副作用**：级联删除该 server 的全部 `metrics_history` 记录。
@@ -1005,7 +1039,15 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
 **Request**
 
 ```json
-{ "action": "batch_delete", "ids": ["<uuid1>", "<uuid2>", "<uuid3>"] }
+{
+  "action": "batch_delete",
+  "ids": ["<uuid1>", "<uuid2>", "<uuid3>"],
+  "versions": {
+    "<uuid1>": 2,
+    "<uuid2>": 7,
+    "<uuid3>": 1
+  }
+}
 ```
 
 **Response 200**
@@ -1112,6 +1154,23 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
 { "ok": false, "reason": "<error message>" }
 ```
 
+### 4.4 `GET /__do/config-health` - 全局配置缓存健康检查
+
+检查 `ConfigCache` Durable Object 是否绑定，并显示 `servers/settings` 是否已经加载到 DO 内存：
+
+```json
+{
+  "ok": true,
+  "serversCached": true,
+  "settingsCached": true,
+  "serversAgeMs": 1200,
+  "settingsAgeMs": 800,
+  "ttlMs": 300000
+}
+```
+
+该 DO 不持久化缓存副本；写入后立即从 D1 重载，另有 5 分钟兜底 TTL。对象回收后两个缓存状态会重新变为未加载，下一次业务读取自动从 D1 重建。
+
 ***
 
 ## 5. 数据结构
@@ -1134,6 +1193,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
 | `ping_mode`                                   | string             | `http` / `tcp`            |
 | `is_hidden`                                   | string `"0"`/`"1"` | 是否在前台隐藏                   |
 | `sort_order`                                  | number             | 排序值（越小越靠前）                |
+| `version`                                     | number             | 配置版本；每次更新递增，用于乐观锁          |
 | `cpu`                                         | number             | 最新 CPU%（来自最新指标）           |
 | `load_avg`                                    | string             | `"x x x"`                 |
 | `net_in_speed`                                | number             | B/s                       |

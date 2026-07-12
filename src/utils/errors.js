@@ -67,3 +67,15 @@ export function createNotFoundResponse(message = 'Not Found') {
     headers: { 'Content-Type': 'application/json' }
   });
 }
+
+export function createConflictResponse(message = 'versionConflict', details = {}) {
+  return new Response(JSON.stringify({
+    error: message,
+    code: 409,
+    conflictCode: 'VERSION_CONFLICT',
+    ...details
+  }), {
+    status: 409,
+    headers: { 'Content-Type': 'application/json' }
+  });
+}

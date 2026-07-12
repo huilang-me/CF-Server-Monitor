@@ -59,6 +59,7 @@
 - 🔑 **JWT 认证**：登录系统采用 JWT token 认证，支持自定义密钥
 - 📉 **额度查询**：后台可查询 Cloudflare D1 当日读写行数与 Workers 请求量
 - ⚡ **实时推送**：基于 Durable Objects + WebSocket，探针上报后页面立即刷新，无轮询延迟
+- 🌐 **全局配置缓存**：`servers/settings` 统一由 Durable Object 缓存，写入后立即从 D1 同步，并通过版本乐观锁避免旧页面覆盖新配置
 
 ## 🚀 快速开始
 
@@ -592,7 +593,8 @@ CF-Server-Monitor/
 │   │   ├── schema.js           # 数据库初始化、历史数据存储
 │   │   └── updateDatabase.js   # 数据库升级处理
 │   ├── durable/
-│   │   └── MetricsBroadcaster.js  # Durable Object：WebSocket 实时推送广播中心
+│   │   ├── MetricsBroadcaster.js  # Durable Object：WebSocket 实时推送广播中心
+│   │   └── ConfigCache.js          # Durable Object：servers/settings 全局内存缓存
 │   ├── middleware/
 │   │   └── auth.js             # 认证中间件
 │   ├── handlers/
@@ -601,7 +603,8 @@ CF-Server-Monitor/
 │   │   ├── frontend.js         # 前端资源服务
 │   │   └── update.js           # 数据上报处理 + 广播到 DO
 │   ├── services/
-│   │   └── notification.js     # 通知服务
+│   │   ├── notification.js     # 通知服务
+│   │   └── configStore.js      # 配置读写封装、缓存同步与乐观锁
 │   ├── utils/
 │   │   ├── cache.js            # 缓存工具
 │   │   └── settings.js         # 设置管理

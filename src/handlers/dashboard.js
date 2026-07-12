@@ -17,10 +17,10 @@ export async function handleServerAPI(request, env, sys) {
   
   if (!id) return createBadRequestResponse('Missing ID');
   
-  const server = await getServerDetail(env.DB, id, isLoggedIn);
+  const server = await getServerDetail(env, id, isLoggedIn);
   if (!server) return createNotFoundResponse('Server not found');
   
-  const latestMetrics = await getLatestMetrics(env.DB, id, server);
+  const latestMetrics = await getLatestMetrics(env, id, server);
   mergeMetricsIntoServer(server, latestMetrics);
   server.sysConfig = {
     show_long_history: sys.show_long_history === 'true'
@@ -36,9 +36,9 @@ export async function handleServersAPI(request, env, sys) {
     return simpleAuthResponse();
   }
   
-  const results = await getAllServers(env.DB, isLoggedIn);
+  const results = await getAllServers(env, isLoggedIn);
   
-  const latestMetricsMap = await getLatestMetricsForAllServers(env.DB);
+  const latestMetricsMap = await getLatestMetricsForAllServers(env);
   
   const now = Date.now();
   let globalOnline = 0;

@@ -1,5 +1,6 @@
 import { saveSiteOptions, debug, getSettingByKey } from '../utils/settings.js';
-import { getAllServers, clearServersListCache } from '../utils/cache.js';
+import { getAllServers } from '../utils/cache.js';
+import { refreshConfigCache, updateServerFields } from '../services/configStore.js';
 
 export const HISTORY_PARTITION_MULTIPLIER = 10000000000000;
 export const HISTORY_AUTO_OPTIMIZED_MIN_ID = HISTORY_PARTITION_MULTIPLIER;
@@ -7,8 +8,9 @@ export const HISTORY_MAX_PARTITION_ID = 900;
 export const HISTORY_MAX_TIME_KEY = 991231235959;
 
 // 确保servers历史记录分区优化
-export async function ensureServerOptimization(db) {
-  const optimized = await getSettingByKey(db, 'servers_optimized', true);
+export async function ensureServerOptimization(env) {
+  const db = env.DB;
+  const optimized = await getSettingByKey(env, 'servers_optimized', true);
   const { results: columns = [] } = await db.prepare(`PRAGMA table_info(servers)`).all();
   const existingColumns = new Set(columns.map(column => column.name));
   let addedColumns = 0;
@@ -26,7 +28,7 @@ export async function ensureServerOptimization(db) {
   }
 
   if (addedColumns > 0) {
-    clearServersListCache();
+    await refreshConfigCache(env, 'servers');
   }
 
   if (optimized && addedColumns === 0) {
@@ -34,15 +36,16 @@ export async function ensureServerOptimization(db) {
     return { success: true, assigned: 0 };
   }
 
-  const { results: servers = [] } = await db.prepare(`
-    SELECT id, history_partition_id
-    FROM servers
-    ORDER BY id ASC
-  `).all();
+  const servers = (await getAllServers(env, true))
+    .map(server => ({
+      id: server.id,
+      history_partition_id: server.history_partition_id
+    }))
+    .sort((a, b) => a.id.localeCompare(b.id));
   
   if (servers.length === 0) {
     debug('没有服务器需要优化');
-    await saveSiteOptions(db, { servers_optimized: 'true' });
+    await saveSiteOptions(env, { servers_optimized: 'true' });
     return { success: true, assigned: 0 };
   }
 
@@ -60,9 +63,7 @@ export async function ensureServerOptimization(db) {
     }
 
     try {
-      await db.prepare(
-        `UPDATE servers SET history_partition_id = ? WHERE id = ?`
-      ).bind(partitionId, server.id).run();
+      await updateServerFields(env, server.id, { history_partition_id: partitionId });
       updated++;
     } catch (e) {
       debug(`Failed to update server ${server.id} history_partition_id: ${e.message}`);
@@ -70,19 +71,19 @@ export async function ensureServerOptimization(db) {
   }
 
   // 清空服务器列表的缓存
-  clearServersListCache();
+  await refreshConfigCache(env, 'servers');
 
   debug(`服务器历史记录分区优化完成，更新了 ${updated} 条记录`);
   
   // 标记为已优化
-  await saveSiteOptions(db, { servers_optimized: 'true' });
+  await saveSiteOptions(env, { servers_optimized: 'true' });
 
   return { success: true, assigned: updated };
 }
 
 // 获取下一个可用的历史记录分区ID
-export async function getNextServerHistoryPartitionId(db) {
-  const servers = await getAllServers(db, true);
+export async function getNextServerHistoryPartitionId(env) {
+  const servers = await getAllServers(env, true);
   const usedIds = new Set(
     servers
       .map(s => Number(s.history_partition_id))
@@ -143,10 +144,10 @@ export function buildHistoryId(partitionId, timestamp) {
   return normalizedPartitionId * HISTORY_PARTITION_MULTIPLIER + formatHistoryTimeKey(timestamp);
 }
 
-export async function getServerHistoryInfo(db, serverId, server = null) {
+export async function getServerHistoryInfo(env, serverId, server = null) {
   const target = server && server.id === serverId
     ? server
-    : (await getAllServers(db, true)).find(s => s.id === serverId);
+    : (await getAllServers(env, true)).find(s => s.id === serverId);
 
   if (!target) {
     debug(`Server ${serverId} not found`);
