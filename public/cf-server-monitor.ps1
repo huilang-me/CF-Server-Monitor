@@ -1155,8 +1155,14 @@ function Start-TimerCollectLoop {
                     $response = Invoke-WebRequest -UseBasicParsing -Uri $wUrl -Method Post -Body $json `
                         -ContentType "application/json; charset=utf-8" -Headers $requestHeaders -TimeoutSec 8 -ErrorAction Stop
                     if ([int]$response.StatusCode -eq 200 -and $response.Headers['X-Agent-Config-Md5']) {
+                        # Windows PowerShell 5.1 returns byte[] for some textual content types.
+                        $responseBody = if ($response.Content -is [byte[]]) {
+                            [Text.Encoding]::UTF8.GetString([byte[]]$response.Content)
+                        } else {
+                            [string]$response.Content
+                        }
                         $remoteConfig = ConvertFrom-AgentConfigResponse `
-                            -Body ([string]$response.Content) `
+                            -Body $responseBody `
                             -ConfigMd5 ([string]$response.Headers['X-Agent-Config-Md5'])
                         foreach ($entry in $remoteConfig.GetEnumerator()) {
                             if ($config -is [hashtable]) {
