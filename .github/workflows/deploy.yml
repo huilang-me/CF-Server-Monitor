@@ -88,6 +88,7 @@ jobs:
           new_sqlite_classes = ["ConfigCache"]
 
           [vars]
+          CONFIG_L1_TTL_MS = "5000"
           API_SECRET = "SECRET_PLACEHOLDER"
           API_USER_NAME = "USER_NAME_PLACEHOLDER"
           CORS_ALLOWED_ORIGINS = "CORS_ORIGINS_PLACEHOLDER"

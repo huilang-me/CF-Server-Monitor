@@ -42,6 +42,17 @@
 - 前端通过 `config.json` 获取 API 地址，支持多后端聚合
 - 路由使用 **Hash 模式**（`/#/`、`/#/server/:id`、`/#/admin`）
 
+### `servers/settings` 三级缓存
+
+```text
+Worker isolate L1（默认 5 秒） → ConfigCache DO L2（5 分钟） → D1
+```
+
+- L1 TTL 可通过 `CONFIG_L1_TTL_MS` 配置为 0～60000 毫秒，`0` 表示关闭。
+- L1 未命中时访问单例 `ConfigCache` DO；L2 未命中或过期时才读取 D1。
+- 写入成功、失败或乐观锁冲突后都会从 D1 刷新 L2，并清理/更新当前 isolate 的 L1。
+- 不同 isolate 无主动通知能力，因此跨节点最多允许一个 L1 TTL 的旧值窗口。
+
 ---
 
 ## 2. 启动流程

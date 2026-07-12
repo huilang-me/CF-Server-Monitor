@@ -1156,20 +1156,28 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
 
 ### 4.4 `GET /__do/config-health` - 全局配置缓存健康检查
 
-检查 `ConfigCache` Durable Object 是否绑定，并显示 `servers/settings` 是否已经加载到 DO 内存：
+检查当前 Worker isolate 的 L1 与 `ConfigCache` Durable Object L2 状态：
 
 ```json
 {
   "ok": true,
-  "serversCached": true,
-  "settingsCached": true,
-  "serversAgeMs": 1200,
-  "settingsAgeMs": 800,
-  "ttlMs": 300000
+  "l1": {
+    "ttlMs": 5000,
+    "servers": { "cached": true, "fresh": true, "ageMs": 120, "expiresInMs": 4880, "loading": false },
+    "settings": { "cached": true, "fresh": true, "ageMs": 80, "expiresInMs": 4920, "loading": false }
+  },
+  "l2": {
+    "ok": true,
+    "serversCached": true,
+    "settingsCached": true,
+    "serversAgeMs": 1200,
+    "settingsAgeMs": 800,
+    "ttlMs": 300000
+  }
 }
 ```
 
-该 DO 不持久化缓存副本；写入后立即从 D1 重载，另有 5 分钟兜底 TTL。对象回收后两个缓存状态会重新变为未加载，下一次业务读取自动从 D1 重建。
+L1 默认 TTL 为 5 秒，可通过 `CONFIG_L1_TTL_MS` 在 0～60000 毫秒间调整，设为 `0` 可关闭 L1。L2 不持久化缓存副本，写入后立即从 D1 重载，另有 5 分钟兜底 TTL。其他 isolate 最多在 L1 TTL 内读取旧值。
 
 ***
 

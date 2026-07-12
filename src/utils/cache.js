@@ -1,7 +1,7 @@
 /**
  * 缓存管理模块。
  *
- * servers/settings 不再使用 Worker isolate 本地缓存，统一读取 ConfigCache DO。
+ * servers/settings 使用 Worker isolate L1 + ConfigCache DO L2 + D1 L3。
  * 最新指标和历史查询结果仍保留短期本地缓存，它们不属于低频配置数据。
  */
 
@@ -28,8 +28,8 @@ function filterServersByHidden(servers, includeHidden) {
     .map(server => ({ ...server }));
 }
 
-export async function getAllServers(env, includeHidden = true) {
-  const servers = await readServers(env);
+export async function getAllServers(env, includeHidden = true, options = {}) {
+  const servers = await readServers(env, options);
   return filterServersByHidden(servers, includeHidden);
 }
 
@@ -38,7 +38,7 @@ export async function clearServersListCache(env) {
 }
 
 export function clearServerDetailCache() {
-  // 兼容旧调用；服务器详情已经与列表统一存放在 ConfigCache DO。
+  // 兼容旧调用；服务器详情复用服务器列表的三级缓存。
 }
 
 export async function getServerDetail(env, id, includeHidden = false) {

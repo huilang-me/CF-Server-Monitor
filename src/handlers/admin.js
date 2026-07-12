@@ -7,7 +7,6 @@ import { verifyTurnstileToken, hashPassword } from '../utils/common.js';
 import { AppError, createSuccessResponse, createBadRequestResponse, createUnauthorizedResponse, createErrorResponse, createConflictResponse } from '../utils/errors.js';
 import { addServerColumns } from '../database/updateDatabase.js';
 import { sendNotification } from '../services/notification.js';
-import { getNextServerHistoryPartitionId } from '../database/indexOptimization.js';
 import {
   VersionConflictError,
   insertServer,
@@ -367,21 +366,10 @@ export async function handleAdminAPI(request, env, sys) {
       const id = crypto.randomUUID();
       const group = data.server_group || 'Default';
 
-      const currentServers = await getAllServers(env, true);
-      const maxOrder = currentServers.reduce(
-        (max, server) => Math.max(max, Number(server.sort_order) || 0),
-        -1
-      );
-      const sortOrder = maxOrder + 1;
-
-      const historyPartitionId = await getNextServerHistoryPartitionId(env);
-
       const server = await insertServer(env, {
         id,
         name,
         server_group: group,
-        sort_order: sortOrder,
-        history_partition_id: historyPartitionId,
         timestamp: Date.now()
       });
       

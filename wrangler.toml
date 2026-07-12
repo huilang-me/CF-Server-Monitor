@@ -41,6 +41,7 @@ tag = "v2"
 new_sqlite_classes = ["ConfigCache"]
 
 [vars]
+CONFIG_L1_TTL_MS = "5000"
 
 # 开发服务器配置
 [dev]

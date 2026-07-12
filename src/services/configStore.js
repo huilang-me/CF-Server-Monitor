@@ -1,4 +1,79 @@
 const CONFIG_CACHE_ID = 'global';
+const DEFAULT_L1_TTL_MS = 5_000;
+const MAX_L1_TTL_MS = 60_000;
+const MAX_HISTORY_PARTITION_ID = 900;
+
+const localCache = {
+  servers: { data: null, loadedAt: 0, expiresAt: 0, loading: null, generation: 0 },
+  settings: { data: null, loadedAt: 0, expiresAt: 0, loading: null, generation: 0 }
+};
+
+function getL1Ttl(env) {
+  const configured = Number(env?.CONFIG_L1_TTL_MS);
+  if (!Number.isFinite(configured)) return DEFAULT_L1_TTL_MS;
+  return Math.max(0, Math.min(MAX_L1_TTL_MS, Math.trunc(configured)));
+}
+
+function clearLocalCache(scope = 'all') {
+  for (const key of scope === 'all' ? ['servers', 'settings'] : [scope]) {
+    const state = localCache[key];
+    if (!state) continue;
+    state.generation++;
+    state.data = null;
+    state.loadedAt = 0;
+    state.expiresAt = 0;
+  }
+}
+
+function setLocalCache(scope, data, env) {
+  const state = localCache[scope];
+  if (!state) return data;
+  const ttl = getL1Ttl(env);
+  state.generation++;
+  state.data = ttl > 0 ? data : null;
+  state.loadedAt = ttl > 0 ? Date.now() : 0;
+  state.expiresAt = ttl > 0 ? state.loadedAt + ttl : 0;
+  return data;
+}
+
+async function readThroughLocalCache(scope, env, loader) {
+  const state = localCache[scope];
+  const now = Date.now();
+  if (state.data !== null && now < state.expiresAt) return state.data;
+  if (state.loading && state.loading.generation === state.generation) {
+    return state.loading.promise;
+  }
+
+  const generation = state.generation;
+  const loading = { generation, promise: null };
+  loading.promise = Promise.resolve()
+    .then(loader)
+    .then(data => {
+      if (state.generation === generation) setLocalCache(scope, data, env);
+      return data;
+    })
+    .finally(() => {
+      if (state.loading === loading) state.loading = null;
+    });
+  state.loading = loading;
+  return loading.promise;
+}
+
+export function getLocalConfigCacheStatus(env) {
+  const now = Date.now();
+  const describe = state => ({
+    cached: state.data !== null,
+    fresh: state.data !== null && now < state.expiresAt,
+    ageMs: state.data !== null ? now - state.loadedAt : null,
+    expiresInMs: state.data !== null ? Math.max(0, state.expiresAt - now) : null,
+    loading: state.loading !== null
+  });
+  return {
+    ttlMs: getL1Ttl(env),
+    servers: describe(localCache.servers),
+    settings: describe(localCache.settings)
+  };
+}
 
 export class VersionConflictError extends Error {
   constructor(resource, current = null) {
@@ -31,6 +106,8 @@ async function readCacheJson(env, path) {
 async function mutateSettingsThroughCache(env, action, body) {
   const stub = getCacheStub(env);
   if (!stub) return { handled: false, result: null };
+  // 请求结果可能不明确，发起写入前就使 L1 失效；旧回源受 generation 保护。
+  clearLocalCache('settings');
   const response = await stub.fetch(`http://internal/settings/mutate/${action}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -42,6 +119,22 @@ async function mutateSettingsThroughCache(env, action, body) {
   }
   if (!response.ok) {
     throw new Error(data.error || `ConfigCache settings mutation failed: ${response.status}`);
+  }
+  return { handled: true, result: data.result };
+}
+
+async function createServerThroughCache(env, server) {
+  const stub = getCacheStub(env);
+  if (!stub) return { handled: false, result: null };
+  clearLocalCache('servers');
+  const response = await stub.fetch('http://internal/servers/mutate/create', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(server)
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || `ConfigCache server creation failed: ${response.status}`);
   }
   return { handled: true, result: data.result };
 }
@@ -60,21 +153,34 @@ async function readSettingsFromD1(env) {
   return results;
 }
 
-export async function readServers(env) {
-  const cached = await readCacheJson(env, '/servers');
-  return cached ? cached.servers || [] : readServersFromD1(env);
+export async function readServers(env, options = {}) {
+  const loader = async () => {
+    const cached = await readCacheJson(env, '/servers');
+    return cached ? cached.servers || [] : readServersFromD1(env);
+  };
+  if (options.bypassL1) return loader();
+  return readThroughLocalCache('servers', env, loader);
 }
 
 export async function readSettingsRows(env) {
-  const cached = await readCacheJson(env, '/settings');
-  return cached ? cached.settings || [] : readSettingsFromD1(env);
+  return readThroughLocalCache('settings', env, async () => {
+    const cached = await readCacheJson(env, '/settings');
+    return cached ? cached.settings || [] : readSettingsFromD1(env);
+  });
 }
 
 export async function refreshConfigCache(env, scope = 'all') {
+  clearLocalCache(scope);
   const stub = getCacheStub(env);
   if (!stub) {
-    if (scope === 'servers') return { servers: await readServersFromD1(env) };
-    if (scope === 'settings') return { settings: await readSettingsFromD1(env) };
+    if (scope === 'servers') {
+      const servers = await readServersFromD1(env);
+      return { servers };
+    }
+    if (scope === 'settings') {
+      const settings = await readSettingsFromD1(env);
+      return { settings };
+    }
     const [servers, settings] = await Promise.all([
       readServersFromD1(env),
       readSettingsFromD1(env)
@@ -91,10 +197,12 @@ export async function refreshConfigCache(env, scope = 'all') {
     const message = await response.text();
     throw new Error(`ConfigCache refresh failed: ${response.status} ${message}`);
   }
-  return response.json();
+  const data = await response.json();
+  return data;
 }
 
 export async function invalidateConfigCache(env, scope = 'all') {
+  clearLocalCache(scope);
   const stub = getCacheStub(env);
   if (!stub) return;
   const response = await stub.fetch('http://internal/invalidate', {
@@ -131,7 +239,29 @@ async function refreshAfterWrite(env, scope, write) {
 }
 
 export async function insertServer(env, server) {
+  const cachedMutation = await createServerThroughCache(env, server);
+  if (cachedMutation.handled) return cachedMutation.result;
+
   return refreshAfterWrite(env, 'servers', async () => {
+    const currentServers = await readServersFromD1(env);
+    const maxSortOrder = currentServers.reduce(
+      (max, item) => Math.max(max, Number(item.sort_order) || 0),
+      -1
+    );
+    const usedPartitionIds = new Set(
+      currentServers
+        .map(item => Number(item.history_partition_id))
+        .filter(id => Number.isInteger(id) && id > 0 && id <= MAX_HISTORY_PARTITION_ID)
+    );
+    let historyPartitionId = null;
+    for (let id = 1; id <= MAX_HISTORY_PARTITION_ID; id++) {
+      if (!usedPartitionIds.has(id)) {
+        historyPartitionId = id;
+        break;
+      }
+    }
+    if (!historyPartitionId) throw new Error('No available history partition id');
+
     const result = await env.DB.prepare(`
       INSERT INTO servers
       (id, name, server_group, sort_order, history_partition_id, timestamp, version)
@@ -141,8 +271,8 @@ export async function insertServer(env, server) {
       server.id,
       server.name,
       server.server_group,
-      server.sort_order,
-      server.history_partition_id,
+      maxSortOrder + 1,
+      historyPartitionId,
       server.timestamp
     ).first();
     return result;
@@ -245,7 +375,7 @@ export async function removeServers(env, ids, expectedVersions = {}) {
   return refreshAfterWrite(env, 'servers', async () => {
     const requestedIds = new Set(ids);
     const currentById = new Map(
-      (await readServers(env))
+      (await readServers(env, { bypassL1: true }))
         .filter(server => requestedIds.has(server.id))
         .map(server => [server.id, server])
     );
@@ -384,18 +514,22 @@ export async function saveSettingsBundle(env, valuesByKey, expectedVersions) {
 
     const statements = keys.map(key => {
       const row = current.get(key);
+      const nextValue = {
+        ...parseJson(row?.value),
+        ...(valuesByKey[key] || {})
+      };
       if (!row) {
         return env.DB.prepare(`
           INSERT INTO settings (key, value, version)
           SELECT ?, ?, 1
           WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = ?)
-        `).bind(key, JSON.stringify(valuesByKey[key]), key);
+        `).bind(key, JSON.stringify(nextValue), key);
       }
       return env.DB.prepare(`
         UPDATE settings
         SET value = ?, version = version + 1
         WHERE key = ? AND version = ?
-      `).bind(JSON.stringify(valuesByKey[key]), key, Number(expectedVersions[key]));
+      `).bind(JSON.stringify(nextValue), key, Number(expectedVersions[key]));
     });
     const batchResults = await env.DB.batch(statements);
     if (batchResults.some(result => result.meta.changes !== 1)) {

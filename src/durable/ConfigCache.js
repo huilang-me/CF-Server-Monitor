@@ -11,6 +11,7 @@ function json(data, status = 200) {
 }
 
 const CONFIG_CACHE_TTL_MS = 5 * 60 * 1000;
+const HISTORY_MAX_PARTITION_ID = 900;
 
 class CacheVersionConflictError extends Error {
   constructor(resource, current = null) {
@@ -41,6 +42,7 @@ export class ConfigCache {
     this.serversLoadPromise = null;
     this.settingsLoadPromise = null;
     this.mutationQueue = Promise.resolve();
+    this.serverMutationQueue = Promise.resolve();
   }
 
   async _ensureVersionColumns() {
@@ -147,6 +149,65 @@ export class ConfigCache {
     return run;
   }
 
+  _enqueueServerMutation(operation) {
+    const run = this.serverMutationQueue.then(async () => {
+      try {
+        return await operation();
+      } finally {
+        this.servers = null;
+        this.serversLoadedAt = 0;
+        try {
+          await this._loadServers(true);
+        } catch (_) {
+          this.servers = null;
+          this.serversLoadedAt = 0;
+        }
+      }
+    });
+    this.serverMutationQueue = run.catch(() => {});
+    return run;
+  }
+
+  async _createServer(body) {
+    if (!body || typeof body.id !== 'string' || !body.id || typeof body.name !== 'string' || !body.name) {
+      throw new Error('invalid server');
+    }
+    const { results = [] } = await this.env.DB.prepare(
+      'SELECT sort_order, history_partition_id FROM servers'
+    ).all();
+    const usedPartitionIds = new Set(
+      results
+        .map(server => Number(server.history_partition_id))
+        .filter(id => Number.isInteger(id) && id > 0 && id <= HISTORY_MAX_PARTITION_ID)
+    );
+    let historyPartitionId = null;
+    for (let id = 1; id <= HISTORY_MAX_PARTITION_ID; id++) {
+      if (!usedPartitionIds.has(id)) {
+        historyPartitionId = id;
+        break;
+      }
+    }
+    if (!historyPartitionId) throw new Error('No available history partition id');
+
+    const maxSortOrder = results.reduce(
+      (max, server) => Math.max(max, Number(server.sort_order) || 0),
+      -1
+    );
+    return this.env.DB.prepare(`
+      INSERT INTO servers
+      (id, name, server_group, sort_order, history_partition_id, timestamp, version)
+      VALUES (?, ?, ?, ?, ?, ?, 1)
+      RETURNING *
+    `).bind(
+      body.id,
+      body.name,
+      body.server_group || 'Default',
+      maxSortOrder + 1,
+      historyPartitionId,
+      Number(body.timestamp) || Date.now()
+    ).first();
+  }
+
   async _patchJsonSetting(body) {
     const key = String(body.key || '');
     if (!key || !body.updates || typeof body.updates !== 'object' || Array.isArray(body.updates)) {
@@ -209,18 +270,22 @@ export class ConfigCache {
 
     const statements = keys.map(key => {
       const row = current.get(key);
+      const nextValue = {
+        ...parseJson(row?.value),
+        ...(valuesByKey[key] || {})
+      };
       if (!row) {
         return this.env.DB.prepare(`
           INSERT INTO settings (key, value, version)
           SELECT ?, ?, 1
           WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = ?)
-        `).bind(key, JSON.stringify(valuesByKey[key]), key);
+        `).bind(key, JSON.stringify(nextValue), key);
       }
       return this.env.DB.prepare(`
         UPDATE settings
         SET value = ?, version = version + 1
         WHERE key = ? AND version = ?
-      `).bind(JSON.stringify(valuesByKey[key]), key, Number(expectedVersions[key]));
+      `).bind(JSON.stringify(nextValue), key, Number(expectedVersions[key]));
     });
     const batchResults = await this.env.DB.batch(statements);
     if (batchResults.some(result => result.meta.changes !== 1)) {
@@ -256,6 +321,12 @@ export class ConfigCache {
 
       if (request.method === 'GET' && path === '/settings') {
         return json({ settings: await this._loadSettings() });
+      }
+
+      if (request.method === 'POST' && path === '/servers/mutate/create') {
+        const body = await request.json();
+        const result = await this._enqueueServerMutation(() => this._createServer(body));
+        return json({ result });
       }
 
       if (request.method === 'POST' && path.startsWith('/settings/mutate/')) {

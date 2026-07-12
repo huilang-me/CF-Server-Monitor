@@ -11,6 +11,7 @@ import { getServerDetail, getMetricsHistoryCache, setMetricsHistoryCache, getCac
 import { AppError, createSuccessResponse, createUnauthorizedResponse, createBadRequestResponse, createNotFoundResponse, createErrorResponse } from './utils/errors.js';
 import { verifyTurnstileToken } from './utils/common.js';
 import { getCorsAllowedOrigins, createOptionsResponse, applyCors } from './utils/cors.js';
+import { getLocalConfigCacheStatus } from './services/configStore.js';
 // Durable Objects: 实时指标广播
 // 显式 import + extends，确保 wrangler 静态分析器能在入口文件直接识别此 DO 类
 import { MetricsBroadcaster as _MetricsBroadcaster }
@@ -227,14 +228,28 @@ export default {
       }},
       { method: 'GET', path: '/__do/config-health', handler: async () => {
         if (!env.CONFIG_CACHE) {
-          return createSuccessResponse({ ok: false, reason: 'ConfigCache DO not bound' });
+          return createSuccessResponse({
+            ok: false,
+            reason: 'ConfigCache DO not bound',
+            l1: getLocalConfigCacheStatus(env)
+          });
         }
         try {
           const id = env.CONFIG_CACHE.idFromName('global');
           const stub = env.CONFIG_CACHE.get(id);
-          return await stub.fetch('http://internal/health');
+          const response = await stub.fetch('http://internal/health');
+          const l2 = await response.json();
+          return createSuccessResponse({
+            ok: response.ok && l2.ok === true,
+            l1: getLocalConfigCacheStatus(env),
+            l2
+          });
         } catch (e) {
-          return createSuccessResponse({ ok: false, reason: e.message });
+          return createSuccessResponse({
+            ok: false,
+            reason: e.message,
+            l1: getLocalConfigCacheStatus(env)
+          });
         }
       }},
       { method: 'GET', path: '/api/config', handler: async () => {

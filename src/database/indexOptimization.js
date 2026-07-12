@@ -36,7 +36,7 @@ export async function ensureServerOptimization(env) {
     return { success: true, assigned: 0 };
   }
 
-  const servers = (await getAllServers(env, true))
+  const servers = (await getAllServers(env, true, { bypassL1: true }))
     .map(server => ({
       id: server.id,
       history_partition_id: server.history_partition_id
@@ -83,7 +83,7 @@ export async function ensureServerOptimization(env) {
 
 // 获取下一个可用的历史记录分区ID
 export async function getNextServerHistoryPartitionId(env) {
-  const servers = await getAllServers(env, true);
+  const servers = await getAllServers(env, true, { bypassL1: true });
   const usedIds = new Set(
     servers
       .map(s => Number(s.history_partition_id))

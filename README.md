@@ -59,7 +59,7 @@
 - 🔑 **JWT 认证**：登录系统采用 JWT token 认证，支持自定义密钥
 - 📉 **额度查询**：后台可查询 Cloudflare D1 当日读写行数与 Workers 请求量
 - ⚡ **实时推送**：基于 Durable Objects + WebSocket，探针上报后页面立即刷新，无轮询延迟
-- 🌐 **全局配置缓存**：`servers/settings` 统一由 Durable Object 缓存，写入后立即从 D1 同步，并通过版本乐观锁避免旧页面覆盖新配置
+- 🌐 **三级配置缓存**：`servers/settings` 使用 Worker L1 → Durable Object L2 → D1，写入后刷新缓存，并通过版本乐观锁避免旧页面覆盖新配置
 
 ## 🚀 快速开始
 
@@ -421,6 +421,10 @@ Windows 系统（Python 版）
 1. 在 Workers & Pages 页面的 **Settings** → **Variables and secrets** 中添加 `CORS_ALLOWED_ORIGINS`
 2. 值设置为允许跨域的域名，多个域名用逗号分隔，例如：`https://example.com,https://www.example.com`
 3. 不设置此变量或留空时，默认仅允许同源请求
+
+### 配置 L1 缓存时间（可选）
+
+`servers/settings` 默认在每个 Worker isolate 内缓存 5 秒。可设置 `CONFIG_L1_TTL_MS` 调整为 `0`～`60000` 毫秒；设为 `0` 时关闭 L1，所有配置读取直接进入 ConfigCache DO。
 
 ### Cloudflare 额度查询（可选）
 

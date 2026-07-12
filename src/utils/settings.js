@@ -144,16 +144,10 @@ export async function saveSiteOptions(env, updates, expectedVersion = null) {
 }
 
 export async function saveAllSettings(env, appearanceOptions, siteUpdates, expectedVersions) {
-  const rows = await readSettingsRows(env);
-  const rowsByKey = mapRows(rows);
-  const currentAppearance = tryParseJSON(rowsByKey.get('appearance_options')?.value) || {};
-  const currentSite = tryParseJSON(rowsByKey.get('site_options')?.value) || {};
-
-  const values = {
-    appearance_options: { ...currentAppearance, ...appearanceOptions },
-    site_options: { ...currentSite, ...siteUpdates }
-  };
-  await saveSettingsBundle(env, values, expectedVersions);
+  await saveSettingsBundle(env, {
+    appearance_options: appearanceOptions,
+    site_options: siteUpdates
+  }, expectedVersions);
   return loadSettings(env);
 }
 
