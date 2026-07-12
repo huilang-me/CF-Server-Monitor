@@ -34,6 +34,7 @@ async function fetchConfig() {
     const verified = data.verified === true
     const isPublic = data.is_public !== false
     const authorization = data.authorization === true
+    const siteTitle = data.site_title || ''
 
     if (version) {
       VERSION.value = version
@@ -46,7 +47,8 @@ async function fetchConfig() {
       version,
       verified,
       is_public: isPublic,
-      authorization
+      authorization,
+      site_title: siteTitle
     }
   } catch (e) {
     console.error('Failed to fetch config:', e)
@@ -247,8 +249,9 @@ async function initApp() {
         version: first.data.version || '',
         verified: sharedTurnstileSite ? enabledTurnstileSites.every(site => site.verified) : first.data.verified === true,
         is_public: !privateAccess.hasPrivateSite,
-        authorization: !privateAccess.hasUnauthorizedPrivateSite
-      } : { turnstile_enabled: false, turnstile_login_enabled: false, turnstile_site_key: '', turnstile_api_index: 0, version: '', verified: false, is_public: true, authorization: false }
+        authorization: !privateAccess.hasUnauthorizedPrivateSite,
+        site_title: getTitle() || first.data.site_title || ''
+      } : { turnstile_enabled: false, turnstile_login_enabled: false, turnstile_site_key: '', turnstile_api_index: 0, version: '', verified: false, is_public: true, authorization: false, site_title: getTitle() || '' }
       if (sharedTurnstileSite) {
         config.turnstile_enabled = true
         config.turnstile_site_key = sharedTurnstileSite.siteKey
@@ -276,6 +279,7 @@ async function initApp() {
   }
 
   const app = createApp(App)
+  app.provide('appConfig', config || {})
   app.use(router)
   app.mount('#app').$nextTick(() => {
     if (!isAdmin && !config.is_public && !config.authorization) {

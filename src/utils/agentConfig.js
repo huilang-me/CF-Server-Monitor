@@ -3,6 +3,7 @@ import { md5Hash } from './common.js';
 export const AGENT_CONFIG_SCHEMA_VERSION = 1;
 export const AGENT_CONFIG_SCHEMA_HEADER = 'X-Agent-Config-Schema';
 export const AGENT_CONFIG_MD5_HEADER = 'X-Agent-Config-Md5';
+export const MAX_TRAFFIC_CORRECTION_GB = 1000000;
 
 const ALLOWED_COLLECT_INTERVALS = new Set([0, 1, 2, 5, 10]);
 const ALLOWED_REPORT_INTERVALS = new Set([30, 60, 120, 180]);
@@ -70,7 +71,28 @@ function storedInteger(value, allowedValues, fallback) {
   return Number.isInteger(number) && allowedValues.has(number) ? number : fallback;
 }
 
-export function buildAgentConfig(server) {
+function sanitizePingNode(value) {
+  if (typeof value !== 'string') return '';
+  return value.replace(/[^a-zA-Z0-9.\-_]/g, '').slice(0, 50);
+}
+
+export function isValidTrafficCorrection(value) {
+  let number;
+  if (typeof value === 'number') {
+    number = value;
+  } else if (typeof value === 'string' && /^[0-9]+(?:\.[0-9]+)?$/.test(value)) {
+    number = Number(value);
+  } else {
+    return false;
+  }
+  return Number.isFinite(number) && number >= 0 && number <= MAX_TRAFFIC_CORRECTION_GB;
+}
+
+export function normalizeTrafficCorrection(value) {
+  return isValidTrafficCorrection(value) ? Number(value) : 0;
+}
+
+export function buildAgentConfig(server, settings = null) {
   const collectInterval = storedInteger(server?.collect_interval, ALLOWED_COLLECT_INTERVALS, 0);
   let reportInterval = storedInteger(server?.report_interval, ALLOWED_REPORT_INTERVALS, 60);
   if (collectInterval > 0 && reportInterval < collectInterval) reportInterval = 60;
@@ -84,11 +106,20 @@ export function buildAgentConfig(server) {
 
   const pingMode = ALLOWED_PING_MODES.has(server?.ping_mode) ? server.ping_mode : 'http';
 
+  const customCt = sanitizePingNode(server?.custom_ct || settings?.custom_ct || '');
+  const customCu = sanitizePingNode(server?.custom_cu || settings?.custom_cu || '');
+  const customCm = sanitizePingNode(server?.custom_cm || settings?.custom_cm || '');
+  const customBd = sanitizePingNode(server?.custom_bd || settings?.custom_bd || '');
+
   return {
     collect_interval: collectInterval,
     ping_mode: pingMode,
     report_interval: reportInterval,
     reset_day: resetDay,
+    custom_ct: customCt,
+    custom_cu: customCu,
+    custom_cm: customCm,
+    custom_bd: customBd,
     schema_version: AGENT_CONFIG_SCHEMA_VERSION
   };
 }
@@ -98,12 +129,32 @@ export function serializeAgentConfig(config) {
     `&ping_mode=${config.ping_mode}` +
     `&report_interval=${config.report_interval}` +
     `&reset_day=${config.reset_day}` +
-    `&schema_version=${config.schema_version}`;
+    `&schema_version=${config.schema_version}` +
+    `&custom_ct=${config.custom_ct}` +
+    `&custom_cu=${config.custom_cu}` +
+    `&custom_cm=${config.custom_cm}` +
+    `&custom_bd=${config.custom_bd}`;
 }
 
-export async function describeAgentConfig(server) {
-  const config = buildAgentConfig(server);
+export function serializeCorrection(correction) {
+  if (correction === null || correction === undefined) return '';
+  return `&rx_correction=${correction.rx_correction}` +
+    `&tx_correction=${correction.tx_correction}`;
+}
+
+export async function describeAgentConfig(server, settings = null) {
+  const config = buildAgentConfig(server, settings);
   const serialized = serializeAgentConfig(config);
   const md5 = await md5Hash(serialized);
-  return { config, serialized, md5 };
+
+  const hasCorrection = server?.rx_correction != null || server?.tx_correction != null;
+  let correction = null;
+  if (hasCorrection) {
+    correction = {
+      rx_correction: normalizeTrafficCorrection(server.rx_correction),
+      tx_correction: normalizeTrafficCorrection(server.tx_correction)
+    };
+  }
+
+  return { config, serialized, md5, correction };
 }

@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 <#
 .SYNOPSIS
     CF-Server-Monitor Windows 探针 (PowerShell 版)
@@ -17,7 +17,7 @@
 .PARAMETER Url
     Worker 上报地址
 .PARAMETER CollectInterval
-    数据采集间隔（秒），0 表示不额外缓存采样。
+    兼容参数。Windows PowerShell 版不使用 samples 采样缓存，始终按上报间隔采集并上报。
 .PARAMETER ReportInterval
     上报间隔（秒），默认 60
 .PARAMETER PingType
@@ -116,6 +116,7 @@ $DEFAULT_CT = "gd-ct-dualstack.ip.zstaticcdn.com"
 $DEFAULT_CU = "gd-cu-dualstack.ip.zstaticcdn.com"
 $DEFAULT_CM = "gd-cm-dualstack.ip.zstaticcdn.com"
 $DEFAULT_BD = "lf3-ips.zstaticcdn.com"
+$MAX_TRAFFIC_CORRECTION_GB = 1000000
 
 $MAX_LOG_SIZE = 2MB
 $LOG_BACKUP_COUNT = 3
@@ -216,21 +217,28 @@ function Save-Config {
 function ConvertFrom-AgentConfigResponse {
     param([string]$Body, [string]$ConfigMd5)
 
-    if ([string]::IsNullOrEmpty($Body) -or [Text.Encoding]::UTF8.GetByteCount($Body) -gt 512) {
+    if ([string]::IsNullOrEmpty($Body) -or [Text.Encoding]::UTF8.GetByteCount($Body) -gt 1024) {
         throw "动态配置响应长度无效"
     }
     $ConfigMd5 = $ConfigMd5.Trim().ToLowerInvariant()
     if ($ConfigMd5 -notmatch '^[a-f0-9]{32}$') { throw "动态配置 MD5 无效" }
-    if ($Body -notmatch '^[a-z0-9_=&]+$') { throw "动态配置包含非法字符" }
+    if ($Body -notmatch '^[a-z0-9_=&.\-]+$') { throw "动态配置包含非法字符" }
 
-    $expectedKeys = @('collect_interval', 'ping_mode', 'report_interval', 'reset_day', 'schema_version')
+    $expectedKeys = @('collect_interval', 'ping_mode', 'report_interval', 'reset_day', 'schema_version', 'custom_ct', 'custom_cu', 'custom_cm', 'custom_bd')
     $parts = $Body.Split('&')
-    if ($parts.Count -ne $expectedKeys.Count) { throw "动态配置字段数量无效" }
+    if ($parts.Count -lt $expectedKeys.Count) { throw "动态配置字段数量无效" }
     $values = @{}
-    for ($i = 0; $i -lt $parts.Count; $i++) {
+    for ($i = 0; $i -lt [Math]::Min($parts.Count, $expectedKeys.Count); $i++) {
         $pair = $parts[$i].Split('=')
         if ($pair.Count -ne 2 -or $pair[0] -ne $expectedKeys[$i]) { throw "动态配置字段无效" }
         $values[$pair[0]] = $pair[1]
+    }
+
+    for ($i = $expectedKeys.Count; $i -lt $parts.Count; $i++) {
+        $pair = $parts[$i].Split('=')
+        if ($pair.Count -eq 2) {
+            $values[$pair[0]] = $pair[1]
+        }
     }
 
     foreach ($key in @('collect_interval', 'report_interval', 'reset_day', 'schema_version')) {
@@ -245,15 +253,31 @@ function ConvertFrom-AgentConfigResponse {
     if (@('http', 'tcp') -notcontains $values.ping_mode) { throw "ping_mode 无效" }
     if ($reset -lt 0 -or $reset -gt 31 -or $schema -ne 1) { throw "reset_day 或 schema_version 无效" }
 
-    $canonical = "collect_interval=$collect&ping_mode=$($values.ping_mode)&report_interval=$report&reset_day=$reset&schema_version=$schema"
-    if ($Body -cne $canonical) { throw "动态配置不是规范格式" }
-    return @{
+    $canonical = "collect_interval=$collect&ping_mode=$($values.ping_mode)&report_interval=$report&reset_day=$reset&schema_version=$schema&custom_ct=$($values.custom_ct)&custom_cu=$($values.custom_cu)&custom_cm=$($values.custom_cm)&custom_bd=$($values.custom_bd)"
+    if ($Body -cne $canonical -and $Body -cne "$canonical&rx_correction=$($values.rx_correction)&tx_correction=$($values.tx_correction)") {
+        throw "动态配置不是规范格式"
+    }
+
+    $result = @{
         collect_interval = $collect
         ping_type = $values.ping_mode
         report_interval = $report
         reset_day = $reset
         config_md5 = $ConfigMd5
+        ct_node = $values.custom_ct
+        cu_node = $values.custom_cu
+        cm_node = $values.custom_cm
+        bd_node = $values.custom_bd
     }
+
+    if ($values.ContainsKey('rx_correction') -and $values.rx_correction -ne '') {
+        $result.rx_correction = $values.rx_correction
+    }
+    if ($values.ContainsKey('tx_correction') -and $values.tx_correction -ne '') {
+        $result.tx_correction = $values.tx_correction
+    }
+
+    return $result
 }
 
 function Test-Admin {
@@ -671,6 +695,87 @@ function Save-TrafficData {
     $lines -join "`n" | Set-Content $TRAFFIC_FILE -Encoding UTF8
 }
 
+function Apply-TrafficCorrection {
+    param([string]$RxCorrection, [string]$TxCorrection)
+    if ([string]::IsNullOrEmpty($RxCorrection)) { $RxCorrection = "0" }
+    if ([string]::IsNullOrEmpty($TxCorrection)) { $TxCorrection = "0" }
+    if (-not (Test-CorrectionValue $RxCorrection) -or -not (Test-CorrectionValue $TxCorrection)) { return $false }
+
+    $rxBytes = 0; $txBytes = 0
+    $rxBytes = [long]([double]$RxCorrection * 1GB)
+    $txBytes = [long]([double]$TxCorrection * 1GB)
+
+    $saved = @{
+        RX_PREV = "0"; TX_PREV = "0"
+        RX_PERIOD = "0"; TX_PERIOD = "0"
+        LAST_CHECK = "0"; PERIOD_START = "0"
+    }
+    if (Test-Path $TRAFFIC_FILE) {
+        Get-Content $TRAFFIC_FILE | ForEach-Object {
+            $parts = $_.Split('=', 2)
+            if ($parts.Count -eq 2) { $saved[$parts[0].Trim()] = $parts[1].Trim() }
+        }
+    }
+
+    $saved.RX_PERIOD = $rxBytes.ToString()
+    $saved.TX_PERIOD = $txBytes.ToString()
+    Write-Log "流量校正已应用: RX=${RxCorrection}GB (${rxBytes} bytes) TX=${TxCorrection}GB (${txBytes} bytes)" "INFO"
+
+    $nowTs = [long]([DateTimeOffset]::Now.ToUnixTimeSeconds())
+    $saved.LAST_CHECK = $nowTs.ToString()
+    Save-TrafficData -Data $saved
+    return $true
+}
+
+function Normalize-CorrectionValue {
+    param([string]$Value)
+    if ([string]::IsNullOrEmpty($Value)) { return "0" }
+    return $Value
+}
+
+function Test-CorrectionValue {
+    param([string]$Value)
+    $normalized = Normalize-CorrectionValue $Value
+    if ($normalized -notmatch '^[0-9]+(\.[0-9]+)?$') { return $false }
+    $number = [double]$normalized
+    return $number -ge 0 -and $number -le $MAX_TRAFFIC_CORRECTION_GB
+}
+
+function Send-CorrectionConfirm {
+    param([string]$ServerId, [string]$Secret, [string]$WorkerUrl, [string]$RxCorrection, [string]$TxCorrection)
+    $rxValue = Normalize-CorrectionValue $RxCorrection
+    $txValue = Normalize-CorrectionValue $TxCorrection
+    if (-not (Test-CorrectionValue $rxValue) -or -not (Test-CorrectionValue $txValue)) { return $false }
+    $payload = @{
+        id = $ServerId
+        secret = $Secret
+        rx_correction = [double]$rxValue
+        tx_correction = [double]$txValue
+    } | ConvertTo-Json -Compress
+
+    try {
+        $response = Invoke-WebRequest -UseBasicParsing -Uri $WorkerUrl -Method Post -Body $payload `
+            -ContentType "application/json; charset=utf-8" -TimeoutSec 4 -ErrorAction Stop
+        if ([int]$response.StatusCode -ge 200 -and [int]$response.StatusCode -lt 300) {
+            Write-Log "流量校正确认已发送: RX=${rxValue}GB TX=${txValue}GB" "INFO"
+            return $true
+        }
+    } catch {
+        Write-Log "流量校正确认发送失败: $_" "DEBUG"
+    }
+    return $false
+}
+
+function Invoke-TrafficCorrection {
+    param([string]$ServerId, [string]$Secret, [string]$WorkerUrl, [string]$RxCorrection, [string]$TxCorrection)
+    $rxValue = Normalize-CorrectionValue $RxCorrection
+    $txValue = Normalize-CorrectionValue $TxCorrection
+
+    if (Apply-TrafficCorrection -RxCorrection $rxValue -TxCorrection $txValue) {
+        [void](Send-CorrectionConfirm -ServerId $ServerId -Secret $Secret -WorkerUrl $WorkerUrl -RxCorrection $rxValue -TxCorrection $txValue)
+    }
+}
+
 function Get-PeriodStartTimestamp {
     param([int]$ResetDay, [long]$NowTs)
     if ($ResetDay -eq 0) { return 0 }
@@ -757,10 +862,12 @@ function Invoke-TrayCollectLoop {
     $statusItem.Text = "查看状态"
     $statusItem.Add_Click({
         $config = Load-Config
+        $effectiveStatusReportInterval = [math]::Max([int]$config.report_interval, 60)
         $msg = "CF-Server-Monitor 状态`n"
         $msg += "Server ID: $($config.server_id)`n"
         $msg += "Worker URL: $($config.worker_url)`n"
         $msg += "上报间隔: $($config.report_interval)秒`n"
+        $msg += "实际上报间隔: $effectiveStatusReportInterval秒`n"
         $msg += "日志文件: $LOG_FILE"
         [System.Windows.Forms.MessageBox]::Show($msg, "CF-Server-Monitor", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
     })
@@ -832,12 +939,6 @@ function Start-TimerCollectLoop {
     $secret = if ($Secret) { $Secret } else { $config.secret }
     $workerUrl = if ($Url) { $Url.Trim().Trim("'").Trim('"') } else { $config.worker_url.Trim().Trim("'").Trim('"') }
 
-    if ($null -ne $config.collect_interval) {
-        $collectInterval = [int]$config.collect_interval
-    } else {
-        $collectInterval = 0
-    }
-
     if ($config.report_interval) {
         $reportInterval = [int]$config.report_interval
     } else {
@@ -879,13 +980,10 @@ function Start-TimerCollectLoop {
         Write-Log "配置不完整，请填写 server_id, secret, worker_url" "ERROR"
         return
     }
-    if (@(0, 1, 2, 5, 10) -notcontains $collectInterval) { $collectInterval = 0 }
     if (@(30, 60, 120, 180) -notcontains $reportInterval) { $reportInterval = 60 }
     if (@('http', 'tcp') -notcontains $pingType) { $pingType = 'tcp' }
     if ($resetDay -lt 0 -or $resetDay -gt 31) { $resetDay = 1 }
-    if ($collectInterval -gt 0 -and $reportInterval -lt $collectInterval) {
-        $reportInterval = $collectInterval
-    }
+    $effectiveReportInterval = [math]::Max($reportInterval, 60)
 
     # ========================================
     # 持久状态变量（脚本作用域，跨 Timer Tick 保持）
@@ -904,12 +1002,10 @@ function Start-TimerCollectLoop {
     $script:cs_lossCm = ""
     $script:cs_lossBd = ""
     $script:cs_lastReportTime = 0
-    $script:cs_collectInterval = $collectInterval
-    $script:cs_reportInterval = $reportInterval
+    $script:cs_reportInterval = $effectiveReportInterval
     $script:cs_pingType = $pingType
     $script:cs_resetDay = $resetDay
     $script:cs_configMd5 = $configMd5
-    $script:cs_samples = @()
 
     $pingTempFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "cf_probe_ping_results.json")
 
@@ -920,25 +1016,23 @@ function Start-TimerCollectLoop {
         Start-Sleep -Milliseconds 300
     } catch {}
 
-    Write-Log "探针已启动。 ServerID=$serverId Url='$workerUrl' ReportInterval=${reportInterval}s CollectInterval=${collectInterval}s"
+    Write-Log "探针已启动。 ServerID=$serverId Url='$workerUrl' ReportInterval=${reportInterval}s EffectiveReportInterval=${effectiveReportInterval}s CollectInterval=ignored"
 
     # ========================================
     # Timer 驱动采集：每次 Tick 执行一轮采集+上报
     # ========================================
     $timer = New-Object System.Windows.Forms.Timer
-    $activeInterval = if ($collectInterval -gt 0) { $collectInterval } else { $reportInterval }
-    $timer.Interval = $activeInterval * 1000
+    $timer.Interval = $effectiveReportInterval * 1000
     $timer.Add_Tick({
         try {
             # 捕获外部参数到局部变量，避免作用域问题
             $srvId = $serverId
             $sec = $secret
             $wUrl = $workerUrl
-            $ctN = $ctNode
-            $cuN = $cuNode
-            $cmN = $cmNode
-            $bdN = $bdNode
-            $cInterval = $script:cs_collectInterval
+            $ctN = if ($config.ct_node) { $config.ct_node } else { $ctNode }
+            $cuN = if ($config.cu_node) { $config.cu_node } else { $cuNode }
+            $cmN = if ($config.cm_node) { $config.cm_node } else { $cmNode }
+            $bdN = if ($config.bd_node) { $config.bd_node } else { $bdNode }
             $pType = $script:cs_pingType
             $rDay = $script:cs_resetDay
             $rInterval = $script:cs_reportInterval
@@ -1042,13 +1136,6 @@ function Start-TimerCollectLoop {
                 loss_bd = $script:cs_lossBd
             }
 
-            if ($cInterval -gt 0) {
-                $script:cs_samples += @{
-                    ts = $now * 1000
-                    metrics = $metrics.Clone()
-                }
-            }
-
             # 上报
             $shouldReport = ($script:cs_lastReportTime -eq 0) -or ($now - $script:cs_lastReportTime -ge $rInterval)
             if ($shouldReport) {
@@ -1056,11 +1143,8 @@ function Start-TimerCollectLoop {
                     id = $srvId
                     secret = $sec
                     metrics = $metrics
-                    collect_interval = $cInterval
+                    collect_interval = 0
                     report_interval = $rInterval
-                }
-                if ($cInterval -gt 0) {
-                    $payload.samples = @($script:cs_samples)
                 }
                 $json = $payload | ConvertTo-Json -Depth 10 -Compress
                 try {
@@ -1082,24 +1166,28 @@ function Start-TimerCollectLoop {
                             }
                         }
                         if (Save-Config -Config $config) {
-                            $script:cs_collectInterval = $remoteConfig.collect_interval
-                            $script:cs_reportInterval = $remoteConfig.report_interval
+                            $effectiveRemoteReportInterval = [math]::Max($remoteConfig.report_interval, 60)
+                            $script:cs_reportInterval = $effectiveRemoteReportInterval
                             $script:cs_pingType = $remoteConfig.ping_type
                             $script:cs_resetDay = $remoteConfig.reset_day
                             $script:cs_configMd5 = $remoteConfig.config_md5
-                            $nextActiveInterval = if ($remoteConfig.collect_interval -gt 0) {
-                                $remoteConfig.collect_interval
-                            } else {
-                                $remoteConfig.report_interval
+                            if ($remoteConfig.ContainsKey('ct_node')) { $script:cs_ctNode = $remoteConfig.ct_node }
+                            if ($remoteConfig.ContainsKey('cu_node')) { $script:cs_cuNode = $remoteConfig.cu_node }
+                            if ($remoteConfig.ContainsKey('cm_node')) { $script:cs_cmNode = $remoteConfig.cm_node }
+                            if ($remoteConfig.ContainsKey('bd_node')) { $script:cs_bdNode = $remoteConfig.bd_node }
+                            $timer.Interval = $effectiveRemoteReportInterval * 1000
+                            Write-Log "动态配置已应用: md5=$($remoteConfig.config_md5) report_interval=$($remoteConfig.report_interval)s ct=$($remoteConfig.ct_node) cu=$($remoteConfig.cu_node) cm=$($remoteConfig.cm_node) bd=$($remoteConfig.bd_node)" "INFO"
+
+                            if ($remoteConfig.ContainsKey('rx_correction') -or $remoteConfig.ContainsKey('tx_correction')) {
+                                $rxCorr = if ($remoteConfig.ContainsKey('rx_correction')) { $remoteConfig.rx_correction } else { "" }
+                                $txCorr = if ($remoteConfig.ContainsKey('tx_correction')) { $remoteConfig.tx_correction } else { "" }
+                                Invoke-TrafficCorrection -ServerId $srvId -Secret $sec -WorkerUrl $wUrl -RxCorrection $rxCorr -TxCorrection $txCorr
                             }
-                            $timer.Interval = $nextActiveInterval * 1000
-                            Write-Log "动态配置已应用: md5=$($remoteConfig.config_md5)" "INFO"
                         }
                     }
                 } catch {
                     Write-Log "上报失败: $_" "WARN"
                 }
-                $script:cs_samples = @()
                 $script:cs_lastReportTime = $now
             }
         } catch {
@@ -1187,8 +1275,8 @@ function Install-Service {
     }
 
     # 流量校正
-    $hasRxCorr = $RxCorrection -ne "" -and $RxCorrection -ne "0"
-    $hasTxCorr = $TxCorrection -ne "" -and $TxCorrection -ne "0"
+    $hasRxCorr = $RxCorrection -ne ""
+    $hasTxCorr = $TxCorrection -ne ""
     if ($hasRxCorr -or $hasTxCorr) {
         Write-Host "应用流量校正..." -ForegroundColor Cyan
         $netStat = Get-NetworkStats
@@ -1229,6 +1317,8 @@ function Install-Service {
 
     Register-ScheduledTask -TaskName $TASK_NAME -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -Force | Out-Null
 
+    $effectiveInstallReportInterval = [math]::Max([int]$config.report_interval, 60)
+
     Write-Host ""
     Write-Host "=============================================" -ForegroundColor Green
     Write-Host "       CF-Server-Monitor 安装成功" -ForegroundColor Green
@@ -1236,6 +1326,7 @@ function Install-Service {
     Write-Host "  Server ID  : $($config.server_id)"
     Write-Host "  Worker URL : $($config.worker_url)"
     Write-Host "  上报间隔   : $($config.report_interval)秒"
+    Write-Host "  实际间隔   : $effectiveInstallReportInterval秒"
     Write-Host "  采样间隔   : Windows PowerShell 版不启用 samples 缓存"
     Write-Host "  探测类型   : $($config.ping_type)"
     Write-Host "  流量重置日 : $($config.reset_day)号"
@@ -1365,10 +1456,12 @@ function Get-ServiceStatus {
     }
     $config = Load-Config
     if ($config) {
+        $effectiveStatusReportInterval = [math]::Max([int]$config.report_interval, 60)
         Write-Host "配置文件: $CONFIG_FILE" -ForegroundColor Cyan
         Write-Host "  Server ID  : $($config.server_id)"
         Write-Host "  Worker URL : $($config.worker_url)"
         Write-Host "  上报间隔   : $($config.report_interval)秒"
+        Write-Host "  实际间隔   : $effectiveStatusReportInterval秒"
     }
 }
 

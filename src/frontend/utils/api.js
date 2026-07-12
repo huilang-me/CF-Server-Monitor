@@ -311,7 +311,7 @@ const mergeSiteResult = (mergedData, { data, error, baseUrl }, multiSite, localT
       show_bw: data.sysConfig.show_bw ?? mergedData.sysConfig.show_bw,
       show_tf: data.sysConfig.show_tf ?? mergedData.sysConfig.show_tf,
       show_time: data.sysConfig.show_time ?? mergedData.sysConfig.show_time,
-      site_title: multiSite ? localTitle : (data.sysConfig.site_title || mergedData.sysConfig.site_title),
+      site_title: multiSite ? localTitle : mergedData.sysConfig.site_title,
       backgroundImage: multiSite ? localBg : (data.sysConfig.backgroundImage || mergedData.sysConfig.backgroundImage || '')
     }
   }

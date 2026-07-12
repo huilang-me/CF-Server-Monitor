@@ -213,12 +213,13 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, inject, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import TerminalHeader from '../components/TerminalHeader.vue'
 import ServerCard from '../components/ServerCard.vue'
 import Footer from '../components/Footer.vue'
-import { fetchServersAll, fetchServersAllWithProgress, formatBytes, createLiveSocket, getFlagRegionCode, getApiBases, getTrafficUsagePercent, isServerOnline } from '../utils/api.js'
+import { fetchConfig, fetchServersAll, fetchServersAllWithProgress, formatBytes, createLiveSocket, getFlagRegionCode, getApiBases, getTrafficUsagePercent, isServerOnline } from '../utils/api.js'
+import { getTitle, hasMultipleApiBases } from '../utils/config'
 import { currentLang, useTranslation } from '../utils/i18n.js'
 import { TIME, DEFAULT_SITE_TITLE } from '../utils/constants'
 import { normalizeTimestamp as normalizeMetricTimestamp } from '../utils/time.js'
@@ -246,6 +247,7 @@ const now = ref(Date.now())
 const router = useRouter()
 
 const trans = useTranslation()
+const appConfig = inject('appConfig', null)
 
 const filterOptions = computed(() => {
   const normalizedStats = {}
@@ -545,6 +547,30 @@ const mergeServersIntoList = (rawServers) => {
   })
 }
 
+const loadDashboardConfig = async () => {
+  try {
+    const localTitle = String(getTitle() || '').trim()
+    if (hasMultipleApiBases() && localTitle) {
+      sysConfig.value = {
+        ...sysConfig.value,
+        site_title: localTitle
+      }
+      return
+    }
+
+    const config = appConfig || await fetchConfig()
+    const siteTitle = String(config?.site_title || '').trim()
+    if (siteTitle) {
+      sysConfig.value = {
+        ...sysConfig.value,
+        site_title: siteTitle
+      }
+    }
+  } catch (e) {
+    console.log('[INFO] Dashboard config pending...', e)
+  }
+}
+
 const refreshData = async () => {
   const bases = getApiBases()
   const isMultiSite = bases.length > 1
@@ -568,7 +594,7 @@ const refreshData = async () => {
           show_bw: data.sysConfig?.show_bw ?? true,
           show_tf: data.sysConfig?.show_tf ?? true,
           show_time: data.sysConfig?.show_time ?? true,
-          site_title: data.sysConfig?.site_title || DEFAULT_SITE_TITLE
+          site_title: sysConfig.value.site_title || DEFAULT_SITE_TITLE
         }
 
         if (data.corsErrorSites?.length && !hasCorsError.value) hasCorsError.value = [...data.corsErrorSites]
@@ -602,7 +628,7 @@ const refreshData = async () => {
       show_bw: data.sysConfig?.show_bw ?? true,
       show_tf: data.sysConfig?.show_tf ?? true,
       show_time: data.sysConfig?.show_time ?? true,
-      site_title: data.sysConfig?.site_title || DEFAULT_SITE_TITLE
+      site_title: sysConfig.value.site_title || DEFAULT_SITE_TITLE
     }
 
     drawMarkers()
@@ -796,6 +822,7 @@ const goToServer = (server) => {
 onMounted(async () => {
   const savedView = localStorage.getItem('monitor_preferred_view') || 'card'
   currentView.value = savedView
+  await loadDashboardConfig()
   await refreshData()
   startLiveSocket()
 

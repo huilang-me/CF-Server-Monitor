@@ -607,9 +607,45 @@
               </select>
             </div>
           </div>
+
           <div class="text-muted text-sm mb-3">
             <span class="warning-icon">[i]</span> {{ trans.collectIntervalHint }}<br>
             <span class="warning-icon">[i]</span> {{ trans.trafficResetDayTip }}
+          </div>
+
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label class="form-label">{{ trans.customCt }} <span class="text-xs text-muted">({{ trans.serverLevel }})</span></label>
+              <input type="text" name="edit_custom_ct" autocomplete="off" v-model="editForm.custom_ct" class="form-input" :placeholder="settings.custom_ct || 'gd-ct-dualstack.ip.zstaticcdn.com'">
+            </div>
+            <div class="form-group flex-1">
+              <label class="form-label">{{ trans.customCu }} <span class="text-xs text-muted">({{ trans.serverLevel }})</span></label>
+              <input type="text" name="edit_custom_cu" autocomplete="off" v-model="editForm.custom_cu" class="form-input" :placeholder="settings.custom_cu || 'gd-cu-dualstack.ip.zstaticcdn.com'">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label class="form-label">{{ trans.customCm }} <span class="text-xs text-muted">({{ trans.serverLevel }})</span></label>
+              <input type="text" name="edit_custom_cm" autocomplete="off" v-model="editForm.custom_cm" class="form-input" :placeholder="settings.custom_cm || 'gd-cm-dualstack.ip.zstaticcdn.com'">
+            </div>
+            <div class="form-group flex-1">
+              <label class="form-label">{{ trans.customBd }} <span class="text-xs text-muted">({{ trans.serverLevel }})</span></label>
+              <input type="text" name="edit_custom_bd" autocomplete="off" v-model="editForm.custom_bd" class="form-input" :placeholder="settings.custom_bd || 'lf3-ips.zstaticcdn.com'">
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label class="form-label">{{ trans.rxCorrection }} (GB)</label>
+              <input type="number" name="edit_rx_correction" autocomplete="off" v-model="editForm.rx_correction" class="form-input" placeholder="0" min="0" step="0.1">
+            </div>
+            <div class="form-group flex-1">
+              <label class="form-label">{{ trans.txCorrection }} (GB)</label>
+              <input type="number" name="edit_tx_correction" autocomplete="off" v-model="editForm.tx_correction" class="form-input" placeholder="0" min="0" step="0.1">
+            </div>
+          </div>
+          <div class="text-muted text-sm mb-3">
+            <span class="warning-icon">[i]</span> {{ trans.correctionHint }}
           </div>
           <div class="form-row">
             <div class="form-group">
@@ -709,22 +745,22 @@
           <div class="form-row">
             <div class="form-group flex-1">
               <label class="form-label">{{ trans.customCt }}</label>
-              <input type="text" name="custom_ct" autocomplete="off" v-model="customCt" class="form-input" placeholder="gd-ct-dualstack.ip.zstaticcdn.com">
+              <input type="text" name="custom_ct" autocomplete="off" v-model="customCt" class="form-input" placeholder="gd-ct-dualstack.ip.zstaticcdn.com" readonly>
             </div>
             <div class="form-group flex-1">
               <label class="form-label">{{ trans.customCu }}</label>
-              <input type="text" name="custom_cu" autocomplete="off" v-model="customCu" class="form-input" placeholder="gd-cu-dualstack.ip.zstaticcdn.com">
+              <input type="text" name="custom_cu" autocomplete="off" v-model="customCu" class="form-input" placeholder="gd-cu-dualstack.ip.zstaticcdn.com" readonly>
             </div>
           </div>
 
           <div class="form-row">
             <div class="form-group flex-1">
               <label class="form-label">{{ trans.customCm }}</label>
-              <input type="text" name="custom_cm" autocomplete="off" v-model="customCm" class="form-input" placeholder="gd-cm-dualstack.ip.zstaticcdn.com">
+              <input type="text" name="custom_cm" autocomplete="off" v-model="customCm" class="form-input" placeholder="gd-cm-dualstack.ip.zstaticcdn.com" readonly>
             </div>
             <div class="form-group flex-1">
               <label class="form-label">{{ trans.customBd }}</label>
-              <input type="text" name="custom_bd" autocomplete="off" v-model="customBd" class="form-input" placeholder="lf3-ips.zstaticcdn.com">
+              <input type="text" name="custom_bd" autocomplete="off" v-model="customBd" class="form-input" placeholder="lf3-ips.zstaticcdn.com" readonly>
             </div>
           </div>
 
@@ -759,11 +795,11 @@
           <div class="form-row">
             <div class="form-group flex-1">
               <label class="form-label">{{ trans.rxCorrection }} (GB)</label>
-              <input type="number" name="rx_correction" autocomplete="off" v-model="rxCorrection" class="form-input" placeholder="0" min="0" step="1">
+              <input type="number" name="rx_correction" autocomplete="off" v-model="rxCorrection" class="form-input" placeholder="0" min="0" step="1" readonly>
             </div>
             <div class="form-group flex-1">
               <label class="form-label">{{ trans.txCorrection }} (GB)</label>
-              <input type="number" name="tx_correction" autocomplete="off" v-model="txCorrection" class="form-input" placeholder="0" min="0" step="1">
+              <input type="number" name="tx_correction" autocomplete="off" v-model="txCorrection" class="form-input" placeholder="0" min="0" step="1" readonly>
             </div>
           </div>
 
@@ -1117,6 +1153,12 @@ const editForm = ref({
   collect_interval: 0,
   report_interval: 60,
   ping_mode: 'http',
+  custom_ct: '',
+  custom_cu: '',
+  custom_cm: '',
+  custom_bd: '',
+  rx_correction: '',
+  tx_correction: '',
   is_hidden: false,
   offline_notify_disabled: false
 })
@@ -1598,17 +1640,19 @@ const copyCmd = (serverId) => {
   collectInterval.value = server?.collect_interval ?? 0
   reportInterval.value = server?.report_interval || 60
   pingMode.value = server?.ping_mode || 'http'
-  customCt.value = settings.value.custom_ct
-  customCu.value = settings.value.custom_cu
-  customCm.value = settings.value.custom_cm
-  customBd.value = settings.value.custom_bd
+  customCt.value = server?.custom_ct || settings.value.custom_ct
+  customCu.value = server?.custom_cu || settings.value.custom_cu
+  customCm.value = server?.custom_cm || settings.value.custom_cm
+  customBd.value = server?.custom_bd || settings.value.custom_bd
   resetDay.value = server?.reset_day ?? 1
-  rxCorrection.value = ''
-  txCorrection.value = ''
+  rxCorrection.value = server?.rx_correction ?? ''
+  txCorrection.value = server?.tx_correction ?? ''
   trafficCalcType.value = server?.traffic_calc_type || 'total'
   copiedCmd.value = false
   showCopyModal.value = true
 }
+
+const hasCorrectionValue = (value) => value !== null && value !== undefined && value !== ''
 
 const getCustomInstallCommand = () => {
   const HOST = selectedApiBase.value
@@ -1627,8 +1671,8 @@ const getCustomInstallCommand = () => {
     if (customCu.value) params.push(`-CuNode '${customCu.value}'`)
     if (customCm.value) params.push(`-CmNode '${customCm.value}'`)
     if (customBd.value) params.push(`-BdNode '${customBd.value}'`)
-    if (rxCorrection.value && rxCorrection.value !== '') params.push(`-RxCorrection ${rxCorrection.value}`)
-    if (txCorrection.value && txCorrection.value !== '') params.push(`-TxCorrection ${txCorrection.value}`)
+    if (hasCorrectionValue(rxCorrection.value)) params.push(`-RxCorrection ${rxCorrection.value}`)
+    if (hasCorrectionValue(txCorrection.value)) params.push(`-TxCorrection ${txCorrection.value}`)
     return `irm ${HOST}/cf-server-monitor.ps1 -OutFile cf-server-monitor.ps1; powershell -ExecutionPolicy Bypass -File .\\cf-server-monitor.ps1 ${params.join(' ')}`
   }
   const shell = targetOs.value === 'alpine' || targetOs.value === 'openwrt' ? 'sh' : 'bash'
@@ -1642,8 +1686,8 @@ const getCustomInstallCommand = () => {
   if (customCu.value) cmd += ` -cu=${customCu.value}`
   if (customCm.value) cmd += ` -cm=${customCm.value}`
   if (customBd.value) cmd += ` -bd=${customBd.value}`
-  if (rxCorrection.value && rxCorrection.value !== '') cmd += ` -rx_correction=${rxCorrection.value}`
-  if (txCorrection.value && txCorrection.value !== '') cmd += ` -tx_correction=${txCorrection.value}`
+  if (hasCorrectionValue(rxCorrection.value)) cmd += ` -rx_correction=${rxCorrection.value}`
+  if (hasCorrectionValue(txCorrection.value)) cmd += ` -tx_correction=${txCorrection.value}`
   return cmd
 }
 
@@ -1704,6 +1748,12 @@ const openEditModal = (server) => {
     collect_interval: server.collect_interval ?? 0,
     report_interval: server.report_interval || 60,
     ping_mode: server.ping_mode || 'http',
+    custom_ct: server.custom_ct || '',
+    custom_cu: server.custom_cu || '',
+    custom_cm: server.custom_cm || '',
+    custom_bd: server.custom_bd || '',
+    rx_correction: server.rx_correction ?? '',
+    tx_correction: server.tx_correction ?? '',
     is_hidden: server.is_hidden === '1',
     offline_notify_disabled: server.offline_notify_disabled === '1'
   }
@@ -1730,6 +1780,12 @@ const saveEdit = async () => {
       collect_interval: editForm.value.collect_interval,
       report_interval: editForm.value.report_interval,
       ping_mode: editForm.value.ping_mode,
+      custom_ct: editForm.value.custom_ct,
+      custom_cu: editForm.value.custom_cu,
+      custom_cm: editForm.value.custom_cm,
+      custom_bd: editForm.value.custom_bd,
+      rx_correction: editForm.value.rx_correction,
+      tx_correction: editForm.value.tx_correction,
       is_hidden: editForm.value.is_hidden ? '1' : '0',
       offline_notify_disabled: editForm.value.offline_notify_disabled ? '1' : '0'
     }

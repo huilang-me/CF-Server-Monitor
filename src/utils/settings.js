@@ -1,11 +1,13 @@
-const CURRENT_VERSION = 'V2.7.9 Beta';
+const CURRENT_VERSION = 'V2.7.9';
 export const DEFAULT_SITE_TITLE = 'Cloudflare Server Monitor';
 const APPEARANCE_FIELDS = ['site_title', 'custom_bg', 'custom_head', 'custom_script'];
 const SITE_FIELDS = ['is_public', 'show_price', 'show_expire', 'show_bw', 'show_tf', 'show_time', 'show_long_history', 'tg_notify', 'tg_bot_token', 'tg_chat_id', 'turnstile_enabled', 'turnstile_login_enabled', 'turnstile_site_key', 'turnstile_secret_key', 'jwt_secret', 'username', 'password', 'cloudflare_account_id', 'cloudflare_token', 'custom_ct', 'custom_cu', 'custom_cm', 'custom_bd', 'expire_reminder','history_id_optimized','servers_optimized'];
 
-const SITE_SETTINGS_TTL = 60 * 1000;
+const SITE_SETTINGS_TTL = 120 * 1000;
 let cachedSiteSettings = null;
 let siteSettingsCacheExpiry = 0;
+let cachedAppearanceOptions = null;
+let appearanceOptionsCacheExpiry = 0;
 
 const defaults = {
   site_title: DEFAULT_SITE_TITLE,
@@ -77,10 +79,10 @@ async function loadLegacySettings(db, fields) {
 export async function loadSiteSettings(db) {
   const now = Date.now();
   if (cachedSiteSettings && now < siteSettingsCacheExpiry) {
-    debug('读取site settings缓存');
+    debug('Settings缓存命中');
     return cachedSiteSettings;
   }
-  debug('从数据库加载site settings');
+  debug('Settings缓存更新');
 
   const result = { ...defaults };
   let siteOptions = null;
@@ -114,10 +116,17 @@ export function clearSiteSettingsCache() {
   siteSettingsCacheExpiry = 0;
 }
 
-export async function loadSettings(db) {
-  const result = { ...defaults };
+export async function loadAppearanceOptions(db) {
+  const now = Date.now();
+  if (cachedAppearanceOptions && now < appearanceOptionsCacheExpiry) {
+    debug('Appearance缓存命中');
+    return cachedAppearanceOptions;
+  }
+  debug('Appearance缓存更新');
+
+  const result = {};
+  copyFields(result, defaults, APPEARANCE_FIELDS);
   let appearanceOptions = null;
-  let siteOptions = null;
 
   try {
     const appearanceRow = await db.prepare(
@@ -130,35 +139,31 @@ export async function loadSettings(db) {
       }
     }
 
-    const siteRow = await db.prepare(
-      "SELECT value FROM settings WHERE key = 'site_options'"
-    ).first();
-    if (siteRow) {
-      const parsed = tryParseJSON(siteRow.value);
-      if (parsed) {
-        siteOptions = parsed;
-      }
-    }
-
     const needsLegacyAppearance = hasMissingFields(appearanceOptions, APPEARANCE_FIELDS);
-    const needsLegacySite = hasMissingFields(siteOptions, SITE_FIELDS);
-    if (needsLegacyAppearance || needsLegacySite) {
-      const legacySettings = await loadLegacySettings(db, [...APPEARANCE_FIELDS, ...SITE_FIELDS]);
-      if (needsLegacyAppearance) {
-        copyFields(result, legacySettings, APPEARANCE_FIELDS);
-      }
-      if (needsLegacySite) {
-        copyFields(result, legacySettings, SITE_FIELDS);
-      }
+    if (needsLegacyAppearance) {
+      copyFields(result, await loadLegacySettings(db, APPEARANCE_FIELDS), APPEARANCE_FIELDS);
     }
-
     copyFields(result, appearanceOptions, APPEARANCE_FIELDS);
-    copyFields(result, siteOptions, SITE_FIELDS);
   } catch (e) {
-    console.error('加载设置失败:', e);
+    console.error('加载外观设置失败:', e);
   }
 
+  cachedAppearanceOptions = result;
+  appearanceOptionsCacheExpiry = now + SITE_SETTINGS_TTL;
   return result;
+}
+
+export function clearAppearanceSettingsCache() {
+  cachedAppearanceOptions = null;
+  appearanceOptionsCacheExpiry = 0;
+}
+
+export async function loadSettings(db) {
+  const [siteSettings, appearanceOptions] = await Promise.all([
+    loadSiteSettings(db),
+    loadAppearanceOptions(db)
+  ]);
+  return { ...defaults, ...siteSettings, ...appearanceOptions };
 }
 
 export async function saveSiteOptions(db, updates) {

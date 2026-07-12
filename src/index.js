@@ -5,7 +5,7 @@ import { handleAdminAPI } from './handlers/admin.js';
 import { serveFrontend } from './handlers/frontend.js';
 import { handleUpdate, handleWebSocketUpgrade } from './handlers/update.js';
 import { handleServerAPI, handleServersAPI } from './handlers/dashboard.js';
-import { loadSettings, loadSiteSettings, setDebug, debug, getCurrentVersion } from './utils/settings.js';
+import { loadSettings, loadSiteSettings, loadAppearanceOptions, setDebug, debug, getCurrentVersion } from './utils/settings.js';
 import { checkAuth, simpleAuthResponse } from './middleware/auth.js';
 import { getServerDetail, getMetricsHistoryCache, setMetricsHistoryCache, getCacheDuration } from './utils/cache.js';
 import { AppError, createSuccessResponse, createUnauthorizedResponse, createBadRequestResponse, createNotFoundResponse, createErrorResponse } from './utils/errors.js';
@@ -84,7 +84,7 @@ async function fetchHistoryData(env, request, id, hours, columns, sys = null) {
   if (!id) return createBadRequestResponse('Missing ID');
   
   if (!sys) {
-    sys = await loadSettings(env.DB);
+    sys = await loadSiteSettings(env.DB);
   }
   const isLoggedIn = await checkAuth(request, env, sys);
   
@@ -204,6 +204,13 @@ export default {
       }
     }
 
+    async function ensureSiteSettings() {
+      if (!sys) {
+        sys = await loadSiteSettings(env.DB);
+      }
+      return sys;
+    }
+
     async function ensureFullSettings() {
       sys = await loadSettings(env.DB);
       return sys;
@@ -224,7 +231,8 @@ export default {
         }
       }},
       { method: 'GET', path: '/api/config', handler: async () => {
-        await ensureFullSettings();
+        await ensureSiteSettings();
+        const appearanceOptions = await loadAppearanceOptions(env.DB);
         const turnstileEnabled = sys.turnstile_enabled === 'true';
         const turnstileLoginEnabled = sys.turnstile_login_enabled === 'true';
         let verified = false;
@@ -249,23 +257,24 @@ export default {
           turnstile_enabled: turnstileEnabled,
           turnstile_login_enabled: turnstileEnabled || turnstileLoginEnabled,
           turnstile_site_key: sys.turnstile_site_key || '',
+          site_title: appearanceOptions.site_title || '',
           verified: verified,
           turnstile_verified: turnstileVerified,
           show_long_history: sys.show_long_history === 'true'
         });
       }},
       { method: 'GET', path: '/api/server', handler: async () => {
-        await ensureFullSettings();
+        await ensureSiteSettings();
         return handleServerAPI(request, env, sys);
       }},
       { method: 'GET', path: '/api/servers', handler: async () => {
-        await ensureFullSettings();
+        await ensureSiteSettings();
         return handleServersAPI(request, env, sys);
       }},
       { method: 'GET', path: '/api/ws', handler: async () => handleWebSocketUpgrade(request, env) },
 
       { method: 'GET', path: '/api/history/all', handler: async () => {
-        await ensureFullSettings();
+        await ensureSiteSettings();
         const id = url.searchParams.get('id');
         const hours = parseFloat(url.searchParams.get('hours') || '24');
         const allColumns = 'cpu, gpu, gpu_info, ram_total, ram_used, disk_total, disk_used, processes, net_in_speed, net_out_speed, tcp_conn, udp_conn, ping_ct, ping_cu, ping_cm, ping_bd, loss_ct, loss_cu, loss_cm, loss_bd, swap_total, swap_used, load_avg, region';
@@ -273,11 +282,11 @@ export default {
         return fetchHistoryData(env, request, id, hours, allColumns, sys);
       }},
       { method: 'POST', path: '/admin/api', handler: async () => {
-        await ensureFullSettings();
-        return handleAdminAPI(request, env, sys);
+        await ensureSiteSettings();
+        return handleAdminAPI(request, env, sys, ensureFullSettings);
       }},
       { method: 'POST', path: '/updateDatabase', handler: async () => {
-        await ensureFullSettings();
+        await ensureSiteSettings();
         if (!await checkAuth(request, env, sys)) {
           return simpleAuthResponse();
         }
@@ -285,7 +294,7 @@ export default {
         return createSuccessResponse(result);
       }},
       { method: 'POST', path: '/clearHistory', handler: async () => {
-        await ensureFullSettings();
+        await ensureSiteSettings();
         if (!await checkAuth(request, env, sys)) {
           return simpleAuthResponse();
         }
@@ -324,8 +333,8 @@ export default {
       }
     }
 
-    await ensureFullSettings();
-    const frontendResponse = await serveFrontend(request, env, sys);
+    const appearanceOptions = await loadAppearanceOptions(env.DB);
+    const frontendResponse = await serveFrontend(request, env, appearanceOptions);
     return applyCors(frontendResponse, request, corsAllowedOrigins);
   },
 

@@ -8,9 +8,9 @@
  * - 站点设置缓存
  */
 
-import { clearSiteSettingsCache, debug } from './settings.js';
+import { clearAppearanceSettingsCache, clearSiteSettingsCache, debug } from './settings.js';
 
-const SERVERS_LIST_TTL = 60 * 1000;
+const SERVERS_LIST_TTL = 120 * 1000;
 let serversListCache = null;
 
 const LATEST_ALL_TTL = 30 * 1000;
@@ -159,4 +159,5 @@ export function clearAllCaches() {
   clearLatestMetricsCache();
   metricsHistoryCache.clear();
   clearSiteSettingsCache();
+  clearAppearanceSettingsCache();
 }

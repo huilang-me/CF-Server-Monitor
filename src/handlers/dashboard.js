@@ -2,7 +2,6 @@ import { checkAuth, simpleAuthResponse } from '../middleware/auth.js';
 import { getLatestMetrics, getLatestMetricsForAllServers } from '../database/schema.js';
 import { getAllServers, getServerDetail } from '../utils/cache.js';
 import { mergeMetricsIntoServer } from '../utils/metrics.js';
-import { DEFAULT_SITE_TITLE } from '../utils/settings.js';
 import { createSuccessResponse, createBadRequestResponse, createNotFoundResponse } from '../utils/errors.js';
 
 export async function handleServerAPI(request, env, sys) {
@@ -89,8 +88,7 @@ export async function handleServersAPI(request, env, sys) {
       show_expire: sys.show_expire === 'true',
       show_bw: sys.show_bw === 'true',
       show_tf: sys.show_tf === 'true',
-      show_time: sys.show_time === 'true',
-      site_title: sys.site_title || DEFAULT_SITE_TITLE
+      show_time: sys.show_time === 'true'
     }
   };
 
