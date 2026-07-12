@@ -2,7 +2,7 @@
 
 一个基于 Cloudflare Workers + D1 + Durable Objects 的多服务器监控探针系统，支持实时监控、历史数据查看、延迟追踪、地图展示等功能。兼容主流Linux系统，Alpine Linux，OpenWrt，Windows系统。**演示地址**：<https://demo.huilang.me/>
 
-**当前版本：V2.7.9 Beta**
+**当前版本：V2.7.9**
 
 > [!IMPORTANT]
 > **🚨 紧急安全/性能更新 (v2.7.8)**
@@ -16,7 +16,7 @@
 <details>
 <summary>更新记录</summary>
 
-- V2.7.9 Beta 修改数据库结构，减少一半D1写入消耗，理论上支持60+服务器监控，其他bug修复
+- V2.7.9 修改数据库结构，减少一半D1写入消耗，理论上支持60+服务器监控，在保证安全的基础上，增加服务器参数下发功能
 - V2.7.8 修复月度任务导致数据表索引丢失的严重 Bug
 - V2.7.7 添加GitHub Page部署支持，添加飞书，Bark通知支持
 - V2.7.6 添加多站点支持包括验证码登录等，添加Windows PowerShell无依赖安装脚本，一些安全优化
@@ -203,7 +203,7 @@ git push origin main
 部署成功后，访问管理后台：
 
 ```
-https://你的项目名.你的子域.workers.dev/#admin
+https://你的项目名.你的子域.workers.dev/#/admin
 ```
 
 - 用户名：默认admin，如果设置了环境变量 `API_USER_NAME`，则使用该值

@@ -1,4 +1,4 @@
-import { loadSettings, DEFAULT_SITE_TITLE } from '../utils/settings.js';
+import { loadAppearanceOptions, DEFAULT_SITE_TITLE } from '../utils/settings.js';
 
 let filesCache = null;
 
@@ -82,7 +82,7 @@ export async function serveFrontend(request, env, settings = null) {
 
   if (html) {
     if (!settings) {
-      settings = await loadSettings(env.DB);
+      settings = await loadAppearanceOptions(env.DB);
     }
     html = injectAppearanceSettings(html, settings);
 

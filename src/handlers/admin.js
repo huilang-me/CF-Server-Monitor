@@ -1,14 +1,14 @@
 import { checkAuth, simpleAuthResponse, validateCredentials, generateToken } from '../middleware/auth.js';
 import { getLatestMetricsForAllServers } from '../database/schema.js';
 import { getAllServers, clearServersListCache } from '../utils/cache.js';
-import { clearSiteSettingsCache, saveSiteOptions } from '../utils/settings.js';
+import { clearAppearanceSettingsCache, saveSiteOptions } from '../utils/settings.js';
 import { mergeMetricsIntoServer } from '../utils/metrics.js';
 import { verifyTurnstileToken, hashPassword } from '../utils/common.js';
 import { AppError, createSuccessResponse, createBadRequestResponse, createUnauthorizedResponse, createErrorResponse } from '../utils/errors.js';
 import { addServerColumns } from '../database/updateDatabase.js';
 import { sendNotification } from '../services/notification.js';
 import { getNextServerHistoryPartitionId } from '../database/indexOptimization.js';
-import { validateAgentConfigInput } from '../utils/agentConfig.js';
+import { isValidTrafficCorrection, validateAgentConfigInput } from '../utils/agentConfig.js';
 
 function isValidUUID(id) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
@@ -145,7 +145,7 @@ async function getD1DailyUsage(token, accountId) {
   };
 }
 
-export async function handleAdminAPI(request, env, sys) {
+export async function handleAdminAPI(request, env, sys, loadFullSettings = null) {
   try {
     const data = await request.json();
 
@@ -211,7 +211,8 @@ export async function handleAdminAPI(request, env, sys) {
     }
 
     if (data.action === 'get_settings') {
-      const { jwt_secret, ...safeSettings } = sys || {};
+      const fullSettings = loadFullSettings ? await loadFullSettings() : sys;
+      const { jwt_secret, ...safeSettings } = fullSettings || {};
       return createSuccessResponse({
         success: true,
         settings: safeSettings,
@@ -346,6 +347,7 @@ export async function handleAdminAPI(request, env, sys) {
       await env.DB.prepare(
         'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
       ).bind('appearance_options', JSON.stringify(appearanceOptions)).run();
+      clearAppearanceSettingsCache();
 
       const siteOptions = {};
       for (const field of SITE_FIELDS) {
@@ -430,7 +432,7 @@ export async function handleAdminAPI(request, env, sys) {
       });
     }
     else if (data.action === 'edit') {
-      const { id, name, server_group, price, expire_date, bandwidth, traffic_limit, traffic_calc_type, reset_day, collect_interval, report_interval, ping_mode, offline_notify_disabled, is_hidden } = data;
+      const { id, name, server_group, price, expire_date, bandwidth, traffic_limit, traffic_calc_type, reset_day, collect_interval, report_interval, ping_mode, custom_ct, custom_cu, custom_cm, custom_bd, rx_correction, tx_correction, offline_notify_disabled, is_hidden } = data;
       if (!id || !isValidUUID(id)) {
         return createBadRequestResponse('invalidServerId');
       }
@@ -444,11 +446,30 @@ export async function handleAdminAPI(request, env, sys) {
         return createBadRequestResponse(agentConfigResult.error);
       }
       const normalizedAgentConfig = agentConfigResult.config;
+
+      const sanitizePing = (v) => {
+        if (v === null || v === undefined) return '';
+        return String(v).replace(/[^a-zA-Z0-9.\-_]/g, '').slice(0, 50);
+      };
+      const safeCustomCt = sanitizePing(custom_ct);
+      const safeCustomCu = sanitizePing(custom_cu);
+      const safeCustomCm = sanitizePing(custom_cm);
+      const safeCustomBd = sanitizePing(custom_bd);
+
+      const toNullCorrection = (v) => {
+        if (v === null || v === undefined || v === '') return null;
+        return isValidTrafficCorrection(v) ? Number(v) : undefined;
+      };
+      const safeRx = toNullCorrection(rx_correction);
+      const safeTx = toNullCorrection(tx_correction);
+      if (safeRx === undefined || safeTx === undefined) {
+        return createBadRequestResponse('invalidTrafficCorrection');
+      }
       
       try {
         await env.DB.prepare(`
           UPDATE servers
-          SET name = ?, server_group = ?, price = ?, expire_date = ?, bandwidth = ?, traffic_limit = ?, traffic_calc_type = ?, reset_day = ?, collect_interval = ?, report_interval = ?, ping_mode = ?, offline_notify_disabled = ?, is_hidden = ?
+          SET name = ?, server_group = ?, price = ?, expire_date = ?, bandwidth = ?, traffic_limit = ?, traffic_calc_type = ?, reset_day = ?, collect_interval = ?, report_interval = ?, ping_mode = ?, custom_ct = ?, custom_cu = ?, custom_cm = ?, custom_bd = ?, rx_correction = ?, tx_correction = ?, offline_notify_disabled = ?, is_hidden = ?
           WHERE id = ?
         `).bind(
           name || '',
@@ -462,6 +483,12 @@ export async function handleAdminAPI(request, env, sys) {
           normalizedAgentConfig.collect_interval,
           normalizedAgentConfig.report_interval,
           normalizedAgentConfig.ping_mode,
+          safeCustomCt,
+          safeCustomCu,
+          safeCustomCm,
+          safeCustomBd,
+          safeRx,
+          safeTx,
           offline_notify_disabled || '0',
           is_hidden || '0',
           id

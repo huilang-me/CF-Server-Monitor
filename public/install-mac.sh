@@ -23,11 +23,12 @@ CONFIG_FILE="${CONFIG_DIR}/config.conf"
 TRAFFIC_DATA_FILE="${CONFIG_DIR}/traffic.dat"
 LOG_FILE="/var/log/cf-probe.log"
 TEMP_DIR="/tmp/cf-probe"
+MAX_TRAFFIC_CORRECTION_GB=1000000
 
 print_banner() {
-    echo -e "${CYAN}╔══════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║   CF-Server-Monitor 探针管理工具 (macOS Edition) ║${NC}"
-    echo -e "${CYAN}╚══════════════════════════════════════════════════╝${NC}"
+    echo -e "${CYAN}╔═════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║   CF-Server-Monitor (macOS Edition) ║${NC}"
+    echo -e "${CYAN}╚═════════════════════════════════════╝${NC}"
 }
 
 info() { echo -e "${GREEN}[✓]${NC} $1"; }
@@ -54,8 +55,8 @@ print_usage() {
     echo "  -cm=HOST       自定义CM测试节点"
     echo "  -bd=HOST       自定义BD测试节点"
     echo "  -reset_day=N   流量重置日(1-31, 0=不重置)，默认1"
-    echo "  -rx_correction=N  下行流量校正(GB)，修改当月下行数据"
-    echo "  -tx_correction=N  上行流量校正(GB)，修改当月上行数据"
+    echo "  -rx_correction=N  下行流量校正(GB)，覆盖当月下行数据"
+    echo "  -tx_correction=N  上行流量校正(GB)，覆盖当月上行数据"
     echo ""
     echo "示例:"
     echo "  sudo bash $0 install -id=server123 -secret=abc123 -url=https://worker.example.com"
@@ -114,6 +115,7 @@ set -u
 CONFIG_DIR="/Library/Application Support/cf-probe"
 CONFIG_FILE="${CONFIG_DIR}/config.conf"
 TRAFFIC_DATA_FILE="${CONFIG_DIR}/traffic.dat"
+MAX_TRAFFIC_CORRECTION_GB=1000000
 TEMP_DIR="/tmp/cf-probe"
 
 mkdir -p "${TEMP_DIR}" 2>/dev/null || true
@@ -166,16 +168,37 @@ fi
 ACTIVE_INTERVAL="${REPORT_INTERVAL}"
 [ "${COLLECT_INTERVAL}" -gt 0 ] && ACTIVE_INTERVAL="${COLLECT_INTERVAL}"
 CONFIG_MD5=${CONFIG_MD5:-none}
+DEBUG_MODE=${DEBUG_MODE:-0}
+
+log_ts() {
+    date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%d %H:%M:%S'
+}
+
+log_info() {
+    echo "[INFO] $(log_ts) $*"
+}
+
+log_debug() {
+    [ "$DEBUG_MODE" = "1" ] && echo "[DEBUG] $(log_ts) $*"
+}
+
+log_warn_debug() {
+    [ "$DEBUG_MODE" = "1" ] && echo "[WARN] $(log_ts) $*"
+}
 
 persist_dynamic_config() {
     local tmp_file="${CONFIG_FILE}.tmp.$$"
-    awk -v collect="$1" -v report="$2" -v ping="$3" -v reset="$4" -v md5="$5" '
-        BEGIN { c=0; r=0; p=0; d=0; m=0 }
+    awk -v collect="$1" -v report="$2" -v ping="$3" -v reset="$4" -v md5="$5" -v ct="$6" -v cu="$7" -v cm="$8" -v bd="$9" '
+        BEGIN { c=0; r=0; p=0; d=0; m=0; tct=0; tcu=0; tcm=0; tbd=0 }
         /^COLLECT_INTERVAL=/ { print "COLLECT_INTERVAL=\"" collect "\""; c=1; next }
         /^REPORT_INTERVAL=/ { print "REPORT_INTERVAL=\"" report "\""; r=1; next }
         /^PING_TYPE=/ { print "PING_TYPE=\"" ping "\""; p=1; next }
         /^RESET_DAY=/ { print "RESET_DAY=\"" reset "\""; d=1; next }
         /^CONFIG_MD5=/ { print "CONFIG_MD5=\"" md5 "\""; m=1; next }
+        /^CT_NODE=/ { print "CT_NODE=\"" ct "\""; tct=1; next }
+        /^CU_NODE=/ { print "CU_NODE=\"" cu "\""; tcu=1; next }
+        /^CM_NODE=/ { print "CM_NODE=\"" cm "\""; tcm=1; next }
+        /^BD_NODE=/ { print "BD_NODE=\"" bd "\""; tbd=1; next }
         { print }
         END {
             if (!c) print "COLLECT_INTERVAL=\"" collect "\""
@@ -183,6 +206,10 @@ persist_dynamic_config() {
             if (!p) print "PING_TYPE=\"" ping "\""
             if (!d) print "RESET_DAY=\"" reset "\""
             if (!m) print "CONFIG_MD5=\"" md5 "\""
+            if (!tct) print "CT_NODE=\"" ct "\""
+            if (!tcu) print "CU_NODE=\"" cu "\""
+            if (!tcm) print "CM_NODE=\"" cm "\""
+            if (!tbd) print "BD_NODE=\"" bd "\""
         }
     ' "$CONFIG_FILE" > "$tmp_file" || { rm -f "$tmp_file"; return 1; }
     chmod 600 "$tmp_file" 2>/dev/null || true
@@ -192,11 +219,12 @@ persist_dynamic_config() {
 
 apply_remote_config() {
     local response_file="$1" header_file="$2" body bytes new_md5
-    local new_collect new_ping new_report new_reset new_schema canonical
+    local new_collect new_ping new_report new_reset new_schema new_ct new_cu new_cm new_bd
+    local new_rx_corr new_tx_corr
     bytes=$(wc -c < "$response_file" 2>/dev/null || echo 9999)
-    [ "$bytes" -le 512 ] || return 1
+    [ "$bytes" -le 1024 ] || return 1
     body=$(cat "$response_file" 2>/dev/null) || return 1
-    case "$body" in ''|*[!a-z0-9_=\&]*) return 1 ;; esac
+    case "$body" in ''|*[!a-z0-9_=\&.\-]*) return 1 ;; esac
     new_md5=$(awk 'tolower($1)=="x-agent-config-md5:" { gsub("\r", "", $2); print tolower($2); exit }' "$header_file")
     [ "${#new_md5}" -eq 32 ] || return 1
     case "$new_md5" in *[!0-9a-f]*) return 1 ;; esac
@@ -205,22 +233,113 @@ apply_remote_config() {
     new_report=$(printf '%s' "$body" | cut -d '&' -f 3); new_report=${new_report#report_interval=}
     new_reset=$(printf '%s' "$body" | cut -d '&' -f 4); new_reset=${new_reset#reset_day=}
     new_schema=$(printf '%s' "$body" | cut -d '&' -f 5); new_schema=${new_schema#schema_version=}
-    canonical="collect_interval=${new_collect}&ping_mode=${new_ping}&report_interval=${new_report}&reset_day=${new_reset}&schema_version=${new_schema}"
-    [ "$body" = "$canonical" ] || return 1
+    new_ct=$(printf '%s' "$body" | cut -d '&' -f 6); new_ct=${new_ct#custom_ct=}
+    new_cu=$(printf '%s' "$body" | cut -d '&' -f 7); new_cu=${new_cu#custom_cu=}
+    new_cm=$(printf '%s' "$body" | cut -d '&' -f 8); new_cm=${new_cm#custom_cm=}
+    new_bd=$(printf '%s' "$body" | cut -d '&' -f 9); new_bd=${new_bd#custom_bd=}
     case "$new_collect" in 0|1|2|5|10) ;; *) return 1 ;; esac
     case "$new_report" in 30|60|120|180) ;; *) return 1 ;; esac
     case "$new_ping" in http|tcp) ;; *) return 1 ;; esac
     case "$new_reset" in 0|[1-9]|1[0-9]|2[0-9]|30|31) ;; *) return 1 ;; esac
     [ "$new_schema" = "1" ] || return 1
     [ "$new_report" -ge "$new_collect" ] || return 1
-    persist_dynamic_config "$new_collect" "$new_report" "$new_ping" "$new_reset" "$new_md5" || return 1
+    new_rx_corr=""
+    new_tx_corr=""
+    local field_count
+    field_count=$(printf '%s' "$body" | awk -F'&' '{print NF}')
+    if [ "$field_count" -ge 11 ]; then
+        local f10 f11
+        f10=$(printf '%s' "$body" | cut -d '&' -f 10)
+        f11=$(printf '%s' "$body" | cut -d '&' -f 11)
+        case "$f10" in rx_correction=*) new_rx_corr="${f10#rx_correction=}" ;; esac
+        case "$f11" in tx_correction=*) new_tx_corr="${f11#tx_correction=}" ;; esac
+    fi
+    persist_dynamic_config "$new_collect" "$new_report" "$new_ping" "$new_reset" "$new_md5" "$new_ct" "$new_cu" "$new_cm" "$new_bd" || return 1
     COLLECT_INTERVAL="$new_collect"
     REPORT_INTERVAL="$new_report"
     PING_TYPE="$new_ping"
     RESET_DAY="$new_reset"
+    CT_NODE="$new_ct"
+    CU_NODE="$new_cu"
+    CM_NODE="$new_cm"
+    BD_NODE="$new_bd"
     CONFIG_MD5="$new_md5"
     ACTIVE_INTERVAL="$REPORT_INTERVAL"
     [ "$COLLECT_INTERVAL" -gt 0 ] && ACTIVE_INTERVAL="$COLLECT_INTERVAL"
+    log_info "Dynamic configuration applied: md5=${CONFIG_MD5} ct=${CT_NODE:-} cu=${CU_NODE:-} cm=${CM_NODE:-} bd=${BD_NODE:-}"
+    if [ -n "$new_rx_corr" ] || [ -n "$new_tx_corr" ]; then
+        if apply_traffic_correction "$new_rx_corr" "$new_tx_corr"; then
+            send_correction_confirm "$new_rx_corr" "$new_tx_corr" || true
+        fi
+    fi
+}
+
+normalize_correction_value() {
+    local val="${1:-0}"
+    [ -z "$val" ] && val=0
+    printf '%s' "$val"
+}
+
+is_valid_correction_value() {
+    local val
+    val=$(normalize_correction_value "$1")
+    awk -v v="$val" -v max="$MAX_TRAFFIC_CORRECTION_GB" 'BEGIN { exit !(v ~ /^[0-9]+([.][0-9]+)?$/ && v + 0 >= 0 && v + 0 <= max) }'
+}
+
+send_correction_confirm() {
+    local rx_val tx_val payload http_code
+    rx_val=$(normalize_correction_value "$1")
+    tx_val=$(normalize_correction_value "$2")
+    is_valid_correction_value "$rx_val" && is_valid_correction_value "$tx_val" || return 1
+    payload="{\"id\":\"$SERVER_ID\",\"secret\":\"$SECRET\",\"rx_correction\":$rx_val,\"tx_correction\":$tx_val}"
+    http_code=$(curl -skS -o /dev/null -w "%{http_code}" -X POST \
+        -H "Content-Type: application/json" \
+        -d "$payload" -m 4 --connect-timeout 2 "$WORKER_URL" 2>/dev/null || echo 000)
+    case "$http_code" in ''|*[!0-9]*) http_code=000 ;; esac
+    if [ "$http_code" -ge 200 ] && [ "$http_code" -lt 300 ]; then
+        log_info "Traffic correction confirm sent: RX=${rx_val}GB TX=${tx_val}GB"
+        return 0
+    fi
+    log_warn_debug "Traffic correction confirm failed: http=${http_code} RX=${rx_val}GB TX=${tx_val}GB"
+    return 1
+}
+
+apply_traffic_correction() {
+    local rx_val="${1:-0}"
+    local tx_val="${2:-0}"
+    [ -z "$rx_val" ] && rx_val=0
+    [ -z "$tx_val" ] && tx_val=0
+    is_valid_correction_value "$rx_val" && is_valid_correction_value "$tx_val" || return 1
+    local rx_bytes=0 tx_bytes=0
+    rx_bytes=$(printf '%s' "$rx_val" | awk '{printf "%.0f", $1 * 1024 * 1024 * 1024}')
+    tx_bytes=$(printf '%s' "$tx_val" | awk '{printf "%.0f", $1 * 1024 * 1024 * 1024}')
+    local saved_rx_prev=0 saved_tx_prev=0 saved_rx_period=0 saved_tx_period=0 saved_last_check=0 saved_period_start=0
+    if [ -f "${TRAFFIC_DATA_FILE}" ]; then
+        while IFS='=' read -r key value; do
+            case "$key" in
+                RX_PREV) saved_rx_prev="${value%%\"*}"; saved_rx_prev="${saved_rx_prev#\"}" ;;
+                TX_PREV) saved_tx_prev="${value%%\"*}"; saved_tx_prev="${saved_tx_prev#\"}" ;;
+                RX_PERIOD) saved_rx_period="${value%%\"*}"; saved_rx_period="${saved_rx_period#\"}" ;;
+                TX_PERIOD) saved_tx_period="${value%%\"*}"; saved_tx_period="${saved_tx_period#\"}" ;;
+                LAST_CHECK) saved_last_check="${value%%\"*}"; saved_last_check="${saved_last_check#\"}" ;;
+                PERIOD_START) saved_period_start="${value%%\"*}"; saved_period_start="${saved_period_start#\"}" ;;
+            esac
+        done < "${TRAFFIC_DATA_FILE}"
+    fi
+    local now_ts
+    now_ts=$(date +%s)
+    saved_rx_period=${rx_bytes}
+    saved_tx_period=${tx_bytes}
+    log_info "Traffic correction applied: RX=${rx_val}GB (${rx_bytes} bytes) TX=${tx_val}GB (${tx_bytes} bytes)"
+    mkdir -p "${CONFIG_DIR}" 2>/dev/null || true
+    cat > "${TRAFFIC_DATA_FILE}" << EOF
+RX_PREV=${saved_rx_prev}
+TX_PREV=${saved_tx_prev}
+RX_PERIOD=${saved_rx_period}
+TX_PERIOD=${saved_tx_period}
+LAST_CHECK=${now_ts}
+PERIOD_START=${saved_period_start}
+EOF
 }
 
 escape_json() {
@@ -863,7 +982,7 @@ EOF
         fi
         REPORT_RESPONSE_FILE="${TEMP_DIR}/.cf_probe_response.$$"
         REPORT_HEADER_FILE="${TEMP_DIR}/.cf_probe_headers.$$"
-        REPORT_HTTP_CODE=$(curl -sS -D "$REPORT_HEADER_FILE" -o "$REPORT_RESPONSE_FILE" -w "%{http_code}" -X POST \
+        REPORT_HTTP_CODE=$(curl -skS -D "$REPORT_HEADER_FILE" -o "$REPORT_RESPONSE_FILE" -w "%{http_code}" -X POST \
             -H "Content-Type: application/json" \
             -H "X-Agent-Config-Schema: 1" \
             -H "X-Agent-Config-Md5: ${CONFIG_MD5:-none}" \
