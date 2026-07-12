@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
     CF-Server-Monitor Windows 探针 (PowerShell 版)
