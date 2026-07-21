@@ -25,7 +25,7 @@ database_name = "server-monitor-db"
 [[durable_objects.bindings]]
 name = "METRICS_BROADCASTER"
 class_name = "MetricsBroadcaster"
-script_name = "cf-server-monitor"
+
 
 [[migrations]]
 tag = "v1"
