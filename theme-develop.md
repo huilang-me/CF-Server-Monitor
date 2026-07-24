@@ -140,7 +140,7 @@ Headers: (可选) Authorization: Bearer <jwt>, X-Turnstile-Token / X-Turnstile-V
 {
   "version": "2.7.12 Beta",
   "last_workers_version": "2.7.13",
-  "last_agent_version": "1.3.2",
+  "last_agent_version": "1.3.3",
   "is_public": true,
   "authorization": true,
   "turnstile_enabled": true,

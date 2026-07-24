@@ -4,11 +4,13 @@ import { getAllServers, getServerDetail } from '../utils/cache.js';
 import { mergeMetricsIntoServer } from '../utils/metrics.js';
 import { createSuccessResponse, createBadRequestResponse, createNotFoundResponse } from '../utils/errors.js';
 
-function withoutPrivateServerFields(server) {
+export function withoutPrivateServerFields(server) {
   const item = { ...server };
   delete item.bandwidth;
   delete item.note;
   delete item.auto_update;
+  delete item.agent_base_url;
+  delete item.agent_proxy_url;
   return item;
 }
 

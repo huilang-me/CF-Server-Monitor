@@ -4,6 +4,7 @@ import { mergeMetricsIntoServer } from '../utils/metrics.js';
 import { createErrorResponse, createUnauthorizedResponse, createNotFoundResponse, createBadRequestResponse } from '../utils/errors.js';
 import { ensureServerOptimization } from '../database/indexOptimization.js';
 import { AGENT_VERSION, loadSiteSettings } from '../utils/settings.js';
+import { resolveReportedAgentRegion } from '../utils/agentRegion.js';
 import {
   AGENT_CONFIG_MD5_HEADER,
   AGENT_CONFIG_SCHEMA_HEADER,
@@ -171,7 +172,7 @@ export async function handleUpdate(request, env, ctx) {
       return createUnauthorizedResponse('Invalid secret');
     }
 
-    let regionCode = request.cf?.country || request.headers?.get('cf-ipcountry') || '';
+    const regionCode = resolveReportedAgentRegion(data, request);
     const agentVersion = normalizeAgentVersion(request.headers.get('X-Agent-Version'));
 
     const serverDetail = await getServerDetail(env.DB, id, true);
