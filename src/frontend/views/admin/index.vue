@@ -453,6 +453,12 @@ import { normalizeDisplayMode, resolveDisplayMode } from '../../utils/displayMod
 import { usePasswordVisibility } from '../../composables/usePasswordVisibility'
 import { useTurnstile } from './composables/useTurnstile'
 import { detectBillingCycle, detectCurrencySymbol, normalizeBillingCycle, normalizeCurrency, normalizePrice, renewExpireDateIfNeeded } from '../../../utils/serverBilling.js'
+import {
+  normalizeAgentBaseUrl,
+  normalizeAgentProxyUrl,
+  resolveAgentBaseUrl
+} from '../../../utils/agentNetwork.js'
+import { buildAgentInstallCommand, buildAgentUninstallCommand } from '../../../utils/agentCommands.js'
 
 const trans = useTranslation()
 const route = useRoute()
@@ -626,6 +632,8 @@ const editForm = ref({
   reset_day: 1,
   collect_interval: 0,
   report_interval: 60,
+  agent_base_url: '',
+  agent_proxy_url: '',
   custom_ct: '',
   custom_cu: '',
   custom_cm: '',
@@ -643,6 +651,8 @@ const deleteServerId = ref('')
 const copiedServerId = ref(null)
 const copiedNoteServerId = ref(null)
 const deleteTargetOs = ref('linux')
+const deleteAgentBaseUrl = ref('')
+const deleteAgentProxyUrl = ref('')
 const uninstallCopied = ref(false)
 const saving = ref(false)
 
@@ -678,7 +688,11 @@ const resetDay = ref(1)
 const rxCorrection = ref('')
 const txCorrection = ref('')
 const autoUpdate = ref(false)
+const agentBaseUrl = ref('')
+const agentProxyUrl = ref('')
 const copiedCmd = ref(false)
+
+const effectiveAgentBaseUrl = computed(() => resolveAgentBaseUrl(agentBaseUrl.value, selectedApiBase.value))
 
 const getPingNodeLabel = (field) => ({
   custom_ct: trans.value.customCt,
@@ -1090,24 +1104,13 @@ const addServer = async () => {
   }
 }
 
-const getInstallCommand = (serverId) => {
-  const HOST = selectedApiBase.value
-  return `curl -sL ${HOST}/install.sh | bash -s install -id=${serverId} -secret='${apiSecret.value}' -url=${HOST}/update`
-}
-
 const getUninstallCommand = () => {
-  const HOST = selectedApiBase.value
-  if (deleteTargetOs.value === 'windows') {
-    return `irm ${HOST}/cf-server-monitor.ps1 -OutFile cf-server-monitor.ps1; powershell -ExecutionPolicy Bypass -File .\\cf-server-monitor.ps1 uninstall`
-  }
-  const shell = deleteTargetOs.value === 'alpine' || deleteTargetOs.value === 'openwrt' ? 'sh' : 'bash'
-  const sudoPrefix = deleteTargetOs.value === 'mac' ? 'sudo ' : ''
-  const script = deleteTargetOs.value === 'alpine' ? 'install-alpine.sh'
-    : deleteTargetOs.value === 'openwrt' ? 'install-openwrt.sh'
-    : deleteTargetOs.value === 'mac' ? 'install-mac.sh'
-    : deleteTargetOs.value === 'synology' ? 'install-synology.sh'
-    : 'install.sh'
-  return `curl -sL ${HOST}/${script} | ${sudoPrefix}${shell} -s uninstall`
+  const normalizedProxy = normalizeAgentProxyUrl(deleteAgentProxyUrl.value).value || ''
+  return buildAgentUninstallCommand({
+    targetOs: deleteTargetOs.value,
+    baseUrl: resolveAgentBaseUrl(deleteAgentBaseUrl.value, selectedApiBase.value),
+    proxyUrl: normalizedProxy
+  })
 }
 
 const copyCmd = (serverId) => {
@@ -1125,49 +1128,31 @@ const copyCmd = (serverId) => {
   rxCorrection.value = server?.rx_correction ?? ''
   txCorrection.value = server?.tx_correction ?? ''
   autoUpdate.value = server?.auto_update === '1' || server?.auto_update === 1 || server?.auto_update === true
+  agentBaseUrl.value = server?.agent_base_url || ''
+  agentProxyUrl.value = server?.agent_proxy_url || ''
   copiedCmd.value = false
   showCopyModal.value = true
 }
 
-const hasCorrectionValue = (value) => value !== null && value !== undefined && value !== ''
-
 const getCustomInstallCommand = () => {
-  const HOST = selectedApiBase.value
-  const autoUpdateFlag = autoUpdate.value ? 1 : 0
-  if (targetOs.value === 'windows') {
-    const params = [
-      'install',
-      `-Id '${copyServerId.value}'`,
-      `-Secret '${apiSecret.value}'`,
-      `-Url '${HOST}/update'`,
-      `-CollectInterval ${collectInterval.value}`,
-      `-ReportInterval ${reportInterval.value}`,
-      `-ResetDay ${resetDay.value ?? 1}`,
-      `-AutoUpdate ${autoUpdateFlag}`
-    ]
-    if (customCt.value) params.push(`-CtNode '${customCt.value}'`)
-    if (customCu.value) params.push(`-CuNode '${customCu.value}'`)
-    if (customCm.value) params.push(`-CmNode '${customCm.value}'`)
-    if (customBd.value) params.push(`-BdNode '${customBd.value}'`)
-    if (hasCorrectionValue(rxCorrection.value)) params.push(`-RxCorrection ${rxCorrection.value}`)
-    if (hasCorrectionValue(txCorrection.value)) params.push(`-TxCorrection ${txCorrection.value}`)
-    return `irm ${HOST}/cf-server-monitor.ps1 -OutFile cf-server-monitor.ps1; powershell -ExecutionPolicy Bypass -File .\\cf-server-monitor.ps1 ${params.join(' ')}`
-  }
-  const shell = targetOs.value === 'alpine' || targetOs.value === 'openwrt' ? 'sh' : 'bash'
-  const sudoPrefix = targetOs.value === 'mac' ? 'sudo ' : ''
-  const script = targetOs.value === 'alpine' ? 'install-alpine.sh'
-    : targetOs.value === 'openwrt' ? 'install-openwrt.sh'
-    : targetOs.value === 'mac' ? 'install-mac.sh'
-    : targetOs.value === 'synology' ? 'install-synology.sh'
-    : 'install.sh'
-  let cmd = `curl -sL ${HOST}/${script} | ${sudoPrefix}${shell} -s install -id=${copyServerId.value} -secret='${apiSecret.value}' -url=${HOST}/update -collect_interval=${collectInterval.value} -interval=${reportInterval.value} -reset_day=${resetDay.value ?? 1} -auto_update=${autoUpdateFlag}`
-  if (customCt.value) cmd += ` -ct=${customCt.value}`
-  if (customCu.value) cmd += ` -cu=${customCu.value}`
-  if (customCm.value) cmd += ` -cm=${customCm.value}`
-  if (customBd.value) cmd += ` -bd=${customBd.value}`
-  if (hasCorrectionValue(rxCorrection.value)) cmd += ` -rx_correction=${rxCorrection.value}`
-  if (hasCorrectionValue(txCorrection.value)) cmd += ` -tx_correction=${txCorrection.value}`
-  return cmd
+  const normalizedProxy = normalizeAgentProxyUrl(agentProxyUrl.value).value || ''
+  return buildAgentInstallCommand({
+    targetOs: targetOs.value,
+    baseUrl: effectiveAgentBaseUrl.value,
+    proxyUrl: normalizedProxy,
+    serverId: copyServerId.value,
+    secret: apiSecret.value,
+    collectInterval: collectInterval.value,
+    reportInterval: reportInterval.value,
+    resetDay: resetDay.value,
+    autoUpdate: autoUpdate.value,
+    customCt: customCt.value,
+    customCu: customCu.value,
+    customCm: customCm.value,
+    customBd: customBd.value,
+    rxCorrection: rxCorrection.value,
+    txCorrection: txCorrection.value
+  })
 }
 
 const copyCustomCmd = async () => {
@@ -1227,6 +1212,8 @@ const openEditModal = (server) => {
     reset_day: server.reset_day ?? 1,
     collect_interval: server.collect_interval ?? 0,
     report_interval: server.report_interval || 60,
+    agent_base_url: server.agent_base_url || '',
+    agent_proxy_url: server.agent_proxy_url || '',
     custom_ct: server.custom_ct || '',
     custom_cu: server.custom_cu || '',
     custom_cm: server.custom_cm || '',
@@ -1288,10 +1275,23 @@ const saveEdit = async () => {
     normalizedAutoRenewal
   ).expire_date
 
+  const normalizedBaseUrl = normalizeAgentBaseUrl(editForm.value.agent_base_url)
+  if (!normalizedBaseUrl.valid) {
+    validationError.value = trans.value.invalidAgentBaseUrl
+    return
+  }
+  const normalizedProxyUrl = normalizeAgentProxyUrl(editForm.value.agent_proxy_url)
+  if (!normalizedProxyUrl.valid) {
+    validationError.value = trans.value.invalidAgentProxyUrl
+    return
+  }
+
   editForm.value.price = normalizedPrice
   editForm.value.currency = normalizedCurrency
   editForm.value.billing_cycle = normalizedBillingCycle
   editForm.value.expire_date = normalizedExpireDate
+  editForm.value.agent_base_url = normalizedBaseUrl.value
+  editForm.value.agent_proxy_url = normalizedProxyUrl.value
 
   const data = {
     action: 'edit',
@@ -1310,6 +1310,8 @@ const saveEdit = async () => {
     reset_day: editForm.value.reset_day,
     collect_interval: editForm.value.collect_interval,
     report_interval: editForm.value.report_interval,
+    agent_base_url: normalizedBaseUrl.value,
+    agent_proxy_url: normalizedProxyUrl.value,
     custom_ct: pingNodeValidation.values.custom_ct,
     custom_cu: pingNodeValidation.values.custom_cu,
     custom_cm: pingNodeValidation.values.custom_cm,
@@ -1340,6 +1342,8 @@ const openDeleteModal = (id) => {
   deleteServerId.value = id
   const server = servers.value.find(s => s.id === id)
   currentServerName.value = server?.name || ''
+  deleteAgentBaseUrl.value = server?.agent_base_url || ''
+  deleteAgentProxyUrl.value = server?.agent_proxy_url || ''
   deleteTargetOs.value = 'linux'
   uninstallCopied.value = false
   showDeleteModal.value = true

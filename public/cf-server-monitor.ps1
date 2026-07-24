@@ -15,7 +15,11 @@
 .PARAMETER Secret
     API 认证密钥
 .PARAMETER Url
-    Worker 上报地址
+    兼容旧版 Worker 上报地址
+.PARAMETER BaseUrl
+    探针 BaseURL，用于脚本下载、/update 上报和自动更新
+.PARAMETER ProxyUrl
+    仅用于访问 BaseURL 的 HTTP(S) 代理 URL，可包含 URL 编码的用户名密码
 .PARAMETER CollectInterval
     兼容参数。Windows PowerShell 版不使用 samples 采样缓存，始终按上报间隔采集并上报。
 .PARAMETER ReportInterval
@@ -37,9 +41,9 @@
 .PARAMETER BdNode
     自定义 BD 测试节点
 .EXAMPLE
-    .\cf-server-monitor.ps1 install -Id "xxx" -Secret "yyy" -Url "https://worker.example.com/update"
+    .\cf-server-monitor.ps1 install -Id "xxx" -Secret "yyy" -BaseUrl "https://worker.example.com"
 .EXAMPLE
-    .\cf-server-monitor.ps1 install -Id "xxx" -Secret "yyy" -Url "https://worker.example.com/update" -RxCorrection 10 -TxCorrection 5
+    .\cf-server-monitor.ps1 install -Id "xxx" -Secret "yyy" -BaseUrl "https://worker.example.com/prefix" -ProxyUrl "http://user:pass@proxy.example.com:8080"
 .EXAMPLE
     .\cf-server-monitor.ps1 uninstall
 #>
@@ -51,6 +55,8 @@ param(
     [string]$Id = "",
     [string]$Secret = "",
     [string]$Url = "",
+    [string]$BaseUrl = "",
+    [string]$ProxyUrl = "",
     [string]$CollectInterval = "0",
     [string]$ReportInterval = "60",
     [string]$ResetDay = "1",
@@ -65,6 +71,38 @@ param(
     [switch]$STA
 )
 
+$BASE_URL_WAS_BOUND = $PSBoundParameters.ContainsKey('BaseUrl')
+$PROXY_URL_WAS_BOUND = $PSBoundParameters.ContainsKey('ProxyUrl')
+
+function ConvertTo-NativeArgument {
+    param([string]$Value)
+    $builder = New-Object System.Text.StringBuilder
+    [void]$builder.Append('"')
+    $backslashes = 0
+    foreach ($character in ([string]$Value).ToCharArray()) {
+        if ($character -eq '\') {
+            $backslashes++
+            continue
+        }
+        if ($character -eq '"') {
+            [void]$builder.Append(('\' * (($backslashes * 2) + 1)))
+            [void]$builder.Append('"')
+            $backslashes = 0
+            continue
+        }
+        if ($backslashes -gt 0) {
+            [void]$builder.Append(('\' * $backslashes))
+            $backslashes = 0
+        }
+        [void]$builder.Append($character)
+    }
+    if ($backslashes -gt 0) {
+        [void]$builder.Append(('\' * ($backslashes * 2)))
+    }
+    [void]$builder.Append('"')
+    return $builder.ToString()
+}
+
 if (-not $STA -and $host.Runspace.ApartmentState -ne 'STA') {
     if ($MyInvocation.MyCommand.Path) {
         $scriptPath = $MyInvocation.MyCommand.Path
@@ -73,20 +111,22 @@ if (-not $STA -and $host.Runspace.ApartmentState -ne 'STA') {
     } else {
         $scriptPath = Join-Path (Get-Location).Path "cf-server-monitor.ps1"
     }
-    $argList = "-NoProfile -ExecutionPolicy Bypass -STA -File `"$scriptPath`" $Action -STA"
-    if ($Id) { $argList += " -Id `"$Id`"" }
-    if ($Secret) { $argList += " -Secret `"$Secret`"" }
-    if ($Url) { $argList += " -Url `"$Url`"" }
-    if ($CollectInterval) { $argList += " -CollectInterval `"$CollectInterval`"" }
-    if ($ReportInterval) { $argList += " -ReportInterval `"$ReportInterval`"" }
-    if ($ResetDay) { $argList += " -ResetDay `"$ResetDay`"" }
-    if ($AutoUpdate -ne "") { $argList += " -AutoUpdate `"$AutoUpdate`"" }
-    if ($RxCorrection) { $argList += " -RxCorrection `"$RxCorrection`"" }
-    if ($TxCorrection) { $argList += " -TxCorrection `"$TxCorrection`"" }
-    if ($CtNode) { $argList += " -CtNode `"$CtNode`"" }
-    if ($CuNode) { $argList += " -CuNode `"$CuNode`"" }
-    if ($CmNode) { $argList += " -CmNode `"$CmNode`"" }
-    if ($BdNode) { $argList += " -BdNode `"$BdNode`"" }
+    $argList = "-NoProfile -ExecutionPolicy Bypass -STA -File $(ConvertTo-NativeArgument $scriptPath) $(ConvertTo-NativeArgument $Action) -STA"
+    if ($Id) { $argList += " -Id $(ConvertTo-NativeArgument $Id)" }
+    if ($Secret) { $argList += " -Secret $(ConvertTo-NativeArgument $Secret)" }
+    if ($Url) { $argList += " -Url $(ConvertTo-NativeArgument $Url)" }
+    if ($BASE_URL_WAS_BOUND) { $argList += " -BaseUrl $(ConvertTo-NativeArgument $BaseUrl)" }
+    if ($PROXY_URL_WAS_BOUND) { $argList += " -ProxyUrl $(ConvertTo-NativeArgument $ProxyUrl)" }
+    if ($CollectInterval) { $argList += " -CollectInterval $(ConvertTo-NativeArgument $CollectInterval)" }
+    if ($ReportInterval) { $argList += " -ReportInterval $(ConvertTo-NativeArgument $ReportInterval)" }
+    if ($ResetDay) { $argList += " -ResetDay $(ConvertTo-NativeArgument $ResetDay)" }
+    if ($AutoUpdate -ne "") { $argList += " -AutoUpdate $(ConvertTo-NativeArgument $AutoUpdate)" }
+    if ($RxCorrection) { $argList += " -RxCorrection $(ConvertTo-NativeArgument $RxCorrection)" }
+    if ($TxCorrection) { $argList += " -TxCorrection $(ConvertTo-NativeArgument $TxCorrection)" }
+    if ($CtNode) { $argList += " -CtNode $(ConvertTo-NativeArgument $CtNode)" }
+    if ($CuNode) { $argList += " -CuNode $(ConvertTo-NativeArgument $CuNode)" }
+    if ($CmNode) { $argList += " -CmNode $(ConvertTo-NativeArgument $CmNode)" }
+    if ($BdNode) { $argList += " -BdNode $(ConvertTo-NativeArgument $BdNode)" }
     Start-Process powershell.exe -ArgumentList $argList
     exit 0
 }
@@ -96,7 +136,7 @@ $DebugPreference = "SilentlyContinue"
 $ErrorActionPreference = "Stop"
 
 $APP_NAME = "CF-Server-Monitor"
-$AGENT_VERSION = "1.3.2"
+$AGENT_VERSION = "1.3.3"
 $TASK_NAME = "CFProbe"
 # 获取脚本所在目录
 if ($MyInvocation.MyCommand.Path) {
@@ -171,6 +211,19 @@ function Load-Config {
             if ($raw.worker_url) {
                 $raw.worker_url = $raw.worker_url.Trim().Trim("'").Trim('"')
             }
+            if ($raw.base_url) {
+                $raw.base_url = $raw.base_url.Trim().Trim("'").Trim('"').TrimEnd('/')
+            } elseif ($raw.worker_url) {
+                $raw | Add-Member -NotePropertyName base_url -NotePropertyValue (Get-AgentBaseUrl -BaseUrl "" -WorkerUrl $raw.worker_url) -Force
+            }
+            if (-not $raw.worker_url -and $raw.base_url) {
+                $raw.worker_url = "$($raw.base_url)/update"
+            }
+            if ($raw.proxy_url) {
+                $raw.proxy_url = $raw.proxy_url.Trim().Trim("'").Trim('"')
+            } elseif ($null -eq $raw.PSObject.Properties['proxy_url']) {
+                $raw | Add-Member -NotePropertyName proxy_url -NotePropertyValue "" -Force
+            }
             # 同时清理其他可能包含引号的字段
             if ($raw.secret) {
                 $raw.secret = $raw.secret.Trim().Trim("'").Trim('"')
@@ -207,6 +260,7 @@ function Save-Config {
         } else {
             Move-Item -LiteralPath $tempFile -Destination $CONFIG_FILE
         }
+        Protect-SensitiveFile -Path $CONFIG_FILE
         Write-Log "配置文件已保存: $CONFIG_FILE" "DEBUG"
         return $true
     } catch {
@@ -218,6 +272,29 @@ function Save-Config {
         }
         Write-Log "保存配置文件失败: $_" "ERROR"
         return $false
+    }
+}
+
+function Protect-SensitiveFile {
+    param([string]$Path)
+    try {
+        if (-not (Test-Path -LiteralPath $Path)) { return }
+        $acl = New-Object System.Security.AccessControl.FileSecurity
+        $acl.SetAccessRuleProtection($true, $false)
+        $fullControl = [System.Security.AccessControl.FileSystemRights]::FullControl
+        $allow = [System.Security.AccessControl.AccessControlType]::Allow
+        $identities = @(
+            (New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')),
+            (New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-544')),
+            [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+        ) | Select-Object -Unique
+        foreach ($identity in $identities) {
+            $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($identity, $fullControl, $allow)
+            $acl.AddAccessRule($rule)
+        }
+        Set-Acl -LiteralPath $Path -AclObject $acl
+    } catch {
+        Write-Log "敏感文件权限收紧失败: $Path ($($_.Exception.Message))" "WARN"
     }
 }
 
@@ -266,15 +343,123 @@ function ConvertTo-PowerShellLiteral {
     return "'" + $Value.Replace("'", "''") + "'"
 }
 
+function Get-AgentBaseUrl {
+    param([string]$BaseUrl, [string]$WorkerUrl)
+
+    $candidate = if (-not [string]::IsNullOrWhiteSpace($BaseUrl)) { $BaseUrl } else { $WorkerUrl }
+    if ([string]::IsNullOrWhiteSpace($candidate)) { return "" }
+    $candidate = $candidate.Trim().Trim("'").Trim('"')
+    if ([string]::IsNullOrWhiteSpace($BaseUrl)) {
+        $candidate = $candidate -replace '/update/?$', ''
+    }
+    try {
+        $uri = [Uri]$candidate
+        if ($uri.Scheme -notin @('http', 'https') -or [string]::IsNullOrWhiteSpace($uri.Host) -or
+            -not [string]::IsNullOrWhiteSpace($uri.UserInfo) -or
+            -not [string]::IsNullOrWhiteSpace($uri.Query) -or
+            -not [string]::IsNullOrWhiteSpace($uri.Fragment)) {
+            throw 'BaseURL 格式无效'
+        }
+        return $uri.AbsoluteUri.TrimEnd('/')
+    } catch {
+        throw 'BaseURL 仅支持无凭据、无 query/hash 的 HTTP(S) URL'
+    }
+}
+
+function Normalize-AgentProxyUrl {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return "" }
+    try {
+        $uri = [Uri]$Value.Trim().Trim("'").Trim('"')
+        if ($uri.Scheme -notin @('http', 'https') -or [string]::IsNullOrWhiteSpace($uri.Host) -or
+            ($uri.AbsolutePath -ne '/' -and -not [string]::IsNullOrWhiteSpace($uri.AbsolutePath)) -or
+            -not [string]::IsNullOrWhiteSpace($uri.Query) -or
+            -not [string]::IsNullOrWhiteSpace($uri.Fragment)) {
+            throw '代理 URL 格式无效'
+        }
+        return $uri.AbsoluteUri.TrimEnd('/')
+    } catch {
+        throw '代理仅支持 HTTP(S) URL，且不能包含业务路径、query 或 hash'
+    }
+}
+
+function Get-MaskedProxyUrl {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return 'direct' }
+    try {
+        $uri = [Uri]$Value
+        if ([string]::IsNullOrWhiteSpace($uri.UserInfo)) { return $uri.AbsoluteUri.TrimEnd('/') }
+        $parts = $uri.UserInfo -split ':', 2
+        $username = [Uri]::UnescapeDataString($parts[0])
+        return "$($uri.Scheme)://${username}:******@$($uri.Authority)"
+    } catch {
+        return 'configured'
+    }
+}
+
+function Get-AgentProxyParameters {
+    param([string]$Value)
+    $parameters = @{}
+    $normalized = Normalize-AgentProxyUrl $Value
+    if (-not $normalized) { return $parameters }
+
+    $uri = [Uri]$normalized
+    $parameters.Proxy = "$($uri.Scheme)://$($uri.Authority)"
+    if (-not [string]::IsNullOrWhiteSpace($uri.UserInfo)) {
+        $parts = $uri.UserInfo -split ':', 2
+        $username = [Uri]::UnescapeDataString($parts[0])
+        $password = if ($parts.Count -gt 1) { [Uri]::UnescapeDataString($parts[1]) } else { "" }
+        $securePassword = if ($password.Length -gt 0) {
+            ConvertTo-SecureString $password -AsPlainText -Force
+        } else {
+            New-Object System.Security.SecureString
+        }
+        $parameters.ProxyCredential = New-Object System.Management.Automation.PSCredential($username, $securePassword)
+    }
+    return $parameters
+}
+
+function Invoke-AgentWebRequest {
+    param([string]$Uri, [string]$ProxyUrl, [hashtable]$Parameters = @{})
+    $request = @{ UseBasicParsing = $true; Uri = $Uri }
+    foreach ($entry in $Parameters.GetEnumerator()) { $request[$entry.Key] = $entry.Value }
+    $proxyParameters = Get-AgentProxyParameters $ProxyUrl
+    foreach ($entry in $proxyParameters.GetEnumerator()) { $request[$entry.Key] = $entry.Value }
+    $useDirectConnection = [string]::IsNullOrWhiteSpace($ProxyUrl)
+    $previousDefaultProxy = $null
+    if ($useDirectConnection) {
+        $previousDefaultProxy = [System.Net.WebRequest]::DefaultWebProxy
+        [System.Net.WebRequest]::DefaultWebProxy = $null
+    }
+    try {
+        return Invoke-WebRequest @request
+    } finally {
+        if ($useDirectConnection) {
+            [System.Net.WebRequest]::DefaultWebProxy = $previousDefaultProxy
+        }
+    }
+}
+
+function Invoke-DirectRestMethod {
+    param([string]$Uri, [int]$TimeoutSec = 3)
+    $previousDefaultProxy = [System.Net.WebRequest]::DefaultWebProxy
+    [System.Net.WebRequest]::DefaultWebProxy = $null
+    try {
+        return Invoke-RestMethod -Uri $Uri -TimeoutSec $TimeoutSec -ErrorAction Stop
+    } finally {
+        [System.Net.WebRequest]::DefaultWebProxy = $previousDefaultProxy
+    }
+}
+
 function Get-AgentInstallUrl {
-    param([string]$WorkerUrl)
+    param([string]$BaseUrl)
 
     try {
-        $uri = [Uri]$WorkerUrl
+        $uri = [Uri]$BaseUrl
         if ($uri.Scheme -notin @("http", "https") -or [string]::IsNullOrWhiteSpace($uri.Authority)) {
             return $null
         }
-        return "$($uri.Scheme)://$($uri.Authority)/cf-server-monitor.ps1"
+        return "$($BaseUrl.TrimEnd('/'))/cf-server-monitor.ps1"
     } catch {
         return $null
     }
@@ -307,7 +492,8 @@ function Get-AgentUpdateTempDir {
 
 function Schedule-AgentUpdate {
     param(
-        [string]$WorkerUrl,
+        [string]$BaseUrl,
+        [string]$ProxyUrl,
         [string]$AutoUpdate
     )
 
@@ -330,9 +516,9 @@ function Schedule-AgentUpdate {
         }
     }
 
-    $installUrl = Get-AgentInstallUrl -WorkerUrl $WorkerUrl
+    $installUrl = Get-AgentInstallUrl -BaseUrl $BaseUrl
     if (-not $installUrl) {
-        Write-Log "Auto update skipped: invalid worker_url=$WorkerUrl" "WARN"
+        Write-Log "Auto update skipped: invalid base_url=$BaseUrl" "WARN"
         return
     }
 
@@ -348,11 +534,35 @@ function Schedule-AgentUpdate {
     $installUrlLiteral = ConvertTo-PowerShellLiteral $installUrl
     $downloadScriptLiteral = ConvertTo-PowerShellLiteral $downloadScript
     $targetScriptLiteral = ConvertTo-PowerShellLiteral $SCRIPT_PATH
+    $proxyUrlLiteral = ConvertTo-PowerShellLiteral $ProxyUrl
 
     $runnerContent = @"
 `$ErrorActionPreference = 'Stop'
 try {
-    Invoke-WebRequest -UseBasicParsing -Uri $installUrlLiteral -OutFile $downloadScriptLiteral -TimeoutSec 30
+    `$proxyParameters = @{}
+    `$proxyUrl = $proxyUrlLiteral
+    if (-not [string]::IsNullOrWhiteSpace(`$proxyUrl)) {
+        `$proxyUri = [Uri]`$proxyUrl
+        `$proxyParameters.Proxy = "`$(`$proxyUri.Scheme)://`$(`$proxyUri.Authority)"
+        if (-not [string]::IsNullOrWhiteSpace(`$proxyUri.UserInfo)) {
+            `$proxyParts = `$proxyUri.UserInfo -split ':', 2
+            `$proxyUser = [Uri]::UnescapeDataString(`$proxyParts[0])
+            `$proxyPassword = if (`$proxyParts.Count -gt 1) { [Uri]::UnescapeDataString(`$proxyParts[1]) } else { '' }
+            `$secureProxyPassword = if (`$proxyPassword.Length -gt 0) { ConvertTo-SecureString `$proxyPassword -AsPlainText -Force } else { New-Object System.Security.SecureString }
+            `$proxyParameters.ProxyCredential = New-Object System.Management.Automation.PSCredential(`$proxyUser, `$secureProxyPassword)
+        }
+    }
+    `$useDirectConnection = [string]::IsNullOrWhiteSpace(`$proxyUrl)
+    `$previousDefaultProxy = `$null
+    if (`$useDirectConnection) {
+        `$previousDefaultProxy = [System.Net.WebRequest]::DefaultWebProxy
+        [System.Net.WebRequest]::DefaultWebProxy = `$null
+    }
+    try {
+        Invoke-WebRequest -UseBasicParsing -Uri $installUrlLiteral -OutFile $downloadScriptLiteral -TimeoutSec 30 @proxyParameters
+    } finally {
+        if (`$useDirectConnection) { [System.Net.WebRequest]::DefaultWebProxy = `$previousDefaultProxy }
+    }
     Copy-Item -LiteralPath $downloadScriptLiteral -Destination $targetScriptLiteral -Force
     Start-Process powershell.exe -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',$targetScriptLiteral,'install') -WindowStyle Hidden -Wait
 } catch {
@@ -364,6 +574,7 @@ try {
 
     try {
         [System.IO.File]::WriteAllText($runnerScript, $runnerContent, (New-Object System.Text.UTF8Encoding($false)))
+        Protect-SensitiveFile -Path $runnerScript
         Start-Process powershell.exe -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", $runnerScript) -WindowStyle Hidden
         [System.IO.File]::WriteAllText($lockFile, [string]$now, [System.Text.Encoding]::ASCII)
         Write-Log "Auto update scheduled: url=$installUrl temp=$updateTmpDir" "INFO"
@@ -479,20 +690,22 @@ function Invoke-AsAdmin {
     } else {
         $scriptPath = Join-Path (Get-Location).Path "cf-server-monitor.ps1"
     }
-    $argList = "-NoProfile -ExecutionPolicy Bypass -STA -File `"$scriptPath`" $Action -STA"
-    if ($Id) { $argList += " -Id `"$Id`"" }
-    if ($Secret) { $argList += " -Secret `"$Secret`"" }
-    if ($Url) { $argList += " -Url `"$Url`"" }
-    if ($CollectInterval -and $CollectInterval -ne "0") { $argList += " -CollectInterval `"$CollectInterval`"" }
-    if ($ReportInterval -and $ReportInterval -ne "60") { $argList += " -ReportInterval `"$ReportInterval`"" }
-    if ($ResetDay -and $ResetDay -ne "1") { $argList += " -ResetDay `"$ResetDay`"" }
-    if ($AutoUpdate -ne "") { $argList += " -AutoUpdate `"$AutoUpdate`"" }
-    if ($RxCorrection) { $argList += " -RxCorrection `"$RxCorrection`"" }
-    if ($TxCorrection) { $argList += " -TxCorrection `"$TxCorrection`"" }
-    if ($CtNode) { $argList += " -CtNode `"$CtNode`"" }
-    if ($CuNode) { $argList += " -CuNode `"$CuNode`"" }
-    if ($CmNode) { $argList += " -CmNode `"$CmNode`"" }
-    if ($BdNode) { $argList += " -BdNode `"$BdNode`"" }
+    $argList = "-NoProfile -ExecutionPolicy Bypass -STA -File $(ConvertTo-NativeArgument $scriptPath) $(ConvertTo-NativeArgument $Action) -STA"
+    if ($Id) { $argList += " -Id $(ConvertTo-NativeArgument $Id)" }
+    if ($Secret) { $argList += " -Secret $(ConvertTo-NativeArgument $Secret)" }
+    if ($Url) { $argList += " -Url $(ConvertTo-NativeArgument $Url)" }
+    if ($BASE_URL_WAS_BOUND) { $argList += " -BaseUrl $(ConvertTo-NativeArgument $BaseUrl)" }
+    if ($PROXY_URL_WAS_BOUND) { $argList += " -ProxyUrl $(ConvertTo-NativeArgument $ProxyUrl)" }
+    if ($CollectInterval -and $CollectInterval -ne "0") { $argList += " -CollectInterval $(ConvertTo-NativeArgument $CollectInterval)" }
+    if ($ReportInterval -and $ReportInterval -ne "60") { $argList += " -ReportInterval $(ConvertTo-NativeArgument $ReportInterval)" }
+    if ($ResetDay -and $ResetDay -ne "1") { $argList += " -ResetDay $(ConvertTo-NativeArgument $ResetDay)" }
+    if ($AutoUpdate -ne "") { $argList += " -AutoUpdate $(ConvertTo-NativeArgument $AutoUpdate)" }
+    if ($RxCorrection) { $argList += " -RxCorrection $(ConvertTo-NativeArgument $RxCorrection)" }
+    if ($TxCorrection) { $argList += " -TxCorrection $(ConvertTo-NativeArgument $TxCorrection)" }
+    if ($CtNode) { $argList += " -CtNode $(ConvertTo-NativeArgument $CtNode)" }
+    if ($CuNode) { $argList += " -CuNode $(ConvertTo-NativeArgument $CuNode)" }
+    if ($CmNode) { $argList += " -CmNode $(ConvertTo-NativeArgument $CmNode)" }
+    if ($BdNode) { $argList += " -BdNode $(ConvertTo-NativeArgument $BdNode)" }
     Start-Process powershell.exe -Verb RunAs -ArgumentList $argList -Wait
 }
 
@@ -860,11 +1073,11 @@ function Remove-PingBackgroundJob {
 
 function Test-PublicIPv4 {
     try {
-        $ip = (Invoke-RestMethod -Uri "https://ipv4.icanhazip.com" -TimeoutSec 3 -ErrorAction Stop).Trim()
+        $ip = (Invoke-DirectRestMethod -Uri "https://ipv4.icanhazip.com" -TimeoutSec 3).Trim()
         if ($ip -match '\.') { return $true }
     } catch {}
     try {
-        $ip = (Invoke-RestMethod -Uri "https://api.ipify.org" -TimeoutSec 3 -ErrorAction Stop).Trim()
+        $ip = (Invoke-DirectRestMethod -Uri "https://api.ipify.org" -TimeoutSec 3).Trim()
         if ($ip -match '\.') { return $true }
     } catch {}
     return $false
@@ -872,14 +1085,26 @@ function Test-PublicIPv4 {
 
 function Test-PublicIPv6 {
     try {
-        $ip = (Invoke-RestMethod -Uri "https://ipv6.icanhazip.com" -TimeoutSec 3 -ErrorAction Stop).Trim()
+        $ip = (Invoke-DirectRestMethod -Uri "https://ipv6.icanhazip.com" -TimeoutSec 3).Trim()
         if ($ip -match ':') { return $true }
     } catch {}
     try {
-        $ip = (Invoke-RestMethod -Uri "https://api64.ipify.org" -TimeoutSec 3 -ErrorAction Stop).Trim()
+        $ip = (Invoke-DirectRestMethod -Uri "https://api64.ipify.org" -TimeoutSec 3).Trim()
         if ($ip -match ':') { return $true }
     } catch {}
     return $false
+}
+
+function Get-DirectAgentRegion {
+    try {
+        $trace = [string](Invoke-DirectRestMethod -Uri "https://cloudflare.com/cdn-cgi/trace" -TimeoutSec 3)
+        foreach ($line in ($trace -split '\r?\n')) {
+            if ($line -match '^loc=([A-Za-z]{2})$') {
+                return $Matches[1].ToUpperInvariant()
+            }
+        }
+    } catch {}
+    return ""
 }
 
 # ============================================================
@@ -960,7 +1185,7 @@ function Test-CorrectionValue {
 }
 
 function Send-CorrectionConfirm {
-    param([string]$ServerId, [string]$Secret, [string]$WorkerUrl, [string]$RxCorrection, [string]$TxCorrection)
+    param([string]$ServerId, [string]$Secret, [string]$WorkerUrl, [string]$ProxyUrl, [string]$RxCorrection, [string]$TxCorrection)
     $rxValue = Normalize-CorrectionValue $RxCorrection
     $txValue = Normalize-CorrectionValue $TxCorrection
     if (-not (Test-CorrectionValue $rxValue) -or -not (Test-CorrectionValue $txValue)) { return $false }
@@ -972,8 +1197,13 @@ function Send-CorrectionConfirm {
     } | ConvertTo-Json -Compress
 
     try {
-        $response = Invoke-WebRequest -UseBasicParsing -Uri $WorkerUrl -Method Post -Body $payload `
-            -ContentType "application/json; charset=utf-8" -TimeoutSec 4 -ErrorAction Stop
+        $response = Invoke-AgentWebRequest -Uri $WorkerUrl -ProxyUrl $ProxyUrl -Parameters @{
+            Method = 'Post'
+            Body = $payload
+            ContentType = 'application/json; charset=utf-8'
+            TimeoutSec = 4
+            ErrorAction = 'Stop'
+        }
         if ([int]$response.StatusCode -ge 200 -and [int]$response.StatusCode -lt 300) {
             Write-Log "流量校正确认已发送: RX=${rxValue}GB TX=${txValue}GB" "INFO"
             return $true
@@ -985,12 +1215,12 @@ function Send-CorrectionConfirm {
 }
 
 function Invoke-TrafficCorrection {
-    param([string]$ServerId, [string]$Secret, [string]$WorkerUrl, [string]$RxCorrection, [string]$TxCorrection)
+    param([string]$ServerId, [string]$Secret, [string]$WorkerUrl, [string]$ProxyUrl, [string]$RxCorrection, [string]$TxCorrection)
     $rxValue = Normalize-CorrectionValue $RxCorrection
     $txValue = Normalize-CorrectionValue $TxCorrection
 
     if (Apply-TrafficCorrection -RxCorrection $rxValue -TxCorrection $txValue) {
-        [void](Send-CorrectionConfirm -ServerId $ServerId -Secret $Secret -WorkerUrl $WorkerUrl -RxCorrection $rxValue -TxCorrection $txValue)
+        [void](Send-CorrectionConfirm -ServerId $ServerId -Secret $Secret -WorkerUrl $WorkerUrl -ProxyUrl $ProxyUrl -RxCorrection $rxValue -TxCorrection $txValue)
     }
 }
 
@@ -1084,7 +1314,8 @@ function Invoke-TrayCollectLoop {
         $statusAutoUpdate = ConvertTo-BinaryFlag -Value $config.auto_update -Default "0"
         $msg = "CF-Server-Monitor 状态`n"
         $msg += "Server ID: $($config.server_id)`n"
-        $msg += "Worker URL: $($config.worker_url)`n"
+        $msg += "Base URL: $($config.base_url)`n"
+        $msg += "Proxy: $(Get-MaskedProxyUrl $config.proxy_url)`n"
         $msg += "上报间隔: $($config.report_interval)秒`n"
         $msg += "实际上报间隔: $effectiveStatusReportInterval秒`n"
         $msg += "自动更新: $statusAutoUpdate`n"
@@ -1132,9 +1363,9 @@ function Start-TimerCollectLoop {
     $config = Load-Config
     if (-not $config) {
         Write-Log "配置文件不存在，使用命令行参数..." "WARN"
-        if (-not $Id -or -not $Secret -or -not $Url) {
+        if (-not $Id -or -not $Secret -or (-not $BaseUrl -and -not $Url)) {
             Write-Log "错误: 缺少必要参数" "ERROR"
-            Write-Host "请使用: .\cf-server-monitor.ps1 run -Id 'ID' -Secret '密钥' -Url '地址'" -ForegroundColor Yellow
+            Write-Host "请使用: .\cf-server-monitor.ps1 run -Id 'ID' -Secret '密钥' -BaseUrl '地址'" -ForegroundColor Yellow
             return
         }
         try {
@@ -1147,10 +1378,19 @@ function Start-TimerCollectLoop {
             Write-Log "错误: $($_.Exception.Message)" "ERROR"
             return
         }
+        try {
+            $newBaseUrl = Get-AgentBaseUrl -BaseUrl $BaseUrl -WorkerUrl $Url
+            $newProxyUrl = Normalize-AgentProxyUrl $ProxyUrl
+        } catch {
+            Write-Log "错误: $($_.Exception.Message)" "ERROR"
+            return
+        }
         $config = @{
             server_id = $Id
             secret = $Secret
-            worker_url = $Url
+            base_url = $newBaseUrl
+            proxy_url = $newProxyUrl
+            worker_url = "$newBaseUrl/update"
             collect_interval = [int]$CollectInterval
             report_interval = [int]$ReportInterval
             reset_day = [int]$ResetDay
@@ -1167,7 +1407,22 @@ function Start-TimerCollectLoop {
 
     $serverId = if ($Id) { $Id } else { $config.server_id }
     $secret = if ($Secret) { $Secret } else { $config.secret }
-    $workerUrl = if ($Url) { $Url.Trim().Trim("'").Trim('"') } else { $config.worker_url.Trim().Trim("'").Trim('"') }
+    try {
+        $baseUrl = if ($BASE_URL_WAS_BOUND -or $Url) {
+            Get-AgentBaseUrl -BaseUrl $BaseUrl -WorkerUrl $Url
+        } else {
+            Get-AgentBaseUrl -BaseUrl (Get-ConfigProperty $config 'base_url' '') -WorkerUrl (Get-ConfigProperty $config 'worker_url' '')
+        }
+        $proxyUrl = if ($PROXY_URL_WAS_BOUND) {
+            Normalize-AgentProxyUrl $ProxyUrl
+        } else {
+            Normalize-AgentProxyUrl (Get-ConfigProperty $config 'proxy_url' '')
+        }
+    } catch {
+        Write-Log "错误: $($_.Exception.Message)" "ERROR"
+        return
+    }
+    $workerUrl = "$baseUrl/update"
 
     if ($config.report_interval) {
         $reportInterval = [int]$config.report_interval
@@ -1200,18 +1455,8 @@ function Start-TimerCollectLoop {
     $cmNode = $cmNode.Trim()
     $bdNode = $bdNode.Trim()
 
-    if ($workerUrl -notmatch '^https?://') {
-        Write-Log "警告: worker_url 格式可能不正确: '$workerUrl'" "WARN"
-        $workerUrl = $workerUrl.Trim().Trim("'").Trim('"')
-        Write-Log "清理后的 URL: '$workerUrl'" "WARN"
-    }
-    if ($workerUrl -notmatch '^https?://') {
-        Write-Log "错误: worker_url 无效: '$workerUrl'" "ERROR"
-        Write-Log "请检查配置文件: $CONFIG_FILE" "ERROR"
-        return
-    }
-    if (-not $serverId -or -not $secret -or -not $workerUrl) {
-        Write-Log "配置不完整，请填写 server_id, secret, worker_url" "ERROR"
+    if (-not $serverId -or -not $secret -or -not $baseUrl) {
+        Write-Log "配置不完整，请填写 server_id, secret, base_url" "ERROR"
         return
     }
     if (@(30, 60, 120, 180) -notcontains $reportInterval) { $reportInterval = 60 }
@@ -1226,6 +1471,7 @@ function Start-TimerCollectLoop {
     $script:cs_lastPingCheck = 0
     $script:cs_ipV4 = "0"
     $script:cs_ipV6 = "0"
+    $script:cs_region = ""
     $script:cs_pingCt = Get-ProbeInitialValue $ctNode
     $script:cs_pingCu = Get-ProbeInitialValue $cuNode
     $script:cs_pingCm = Get-ProbeInitialValue $cmNode
@@ -1253,7 +1499,7 @@ function Start-TimerCollectLoop {
         Start-Sleep -Milliseconds 300
     } catch {}
 
-    Write-Log "探针已启动。 ServerID=$serverId Url='$workerUrl' ReportInterval=${reportInterval}s EffectiveReportInterval=${effectiveReportInterval}s CollectInterval=ignored AutoUpdate=$autoUpdate"
+    Write-Log "探针已启动。 ServerID=$serverId BaseUrl='$baseUrl' Proxy='$(Get-MaskedProxyUrl $proxyUrl)' ReportInterval=${reportInterval}s EffectiveReportInterval=${effectiveReportInterval}s CollectInterval=ignored AutoUpdate=$autoUpdate"
 
     # ========================================
     # Timer 驱动采集：每次 Tick 执行一轮采集+上报
@@ -1266,6 +1512,8 @@ function Start-TimerCollectLoop {
             $srvId = $serverId
             $sec = $secret
             $wUrl = $workerUrl
+            $bUrl = $baseUrl
+            $pUrl = $proxyUrl
             $ctN = [string]$script:cs_ctNode
             $cuN = [string]$script:cs_cuNode
             $cmN = [string]$script:cs_cmNode
@@ -1280,6 +1528,8 @@ function Start-TimerCollectLoop {
             if ($now - $script:cs_lastIpCheck -ge 600 -or $script:cs_lastIpCheck -eq 0) {
                 $script:cs_ipV4 = if (Test-PublicIPv4) { "1" } else { "0" }
                 $script:cs_ipV6 = if (Test-PublicIPv6) { "1" } else { "0" }
+                $detectedRegion = Get-DirectAgentRegion
+                if ($detectedRegion) { $script:cs_region = $detectedRegion }
                 $script:cs_lastIpCheck = $now
             }
 
@@ -1387,6 +1637,7 @@ function Start-TimerCollectLoop {
                 $payload = @{
                     id = $srvId
                     secret = $sec
+                    agent_region = $script:cs_region
                     metrics = $metrics
                     collect_interval = 0
                     report_interval = $rInterval
@@ -1398,8 +1649,14 @@ function Start-TimerCollectLoop {
                         'X-Agent-Version' = $AGENT_VERSION
                         'X-Agent-Config-Md5' = if ($script:cs_configMd5) { $script:cs_configMd5 } else { 'none' }
                     }
-                    $response = Invoke-WebRequest -UseBasicParsing -Uri $wUrl -Method Post -Body $json `
-                        -ContentType "application/json; charset=utf-8" -Headers $requestHeaders -TimeoutSec 8 -ErrorAction Stop
+                    $response = Invoke-AgentWebRequest -Uri $wUrl -ProxyUrl $pUrl -Parameters @{
+                        Method = 'Post'
+                        Body = $json
+                        ContentType = 'application/json; charset=utf-8'
+                        Headers = $requestHeaders
+                        TimeoutSec = 8
+                        ErrorAction = 'Stop'
+                    }
                     if ([int]$response.StatusCode -eq 200) {
                         # Windows PowerShell 5.1 returns byte[] for some textual content types.
                         $responseBody = if ($response.Content -is [byte[]]) {
@@ -1471,12 +1728,12 @@ function Start-TimerCollectLoop {
                             if ($hasRemoteConfig -and $configApplied -and ($remoteConfig.ContainsKey('rx_correction') -or $remoteConfig.ContainsKey('tx_correction'))) {
                                 $rxCorr = if ($remoteConfig.ContainsKey('rx_correction')) { $remoteConfig.rx_correction } else { "" }
                                 $txCorr = if ($remoteConfig.ContainsKey('tx_correction')) { $remoteConfig.tx_correction } else { "" }
-                                Invoke-TrafficCorrection -ServerId $srvId -Secret $sec -WorkerUrl $wUrl -RxCorrection $rxCorr -TxCorrection $txCorr
+                                Invoke-TrafficCorrection -ServerId $srvId -Secret $sec -WorkerUrl $wUrl -ProxyUrl $pUrl -RxCorrection $rxCorr -TxCorrection $txCorr
                             }
 
                             if ($remoteConfig.ContainsKey('update') -and $remoteConfig.update -eq "1") {
                                 Write-Log "收到自动更新指令" "DEBUG"
-                                Schedule-AgentUpdate -WorkerUrl $wUrl -AutoUpdate $script:cs_autoUpdate
+                                Schedule-AgentUpdate -BaseUrl $bUrl -ProxyUrl $pUrl -AutoUpdate $script:cs_autoUpdate
                             }
                         }
                     }
@@ -1508,7 +1765,8 @@ function Install-Service {
     Write-Host "调试信息:" -ForegroundColor Cyan
     Write-Host "  Id: '$Id'" -ForegroundColor Cyan
     Write-Host "  Secret: '********'" -ForegroundColor Cyan
-    Write-Host "  Url: '$Url'" -ForegroundColor Cyan
+    Write-Host "  BaseUrl: '$BaseUrl'" -ForegroundColor Cyan
+    Write-Host "  Proxy: '$(Get-MaskedProxyUrl $ProxyUrl)'" -ForegroundColor Cyan
     Write-Host "  AutoUpdate: '$AutoUpdate'" -ForegroundColor Cyan
     Write-Host "  脚本目录: $SCRIPT_DIR" -ForegroundColor Cyan
     Write-Host "  配置文件: $CONFIG_FILE" -ForegroundColor Cyan
@@ -1536,7 +1794,22 @@ function Install-Service {
     $cleanId = if ($Id) { $Id.Trim().Trim("'").Trim('"') } else { "" }
     $cleanSecret = if ($Secret) { $Secret.Trim().Trim("'").Trim('"') } else { "" }
     $cleanUrl = if ($Url) { $Url.Trim().Trim("'").Trim('"') } else { "" }
+    $cleanBaseUrl = if ($BASE_URL_WAS_BOUND) { $BaseUrl.Trim().Trim("'").Trim('"') } else { "" }
+    $cleanProxyUrl = if ($PROXY_URL_WAS_BOUND) { $ProxyUrl.Trim().Trim("'").Trim('"') } else { "" }
     try {
+        $existingBaseUrl = if ($existingConfig) {
+            Get-AgentBaseUrl -BaseUrl (Get-ConfigProperty $existingConfig 'base_url' '') -WorkerUrl (Get-ConfigProperty $existingConfig 'worker_url' '')
+        } else { "" }
+        $baseUrlValue = if ($BASE_URL_WAS_BOUND -or $cleanUrl) {
+            Get-AgentBaseUrl -BaseUrl $cleanBaseUrl -WorkerUrl $cleanUrl
+        } else {
+            $existingBaseUrl
+        }
+        $proxyUrlValue = if ($PROXY_URL_WAS_BOUND) {
+            Normalize-AgentProxyUrl $cleanProxyUrl
+        } elseif ($existingConfig) {
+            Normalize-AgentProxyUrl (Get-ConfigProperty $existingConfig 'proxy_url' '')
+        } else { "" }
         $existingAutoUpdate = if ($existingConfig -and $null -ne $existingConfig.auto_update) {
             ConvertTo-BinaryFlag -Value $existingConfig.auto_update -Default "0"
         } else {
@@ -1555,7 +1828,9 @@ function Install-Service {
     $config = @{
         server_id = if ($cleanId) { $cleanId } elseif ($existingConfig) { $existingConfig.server_id } else { "" }
         secret = if ($cleanSecret) { $cleanSecret } elseif ($existingConfig) { $existingConfig.secret } else { "" }
-        worker_url = if ($cleanUrl) { $cleanUrl } elseif ($existingConfig) { $existingConfig.worker_url } else { "" }
+        base_url = $baseUrlValue
+        proxy_url = $proxyUrlValue
+        worker_url = if ($baseUrlValue) { "$baseUrlValue/update" } else { "" }
         collect_interval = [int]$CollectInterval
         report_interval = [int]$ReportInterval
         reset_day = [int]$ResetDay
@@ -1567,12 +1842,12 @@ function Install-Service {
         bd_node = if ($BdNode) { $BdNode } else { Get-ConfigProperty $existingConfig 'bd_node' $DEFAULT_BD }
     }
 
-    if (-not $config.server_id -or -not $config.secret -or -not $config.worker_url) {
-        Write-Host "错误: 缺少必要参数 -Id, -Secret, -Url" -ForegroundColor Red
+    if (-not $config.server_id -or -not $config.secret -or -not $config.base_url) {
+        Write-Host "错误: 缺少必要参数 -Id, -Secret, -BaseUrl" -ForegroundColor Red
         Write-Host "当前值:" -ForegroundColor Yellow
         Write-Host "  server_id: '$($config.server_id)'" -ForegroundColor Yellow
         Write-Host "  secret: '$($config.secret)'" -ForegroundColor Yellow
-        Write-Host "  worker_url: '$($config.worker_url)'" -ForegroundColor Yellow
+        Write-Host "  base_url: '$($config.base_url)'" -ForegroundColor Yellow
         return
     }
 
@@ -1643,7 +1918,8 @@ function Install-Service {
     Write-Host "       CF-Server-Monitor $AGENT_VERSION 安装成功" -ForegroundColor Green
     Write-Host "=============================================" -ForegroundColor Green
     Write-Host "  Server ID  : $($config.server_id)"
-    Write-Host "  Worker URL : $($config.worker_url)"
+    Write-Host "  Base URL   : $($config.base_url)"
+    Write-Host "  Proxy      : $(Get-MaskedProxyUrl $config.proxy_url)"
     Write-Host "  上报间隔   : $($config.report_interval)秒"
     Write-Host "  实际间隔   : $effectiveInstallReportInterval秒"
     Write-Host "  采样间隔   : Windows PowerShell 版不启用 samples 缓存"
@@ -1767,7 +2043,8 @@ function Get-ServiceStatus {
         $statusAutoUpdate = ConvertTo-BinaryFlag -Value $config.auto_update -Default "0"
         Write-Host "配置文件: $CONFIG_FILE" -ForegroundColor Cyan
         Write-Host "  Server ID  : $($config.server_id)"
-        Write-Host "  Worker URL : $($config.worker_url)"
+        Write-Host "  Base URL   : $($config.base_url)"
+        Write-Host "  Proxy      : $(Get-MaskedProxyUrl $config.proxy_url)"
         Write-Host "  上报间隔   : $($config.report_interval)秒"
         Write-Host "  实际间隔   : $effectiveStatusReportInterval秒"
         Write-Host "  自动更新   : $statusAutoUpdate"

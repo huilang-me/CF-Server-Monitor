@@ -119,6 +119,52 @@
         <span class="warning-icon">[i]</span> {{ trans.trafficResetDayTip }}
       </div>
 
+      <div class="mb-4">
+        <div class="section-title">
+          <span>▸</span>
+          <span>{{ trans.agentNetwork }}</span>
+          <span class="text-muted text-xs">({{ trans.installOnly }})</span>
+        </div>
+        <div class="form-group">
+          <label class="form-label">{{ trans.agentBaseUrl }}</label>
+          <input
+            type="url"
+            name="edit_agent_base_url"
+            autocomplete="off"
+            v-model.trim="editForm.agent_base_url"
+            :class="['form-input', { 'input-invalid': baseUrlError }]"
+            :placeholder="trans.agentBaseUrlPlaceholder"
+          >
+          <p v-if="baseUrlError" class="text-red text-sm mt-1">{{ baseUrlError }}</p>
+          <p v-else class="text-muted text-sm mt-1">{{ trans.agentBaseUrlHint }}</p>
+        </div>
+        <div class="form-group no-margin">
+          <label class="form-label">{{ trans.agentProxyUrl }}</label>
+          <div class="password-input-wrapper">
+            <input
+              type="text"
+              name="edit_agent_proxy_url"
+              autocomplete="off"
+              data-lpignore="true"
+              data-1p-ignore="true"
+              data-bwignore="true"
+              data-form-type="other"
+              v-model.trim="editForm.agent_proxy_url"
+              :class="['form-input', { 'secret-input-masked': !proxyVisible, 'input-invalid': proxyUrlError }]"
+              :placeholder="trans.agentProxyUrlPlaceholder"
+            >
+            <button type="button" class="password-toggle" @click="proxyVisible = !proxyVisible">
+              {{ proxyVisible ? '🙈' : '👁️' }}
+            </button>
+          </div>
+          <p v-if="proxyUrlError" class="text-red text-sm mt-1">{{ proxyUrlError }}</p>
+          <p v-else class="text-muted text-sm mt-1">{{ trans.agentProxyUrlHint }}</p>
+        </div>
+        <div class="warning-box mt-3">
+          <span class="warning-icon">[i]</span> {{ trans.agentNetworkInstallWarning }}
+        </div>
+      </div>
+
       <div class="form-row">
         <div class="form-group flex-1">
           <label class="form-label">{{ trans.customCt }} <span class="text-xs text-muted">({{ trans.serverLevel }})</span></label>
@@ -187,7 +233,7 @@
       </div>
 
       <div class="modal-footer flex-justify-between">
-        <button @click="$emit('save')" class="btn btn-primary" :disabled="hasPingNodeErrors">{{ trans.save }}</button>
+        <button @click="$emit('save')" class="btn btn-primary" :disabled="hasValidationErrors">{{ trans.save }}</button>
         <button @click="$emit('close')" class="btn">{{ trans.cancel }}</button>
       </div>
     </div>
@@ -195,10 +241,11 @@
 </template>
 
 <script setup>
-import { computed, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { PING_NODE_FIELDS, validatePingNode } from '../../../utils/pingNode.js'
 import { currentLang } from '../../../utils/i18n.js'
 import { BILLING_CYCLES, CURRENCY_OPTIONS, normalizePrice, renewExpireDateIfNeeded } from '../../../../utils/serverBilling.js'
+import { normalizeAgentBaseUrl, normalizeAgentProxyUrl } from '../../../../utils/agentNetwork.js'
 
 const editForm = defineModel('editForm', { type: Object, required: true })
 
@@ -220,7 +267,19 @@ const pingNodeErrors = computed(() => Object.fromEntries(
   ])
 ))
 
-const hasPingNodeErrors = computed(() => Object.values(pingNodeErrors.value).some(Boolean))
+const proxyVisible = ref(false)
+watch(() => props.show, (show) => {
+  if (show) proxyVisible.value = false
+})
+const baseUrlError = computed(() => (
+  normalizeAgentBaseUrl(editForm.value.agent_base_url).valid ? '' : props.trans.invalidAgentBaseUrl
+))
+const proxyUrlError = computed(() => (
+  normalizeAgentProxyUrl(editForm.value.agent_proxy_url).valid ? '' : props.trans.invalidAgentProxyUrl
+))
+const hasValidationErrors = computed(() => (
+  Object.values(pingNodeErrors.value).some(Boolean) || !!baseUrlError.value || !!proxyUrlError.value
+))
 
 const billingCycleOptions = BILLING_CYCLES
 const currencyOptions = CURRENCY_OPTIONS

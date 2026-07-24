@@ -49,6 +49,8 @@ export async function initDatabase(db) {
           collect_interval INTEGER DEFAULT 0,
           report_interval INTEGER DEFAULT 60,
           auto_update TEXT DEFAULT '0',
+          agent_base_url TEXT DEFAULT '',
+          agent_proxy_url TEXT DEFAULT '',
           custom_ct TEXT DEFAULT '',
           custom_cu TEXT DEFAULT '',
           custom_cm TEXT DEFAULT '',

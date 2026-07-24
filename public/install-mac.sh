@@ -1,13 +1,13 @@
 #!/bin/bash
 # ==============================================================================
-# V1.3.2
+# V1.3.3
 # CF-Server-Monitor 安装/卸载脚本 (macOS 适配版)
 # 支持: macOS Intel / macOS Apple Silicon (M1/M2/M3/M4)
 # ==============================================================================
 
 set -euo pipefail
 
-AGENT_VERSION="1.3.2"
+AGENT_VERSION="1.3.3"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -41,14 +41,16 @@ step() { echo -e "${BLUE}[→]${NC} $1"; }
 print_usage() {
     echo -e "${RED}错误: 运行所需的入参不完整。${NC}\n"
     echo "用法:"
-    echo "  sudo bash $0 install -id=SERVER_ID -secret=SECRET -url=WORKER_URL [选项]"
+    echo "  sudo bash $0 install -id=SERVER_ID -secret=SECRET -base_url=BASE_URL [选项]"
     echo ""
     echo "必需参数:"
     echo "  -id=xxx        服务器ID"
     echo "  -secret=xxx    密钥"
-    echo "  -url=xxx       上报地址"
+    echo "  -base_url=xxx  探针 BaseURL"
     echo ""
     echo "可选参数:"
+    echo "  -url=xxx       兼容旧版上报地址参数"
+    echo "  -proxy_url=xxx HTTP(S) 代理 URL"
     echo "  -interval=N    上报间隔(秒)，默认60"
     echo "  -collect_interval=N    采样间隔(秒)，默认0"
     echo "  -ct=HOST       自定义CT测试节点"
@@ -61,7 +63,8 @@ print_usage() {
     echo "  -tx_correction=N  上行流量校正(GB)，覆盖当月上行数据"
     echo ""
     echo "示例:"
-    echo "  sudo bash $0 install -id=server123 -secret=abc123 -url=https://worker.example.com"
+    echo "  sudo bash $0 install -id=server123 -secret=abc123 -base_url=https://worker.example.com"
+    echo "  sudo bash $0 install -id=server123 -secret=abc123 -base_url=https://worker.example.com/prefix -proxy_url=http://user:pass@proxy.example.com:8080"
     echo "  sudo bash $0 uninstall"
     exit 1
 }
@@ -73,6 +76,18 @@ normalize_binary_value() {
         0|1) printf '%s' "$value" ;;
         *) return 1 ;;
     esac
+}
+
+derive_base_url() {
+    local url="${1%%\?*}"
+    url="${url%%#*}"
+    case "$url" in */update) url="${url%/update}" ;; esac
+    printf '%s' "${url%/}"
+}
+
+masked_proxy_url() {
+    [ -z "${1:-}" ] && { printf '%s' "direct"; return; }
+    printf '%s' "$1" | sed -E 's#(https?://[^:/@]*):[^@]*@#\1:******@#'
 }
 
 check_root() {
@@ -143,6 +158,8 @@ fi
 SERVER_ID=""
 SECRET=""
 WORKER_URL=""
+BASE_URL=""
+PROXY_URL=""
 COLLECT_INTERVAL=""
 REPORT_INTERVAL=""
 CT_NODE=""
@@ -158,6 +175,8 @@ while IFS='=' read -r key value; do
         SERVER_ID) SERVER_ID="${value%\"}"; SERVER_ID="${SERVER_ID#\"}" ;;
         SECRET) SECRET="${value%\"}"; SECRET="${SECRET#\"}" ;;
         WORKER_URL) WORKER_URL="${value%\"}"; WORKER_URL="${WORKER_URL#\"}" ;;
+        BASE_URL) BASE_URL="${value%\"}"; BASE_URL="${BASE_URL#\"}" ;;
+        PROXY_URL) PROXY_URL="${value%\"}"; PROXY_URL="${PROXY_URL#\"}" ;;
         COLLECT_INTERVAL) COLLECT_INTERVAL="${value%\"}"; COLLECT_INTERVAL="${COLLECT_INTERVAL#\"}" ;;
         REPORT_INTERVAL) REPORT_INTERVAL="${value%\"}"; REPORT_INTERVAL="${REPORT_INTERVAL#\"}" ;;
         CT_NODE) CT_NODE="${value%\"}"; CT_NODE="${CT_NODE#\"}" ;;
@@ -189,6 +208,28 @@ ACTIVE_INTERVAL="${REPORT_INTERVAL}"
 CONFIG_MD5=${CONFIG_MD5:-none}
 DEBUG_MODE=${DEBUG_MODE:-0}
 
+derive_base_url() {
+    local url="${1%%\?*}"
+    url="${url%%#*}"
+    case "$url" in */update) url="${url%/update}" ;; esac
+    printf '%s' "${url%/}"
+}
+
+BASE_URL=${BASE_URL:-}
+PROXY_URL=${PROXY_URL:-}
+[ -z "$BASE_URL" ] && BASE_URL=$(derive_base_url "$WORKER_URL")
+BASE_URL=${BASE_URL%/}
+[ -n "$BASE_URL" ] && WORKER_URL="${BASE_URL}/update"
+
+agent_curl() {
+    if [ -n "$PROXY_URL" ]; then curl --noproxy '' --proxy "$PROXY_URL" "$@"; else curl --noproxy '*' "$@"; fi
+}
+
+masked_proxy_url() {
+    [ -z "${1:-}" ] && { printf '%s' "direct"; return; }
+    printf '%s' "$1" | sed -E 's#(https?://[^:/@]*):[^@]*@#\1:******@#'
+}
+
 log_ts() {
     date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%d %H:%M:%S'
 }
@@ -206,25 +247,10 @@ log_warn_debug() {
 }
 
 get_install_url() {
-    local url rest origin
-    url="${WORKER_URL%%\?*}"
-    case "$url" in
-        http://*)
-            rest="${url#http://}"
-            origin="http://${rest%%/*}"
-            ;;
-        https://*)
-            rest="${url#https://}"
-            origin="https://${rest%%/*}"
-            ;;
-        *)
-            return 1
-            ;;
+    case "$BASE_URL" in
+        http://*|https://*) printf '%s/install-mac.sh' "$BASE_URL" ;;
+        *) return 1 ;;
     esac
-    case "$origin" in
-        http://|https://) return 1 ;;
-    esac
-    printf '%s/install-mac.sh' "$origin"
 }
 
 schedule_agent_update() {
@@ -265,7 +291,7 @@ schedule_agent_update() {
     log_debug "Auto update requested: install_url=${install_url}"
     log_debug "Auto update temp dir: ${update_tmp_dir}"
 
-    nohup /bin/bash -c 'tmp="$2/cf-probe-auto-update.$$"; rm -f "$tmp"; if curl -fsSL --connect-timeout 5 -m 30 "$1" -o "$tmp"; then /bin/bash "$tmp" install; fi; rm -f "$tmp"' _ "$install_url" "$update_tmp_dir" >/dev/null 2>&1 &
+    nohup /bin/bash -c 'tmp="$2/cf-probe-auto-update.$$"; proxy="$3"; rm -f "$tmp"; if [ -n "$proxy" ]; then curl --noproxy "" --proxy "$proxy" -fsSL --connect-timeout 5 -m 30 "$1" -o "$tmp"; else curl --noproxy "*" -fsSL --connect-timeout 5 -m 30 "$1" -o "$tmp"; fi && /bin/bash "$tmp" install; rm -f "$tmp"' _ "$install_url" "$update_tmp_dir" "$PROXY_URL" >/dev/null 2>&1 &
     printf '%s\n' "$now" > "$lock_file" 2>/dev/null || true
     log_info "Auto update scheduled"
     return 0
@@ -470,7 +496,7 @@ send_correction_confirm() {
     tx_val=$(normalize_correction_value "$2")
     is_valid_correction_value "$rx_val" && is_valid_correction_value "$tx_val" || return 1
     payload="{\"id\":\"$SERVER_ID\",\"secret\":\"$SECRET\",\"rx_correction\":$rx_val,\"tx_correction\":$tx_val}"
-    http_code=$(curl -skS -o /dev/null -w "%{http_code}" -X POST \
+    http_code=$(agent_curl -skS -o /dev/null -w "%{http_code}" -X POST \
         -H "Content-Type: application/json" \
         -d "$payload" -m 4 --connect-timeout 2 "$WORKER_URL" 2>/dev/null || echo 000)
     case "$http_code" in ''|*[!0-9]*) http_code=000 ;; esac
@@ -1037,8 +1063,14 @@ run_network_worker() {
         local now; now=$(date +%s)
 
         if [ $((now - last_ip)) -ge 600 ] || [ "${last_ip}" -eq 0 ]; then
-            (curl -s -m 2 --connect-timeout 2 https://cloudflare.com/cdn-cgi/trace 2>/dev/null | grep -q "ip=" && echo "1" || echo "0") > "${TEMP_DIR}/.cf_ipv4.tmp" && mv "${TEMP_DIR}/.cf_ipv4.tmp" "${TEMP_DIR}/.cf_ipv4" || true
-            (if route -n get -inet6 default >/dev/null 2>&1; then curl -6 -s -m 2 --connect-timeout 2 https://cloudflare.com/cdn-cgi/trace 2>/dev/null | grep -q "ip=" && echo "1" || echo "0"; else echo "0"; fi) > "${TEMP_DIR}/.cf_ipv6.tmp" && mv "${TEMP_DIR}/.cf_ipv6.tmp" "${TEMP_DIR}/.cf_ipv6" || true
+            local direct_trace direct_region
+            direct_trace=$(curl --noproxy '*' -s -m 2 --connect-timeout 2 https://cloudflare.com/cdn-cgi/trace 2>/dev/null || true)
+            (printf '%s\n' "$direct_trace" | grep -q '^ip=' && echo "1" || echo "0") > "${TEMP_DIR}/.cf_ipv4.tmp" && mv "${TEMP_DIR}/.cf_ipv4.tmp" "${TEMP_DIR}/.cf_ipv4" || true
+            direct_region=$(printf '%s\n' "$direct_trace" | awk -F= '$1 == "loc" && $2 ~ /^[A-Za-z][A-Za-z]$/ { print toupper($2); exit }')
+            case "$direct_region" in
+                [A-Z][A-Z]) printf '%s\n' "$direct_region" > "${TEMP_DIR}/.cf_region.tmp" && mv "${TEMP_DIR}/.cf_region.tmp" "${TEMP_DIR}/.cf_region" || true ;;
+            esac
+            (if route -n get -inet6 default >/dev/null 2>&1; then curl --noproxy '*' -6 -s -m 2 --connect-timeout 2 https://cloudflare.com/cdn-cgi/trace 2>/dev/null | grep -q "ip=" && echo "1" || echo "0"; else echo "0"; fi) > "${TEMP_DIR}/.cf_ipv6.tmp" && mv "${TEMP_DIR}/.cf_ipv6.tmp" "${TEMP_DIR}/.cf_ipv6" || true
             last_ip="${now}"
         fi
 
@@ -1204,6 +1236,8 @@ while true; do
 
     [ -f "${TEMP_DIR}/.cf_ipv4" ] && IPV4=$(cat "${TEMP_DIR}/.cf_ipv4") || IPV4="0"
     [ -f "${TEMP_DIR}/.cf_ipv6" ] && IPV6=$(cat "${TEMP_DIR}/.cf_ipv6") || IPV6="0"
+    [ -f "${TEMP_DIR}/.cf_region" ] && AGENT_REGION=$(cat "${TEMP_DIR}/.cf_region") || AGENT_REGION=""
+    case "$AGENT_REGION" in [A-Z][A-Z]) ;; *) AGENT_REGION="" ;; esac
     if [ -f "${TEMP_DIR}/.cf_probe_ct" ]; then _p=$(cat "${TEMP_DIR}/.cf_probe_ct"); PING_CT=${_p%% *}; LOSS_CT=${_p##* }; else PING_CT=""; LOSS_CT=""; fi
     if [ -f "${TEMP_DIR}/.cf_probe_cu" ]; then _p=$(cat "${TEMP_DIR}/.cf_probe_cu"); PING_CU=${_p%% *}; LOSS_CU=${_p##* }; else PING_CU=""; LOSS_CU=""; fi
     if [ -f "${TEMP_DIR}/.cf_probe_cm" ]; then _p=$(cat "${TEMP_DIR}/.cf_probe_cm"); PING_CM=${_p%% *}; LOSS_CM=${_p##* }; else PING_CM=""; LOSS_CM=""; fi
@@ -1240,18 +1274,18 @@ EOF
     if [ "${LAST_REPORT_TIME}" -eq 0 ] || [ $((LOOP_START_TIME - LAST_REPORT_TIME)) -ge "${REPORT_INTERVAL}" ]; then
         if [ "${COLLECT_INTERVAL}" -gt 0 ]; then
             PAYLOAD=$(cat <<EOF
-{"id":"${SERVER_ID}","secret":"${SECRET}","metrics":${METRICS_JSON},"samples":[${SAMPLES_JSON}],"collect_interval":${COLLECT_INTERVAL},"report_interval":${REPORT_INTERVAL}}
+{"id":"${SERVER_ID}","secret":"${SECRET}","agent_region":"${AGENT_REGION}","metrics":${METRICS_JSON},"samples":[${SAMPLES_JSON}],"collect_interval":${COLLECT_INTERVAL},"report_interval":${REPORT_INTERVAL}}
 EOF
 )
         else
             PAYLOAD=$(cat <<EOF
-{"id":"${SERVER_ID}","secret":"${SECRET}","metrics":${METRICS_JSON},"collect_interval":${COLLECT_INTERVAL},"report_interval":${REPORT_INTERVAL}}
+{"id":"${SERVER_ID}","secret":"${SECRET}","agent_region":"${AGENT_REGION}","metrics":${METRICS_JSON},"collect_interval":${COLLECT_INTERVAL},"report_interval":${REPORT_INTERVAL}}
 EOF
 )
         fi
         REPORT_RESPONSE_FILE="${TEMP_DIR}/.cf_probe_response.$$"
         REPORT_HEADER_FILE="${TEMP_DIR}/.cf_probe_headers.$$"
-        REPORT_HTTP_CODE=$(curl -skS -D "$REPORT_HEADER_FILE" -o "$REPORT_RESPONSE_FILE" -w "%{http_code}" -X POST \
+        REPORT_HTTP_CODE=$(agent_curl -skS -D "$REPORT_HEADER_FILE" -o "$REPORT_RESPONSE_FILE" -w "%{http_code}" -X POST \
             -H "Content-Type: application/json" \
             -H "X-Agent-Config-Schema: 2" \
             -H "X-Agent-Version: ${AGENT_VERSION}" \
@@ -1387,6 +1421,8 @@ install_probe() {
     SERVER_ID=""
     SECRET=""
     WORKER_URL=""
+    BASE_URL=""
+    PROXY_URL=""
     COLLECT_INTERVAL=""
     REPORT_INTERVAL=""
     CT_NODE=""
@@ -1403,6 +1439,8 @@ install_probe() {
             -id=*) SERVER_ID="${arg#-id=}" ;;
             -secret=*) SECRET="${arg#-secret=}" ;;
             -url=*) WORKER_URL="${arg#-url=}" ;;
+            -base_url=*) BASE_URL="${arg#-base_url=}" ;;
+            -proxy_url=*) PROXY_URL="${arg#-proxy_url=}" ;;
             -collect_interval=*|-collect=*) COLLECT_INTERVAL="${arg#*=}" ;;
             -interval=*) REPORT_INTERVAL="${arg#-interval=}" ;;
             -ct=*) CT_NODE="${arg#-ct=}" ;;
@@ -1415,6 +1453,10 @@ install_probe() {
             -tx_correction=*) TX_CORRECTION="${arg#-tx_correction=}" ;;
         esac
     done
+
+    [ -z "$BASE_URL" ] && BASE_URL=$(derive_base_url "$WORKER_URL")
+    BASE_URL=${BASE_URL%/}
+    [ -n "$BASE_URL" ] && WORKER_URL="${BASE_URL}/update"
 
     print_banner
     check_root
@@ -1436,6 +1478,8 @@ install_probe() {
 SERVER_ID="${SERVER_ID}"
 SECRET="${SECRET}"
 WORKER_URL="${WORKER_URL}"
+BASE_URL="${BASE_URL}"
+PROXY_URL="${PROXY_URL}"
 COLLECT_INTERVAL="${COLLECT_INTERVAL}"
 REPORT_INTERVAL="${REPORT_INTERVAL}"
 CT_NODE="${CT_NODE:-}"
@@ -1456,6 +1500,8 @@ EOF
                     SERVER_ID) SERVER_ID="${value%\"}"; SERVER_ID="${SERVER_ID#\"}" ;;
                     SECRET) SECRET="${value%\"}"; SECRET="${SECRET#\"}" ;;
                     WORKER_URL) WORKER_URL="${value%\"}"; WORKER_URL="${WORKER_URL#\"}" ;;
+                    BASE_URL) BASE_URL="${value%\"}"; BASE_URL="${BASE_URL#\"}" ;;
+                    PROXY_URL) PROXY_URL="${value%\"}"; PROXY_URL="${PROXY_URL#\"}" ;;
                     COLLECT_INTERVAL) COLLECT_INTERVAL="${value%\"}"; COLLECT_INTERVAL="${COLLECT_INTERVAL#\"}" ;;
                     REPORT_INTERVAL) REPORT_INTERVAL="${value%\"}"; REPORT_INTERVAL="${REPORT_INTERVAL#\"}" ;;
                     CT_NODE) CT_NODE="${value%\"}"; CT_NODE="${CT_NODE#\"}" ;;
@@ -1466,6 +1512,9 @@ EOF
                     AUTO_UPDATE) AUTO_UPDATE="${value%\"}"; AUTO_UPDATE="${AUTO_UPDATE#\"}" ;;
                 esac
             done < "${CONFIG_FILE}"
+            [ -z "$BASE_URL" ] && BASE_URL=$(derive_base_url "$WORKER_URL")
+            BASE_URL=${BASE_URL%/}
+            [ -n "$BASE_URL" ] && WORKER_URL="${BASE_URL}/update"
         fi
     else
         if [ -z "${SERVER_ID}" ] || [ -z "${SECRET}" ] || [ -z "${WORKER_URL}" ]; then
@@ -1492,6 +1541,8 @@ EOF
 SERVER_ID="${SERVER_ID}"
 SECRET="${SECRET}"
 WORKER_URL="${WORKER_URL}"
+BASE_URL="${BASE_URL}"
+PROXY_URL="${PROXY_URL}"
 COLLECT_INTERVAL="${COLLECT_INTERVAL}"
 REPORT_INTERVAL="${REPORT_INTERVAL}"
 CT_NODE="${CT_NODE:-}"
@@ -1554,7 +1605,8 @@ EOF
     echo -e "  配置参数 :"
     echo -e "    ● Server ID   : ${SERVER_ID}"
     echo -e "    ● Secret      : ********"
-    echo -e "    ● Worker URL  : ${WORKER_URL}"
+    echo -e "    ● Base URL    : ${BASE_URL}"
+    echo -e "    ● Proxy       : $(masked_proxy_url "${PROXY_URL}")"
     echo -e "    ● 上报间隔    : ${REPORT_INTERVAL}秒"
     printf  '    ● 采样间隔    : %s秒\n' "${COLLECT_INTERVAL}"
     echo -e "    ● 自动更新    : ${AUTO_UPDATE}"

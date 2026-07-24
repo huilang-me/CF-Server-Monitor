@@ -9,6 +9,7 @@ import { addServerColumns } from '../database/updateDatabase.js';
 import { sendNotification } from '../services/notification.js';
 import { getNextServerHistoryPartitionId, HISTORY_MAX_PARTITION_ID } from '../database/indexOptimization.js';
 import { isValidTrafficCorrection, validateAgentConfigInput, validatePingNode } from '../utils/agentConfig.js';
+import { normalizeAgentBaseUrl, normalizeAgentProxyUrl } from '../utils/agentNetwork.js';
 import { detectBillingCycle, detectCurrencySymbol, normalizeBillingCycle, normalizeCurrency, normalizePrice, renewExpireDateIfNeeded } from '../utils/serverBilling.js';
 
 const PING_NODE_FIELDS = ['custom_ct', 'custom_cu', 'custom_cm', 'custom_bd'];
@@ -523,7 +524,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
       });
     }
     else if (data.action === 'edit') {
-      const { id, name, server_group, tags, note, price, billing_cycle, auto_renewal, currency, expire_date, traffic_limit, traffic_calc_type, reset_day, collect_interval, report_interval, auto_update, custom_ct, custom_cu, custom_cm, custom_bd, rx_correction, tx_correction, offline_notify_disabled, is_hidden } = data;
+      const { id, name, server_group, tags, note, price, billing_cycle, auto_renewal, currency, expire_date, traffic_limit, traffic_calc_type, reset_day, collect_interval, report_interval, auto_update, agent_base_url, agent_proxy_url, custom_ct, custom_cu, custom_cm, custom_bd, rx_correction, tx_correction, offline_notify_disabled, is_hidden } = data;
       if (!id || !isValidUUID(id)) {
         return createBadRequestResponse('invalidServerId');
       }
@@ -536,6 +537,17 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
         return createBadRequestResponse(agentConfigResult.error);
       }
       const normalizedAgentConfig = agentConfigResult.config;
+
+      const hasAgentBaseUrl = Object.prototype.hasOwnProperty.call(data, 'agent_base_url');
+      const hasAgentProxyUrl = Object.prototype.hasOwnProperty.call(data, 'agent_proxy_url');
+      const normalizedBaseUrl = normalizeAgentBaseUrl(hasAgentBaseUrl ? agent_base_url : '');
+      if (!normalizedBaseUrl.valid) {
+        return createBadRequestResponse('invalidAgentBaseUrl');
+      }
+      const normalizedProxyUrl = normalizeAgentProxyUrl(hasAgentProxyUrl ? agent_proxy_url : '');
+      if (!normalizedProxyUrl.valid) {
+        return createBadRequestResponse('invalidAgentProxyUrl');
+      }
 
       const pingNodes = normalizePingNodeFields({ custom_ct, custom_cu, custom_cm, custom_bd });
       if (!pingNodes.valid) {
@@ -570,7 +582,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
       try {
         await env.DB.prepare(`
           UPDATE servers
-          SET name = ?, server_group = ?, tags = ?, note = ?, price = ?, billing_cycle = ?, auto_renewal = ?, currency = ?, expire_date = ?, traffic_limit = ?, traffic_calc_type = ?, reset_day = ?, collect_interval = ?, report_interval = ?, auto_update = ?, custom_ct = ?, custom_cu = ?, custom_cm = ?, custom_bd = ?, rx_correction = ?, tx_correction = ?, offline_notify_disabled = ?, is_hidden = ?
+          SET name = ?, server_group = ?, tags = ?, note = ?, price = ?, billing_cycle = ?, auto_renewal = ?, currency = ?, expire_date = ?, traffic_limit = ?, traffic_calc_type = ?, reset_day = ?, collect_interval = ?, report_interval = ?, auto_update = ?, agent_base_url = CASE WHEN ? = 1 THEN ? ELSE agent_base_url END, agent_proxy_url = CASE WHEN ? = 1 THEN ? ELSE agent_proxy_url END, custom_ct = ?, custom_cu = ?, custom_cm = ?, custom_bd = ?, rx_correction = ?, tx_correction = ?, offline_notify_disabled = ?, is_hidden = ?
           WHERE id = ?
         `).bind(
           name || '',
@@ -588,6 +600,10 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
           normalizedAgentConfig.collect_interval,
           normalizedAgentConfig.report_interval,
           normalizeBooleanFlag(auto_update),
+          hasAgentBaseUrl ? 1 : 0,
+          normalizedBaseUrl.value,
+          hasAgentProxyUrl ? 1 : 0,
+          normalizedProxyUrl.value,
           pingNodes.values.custom_ct,
           pingNodes.values.custom_cu,
           pingNodes.values.custom_cm,
@@ -699,19 +715,26 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
           }
         }
 
+        const billingData = normalizeServerBillingData(server);
+        const normalizedBaseUrl = normalizeAgentBaseUrl(server.agent_base_url);
+        const normalizedProxyUrl = normalizeAgentProxyUrl(server.agent_proxy_url);
+        if (!normalizedBaseUrl.valid || !normalizedProxyUrl.valid) {
+          skipped++;
+          skippedIds.push(server.id);
+          continue;
+        }
+
         usedPartitionIds.add(partitionId);
         existingIds.add(server.id);
-
-        const billingData = normalizeServerBillingData(server);
 
         try {
           await env.DB.prepare(`
             INSERT INTO servers (id, name, server_group, tags, note, price, billing_cycle, auto_renewal,
               currency, expire_date,
               traffic_limit, traffic_calc_type, reset_day, collect_interval, report_interval,
-              auto_update, custom_ct, custom_cu, custom_cm, custom_bd, rx_correction, tx_correction,
+              auto_update, agent_base_url, agent_proxy_url, custom_ct, custom_cu, custom_cm, custom_bd, rx_correction, tx_correction,
               offline_notify_disabled, is_hidden, sort_order, history_partition_id, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).bind(
             server.id,
             server.name || '',
@@ -729,6 +752,8 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
             server.collect_interval ?? 0,
             server.report_interval ?? 60,
             normalizeBooleanFlag(server.auto_update),
+            normalizedBaseUrl.value,
+            normalizedProxyUrl.value,
             server.custom_ct || '',
             server.custom_cu || '',
             server.custom_cm || '',

@@ -25,6 +25,9 @@
         <div class="form-group">
           <label class="form-label">{{ trans.exportServers }}</label>
           <p class="text-muted mb-2">{{ trans.exportServersDesc }}</p>
+          <div class="danger-box text-sm mb-3">
+            <span class="danger-icon">⚠️</span> {{ trans.exportProxyCredentialsWarning }}
+          </div>
           <button @click="handleExport" class="btn btn-primary btn-lg" :disabled="dbLoading || exporting">
             {{ exporting ? trans.exporting : '📤 ' + trans.exportServers }}
           </button>
@@ -85,6 +88,7 @@ const importing = ref(false)
 const importResult = ref(null)
 
 const handleExport = async () => {
+  if (!confirm(props.trans.exportProxyCredentialsConfirm)) return
   exporting.value = true
   importResult.value = null
   try {
