@@ -225,6 +225,32 @@ agent_curl() {
     if [ -n "$PROXY_URL" ]; then curl --noproxy '' --proxy "$PROXY_URL" "$@"; else curl --noproxy '*' "$@"; fi
 }
 
+direct_cf_trace() (
+    local default_route direct_gateway direct_interface direct_source current_interface route_added
+    default_route=$(route -n get default 2>/dev/null) || return 1
+    direct_gateway=$(printf '%s\n' "$default_route" | awk '$1 == "gateway:" { print $2; exit }')
+    direct_interface=$(printf '%s\n' "$default_route" | awk '$1 == "interface:" { print $2; exit }')
+    [ -n "$direct_gateway" ] && [ -n "$direct_interface" ] || return 1
+
+    case "$(printf '%s' "$direct_interface" | tr '[:upper:]' '[:lower:]')" in
+        lo*|tun*|tap*|utun*|clash*|mihomo*|sing*|warp*|tailscale*|wg*) return 1 ;;
+    esac
+    direct_source=$(ifconfig "$direct_interface" 2>/dev/null | awk '$1 == "inet" { print $2; exit }')
+    case "$direct_source" in *.*.*.*) ;; *) return 1 ;; esac
+
+    route_added=0
+    current_interface=$(route -n get 1.1.1.1 2>/dev/null | awk '$1 == "interface:" { print $2; exit }')
+    if [ "$current_interface" != "$direct_interface" ]; then
+        # A temporary host route outranks Clash's broad TUN routes without changing other traffic.
+        route -n add -host 1.1.1.1 "$direct_gateway" >/dev/null 2>&1 || return 1
+        route_added=1
+    fi
+    trap '[ "$route_added" -eq 1 ] && route -n delete -host 1.1.1.1 "$direct_gateway" >/dev/null 2>&1 || true' EXIT HUP INT TERM
+
+    curl --noproxy '*' -4 --interface "$direct_source" -s -m 4 --connect-timeout 2 \
+        -H 'Host: cloudflare.com' http://1.1.1.1/cdn-cgi/trace 2>/dev/null
+)
+
 masked_proxy_url() {
     [ -z "${1:-}" ] && { printf '%s' "direct"; return; }
     printf '%s' "$1" | sed -E 's#(https?://[^:/@]*):[^@]*@#\1:******@#'
@@ -1064,12 +1090,11 @@ run_network_worker() {
 
         if [ $((now - last_ip)) -ge 600 ] || [ "${last_ip}" -eq 0 ]; then
             local direct_trace direct_region
-            direct_trace=$(curl --noproxy '*' -s -m 2 --connect-timeout 2 https://cloudflare.com/cdn-cgi/trace 2>/dev/null || true)
+            direct_trace=$(direct_cf_trace || true)
             (printf '%s\n' "$direct_trace" | grep -q '^ip=' && echo "1" || echo "0") > "${TEMP_DIR}/.cf_ipv4.tmp" && mv "${TEMP_DIR}/.cf_ipv4.tmp" "${TEMP_DIR}/.cf_ipv4" || true
             direct_region=$(printf '%s\n' "$direct_trace" | awk -F= '$1 == "loc" && $2 ~ /^[A-Za-z][A-Za-z]$/ { print toupper($2); exit }')
-            case "$direct_region" in
-                [A-Z][A-Z]) printf '%s\n' "$direct_region" > "${TEMP_DIR}/.cf_region.tmp" && mv "${TEMP_DIR}/.cf_region.tmp" "${TEMP_DIR}/.cf_region" || true ;;
-            esac
+            case "$direct_region" in [A-Z][A-Z]) ;; *) direct_region="" ;; esac
+            printf '%s\n' "$direct_region" > "${TEMP_DIR}/.cf_region.tmp" && mv "${TEMP_DIR}/.cf_region.tmp" "${TEMP_DIR}/.cf_region" || true
             (if route -n get -inet6 default >/dev/null 2>&1; then curl --noproxy '*' -6 -s -m 2 --connect-timeout 2 https://cloudflare.com/cdn-cgi/trace 2>/dev/null | grep -q "ip=" && echo "1" || echo "0"; else echo "0"; fi) > "${TEMP_DIR}/.cf_ipv6.tmp" && mv "${TEMP_DIR}/.cf_ipv6.tmp" "${TEMP_DIR}/.cf_ipv6" || true
             last_ip="${now}"
         fi

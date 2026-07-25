@@ -269,6 +269,53 @@ agent_curl() {
     if [ -n "$PROXY_URL" ]; then curl --noproxy '' --proxy "$PROXY_URL" "$@"; else curl --noproxy '*' "$@"; fi
 }
 
+get_direct_route_source() {
+    local family="$1" route_line direct_interface direct_source
+    route_line=$(ip "-${family}" route show table main default 2>/dev/null | awk '
+        function is_tunnel(name) {
+            name = tolower(name)
+            return name ~ /^(lo|tun|tap|utun|clash|mihomo|sing|warp|tailscale|wg)/
+        }
+        {
+            dev = ""; via = ""
+            for (i = 1; i <= NF; i++) {
+                if ($i == "dev" && i < NF) dev = $(i + 1)
+                if ($i == "via" && i < NF) via = $(i + 1)
+            }
+            if (dev != "" && !is_tunnel(dev)) {
+                if (via != "") { print; selected = 1; exit }
+                if (fallback == "") fallback = $0
+            }
+        }
+        END { if (!selected && fallback != "") print fallback }
+    ' | head -n 1)
+    [ -n "$route_line" ] || return 1
+
+    direct_interface=$(printf '%s\n' "$route_line" | awk '{ for (i = 1; i <= NF; i++) if ($i == "dev" && i < NF) { print $(i + 1); exit } }')
+    direct_source=$(printf '%s\n' "$route_line" | awk '{ for (i = 1; i <= NF; i++) if ($i == "src" && i < NF) { print $(i + 1); exit } }')
+    if [ -z "$direct_source" ] && [ -n "$direct_interface" ]; then
+        direct_source=$(ip "-${family}" addr show dev "$direct_interface" scope global 2>/dev/null | awk '$1 == "inet" || $1 == "inet6" { sub(/\/.*/, "", $2); print $2; exit }')
+    fi
+
+    case "$family:$direct_source" in
+        4:*.*.*.*|6:*:*) printf '%s\n' "$direct_source" ;;
+        *) return 1 ;;
+    esac
+}
+
+direct_cf_trace() {
+    local family="$1" direct_source trace_url
+    direct_source=$(get_direct_route_source "$family") || return 1
+    # Bind the physical source address and use a fixed Cloudflare IP so TUN policy routing and fake DNS are bypassed.
+    case "$family" in
+        4) trace_url='http://1.1.1.1/cdn-cgi/trace' ;;
+        6) trace_url='http://[2606:4700:4700::1111]/cdn-cgi/trace' ;;
+        *) return 1 ;;
+    esac
+    curl --noproxy '*' "-${family}" --interface "$direct_source" -s -m 4 --connect-timeout 2 \
+        -H 'Host: cloudflare.com' "$trace_url" 2>/dev/null
+}
+
 masked_proxy_url() {
     [ -z "${1:-}" ] && { printf '%s' "direct"; return; }
     printf '%s' "$1" | sed -E 's#(https?://[^:/@]*):[^@]*@#\1:******@#'
@@ -983,14 +1030,18 @@ run_network_worker() {
         local now; now=$(date +%s)
 
         if [ $((now - last_ip)) -ge 600 ] || [ "$last_ip" -eq 0 ]; then
-            local direct_trace direct_region
-            direct_trace=$(curl --noproxy '*' -s -m 2 --connect-timeout 2 https://cloudflare.com/cdn-cgi/trace 2>/dev/null || true)
+            local direct_trace direct_trace_v6 direct_region
+            direct_trace=$(direct_cf_trace 4 || true)
+            direct_trace_v6=$(direct_cf_trace 6 || true)
             (printf '%s\n' "$direct_trace" | grep -q '^ip=' && echo "1" || echo "0") > /dev/shm/.cf_ipv4.tmp && mv /dev/shm/.cf_ipv4.tmp /dev/shm/.cf_ipv4 || true
             direct_region=$(printf '%s\n' "$direct_trace" | awk -F= '$1 == "loc" && $2 ~ /^[A-Za-z][A-Za-z]$/ { print toupper($2); exit }')
             case "$direct_region" in
-                [A-Z][A-Z]) printf '%s\n' "$direct_region" > /dev/shm/.cf_region.tmp && mv /dev/shm/.cf_region.tmp /dev/shm/.cf_region || true ;;
+                [A-Z][A-Z]) ;;
+                *) direct_region=$(printf '%s\n' "$direct_trace_v6" | awk -F= '$1 == "loc" && $2 ~ /^[A-Za-z][A-Za-z]$/ { print toupper($2); exit }') ;;
             esac
-            (if ip -6 route show default >/dev/null 2>&1; then curl --noproxy '*' -6 -s -m 2 --connect-timeout 2 https://cloudflare.com/cdn-cgi/trace 2>/dev/null | grep -q "ip=" && echo "1" || echo "0"; else echo "0"; fi) > /dev/shm/.cf_ipv6.tmp && mv /dev/shm/.cf_ipv6.tmp /dev/shm/.cf_ipv6 || true
+            case "$direct_region" in [A-Z][A-Z]) ;; *) direct_region="" ;; esac
+            printf '%s\n' "$direct_region" > /dev/shm/.cf_region.tmp && mv /dev/shm/.cf_region.tmp /dev/shm/.cf_region || true
+            (printf '%s\n' "$direct_trace_v6" | grep -q '^ip=' && echo "1" || echo "0") > /dev/shm/.cf_ipv6.tmp && mv /dev/shm/.cf_ipv6.tmp /dev/shm/.cf_ipv6 || true
             last_ip="$now"
         fi
 

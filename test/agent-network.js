@@ -198,6 +198,10 @@ for (const scriptName of [
   assert.match(source, /-proxy_url=/, `${scriptName} proxy argument`);
   assert.match(source, /agent_region/, `${scriptName} direct region report`);
   assert.match(source, /\.cf_region/, `${scriptName} direct region cache`);
+  assert.match(source, /direct_cf_trace/, `${scriptName} TUN-bypass trace helper`);
+  assert.match(source, /--interface/, `${scriptName} physical source binding`);
+  assert.match(source, /Host: cloudflare\.com/, `${scriptName} fixed-IP trace host`);
+  assert.match(source, /http:\/\/1\.1\.1\.1\/cdn-cgi\/trace/, `${scriptName} DNS-independent trace endpoint`);
 }
 
 const windowsSource = fs.readFileSync(path.join(projectRoot, 'public', 'cf-server-monitor.ps1'), 'utf8');
@@ -208,5 +212,8 @@ assert.match(windowsSource, /System\.Management\.Automation\.PSCredential/);
 assert.match(windowsSource, /Invoke-AgentWebRequest/);
 assert.match(windowsSource, /Get-DirectAgentRegion/);
 assert.match(windowsSource, /agent_region/);
+assert.match(windowsSource, /Get-PhysicalDefaultIPv4Route/);
+assert.match(windowsSource, /New-NetRoute/);
+assert.match(windowsSource, /http:\/\/1\.1\.1\.1\/cdn-cgi\/trace/);
 
 console.log('agent network validation, quoting, and script checks passed');

@@ -1071,15 +1071,87 @@ function Remove-PingBackgroundJob {
 # IP 检测
 # ============================================================
 
+function Get-PhysicalDefaultIPv4Route {
+    try {
+        $routes = Get-NetRoute -AddressFamily IPv4 -DestinationPrefix "0.0.0.0/0" -ErrorAction Stop |
+            Sort-Object RouteMetric
+        foreach ($route in $routes) {
+            $adapter = Get-NetAdapter -InterfaceIndex $route.InterfaceIndex -ErrorAction Stop
+            if ($adapter.Status -ne "Up") { continue }
+            $identity = "$($adapter.Name) $($adapter.InterfaceDescription)"
+            if ($identity -match '(?i)(^|[\s_-])(tun|tap|utun|wintun|clash|mihomo|sing-box|warp|tailscale|wireguard|zerotier)([\s_-]|$)') {
+                continue
+            }
+            return $route
+        }
+    } catch {}
+    return $null
+}
+
+function Get-DirectAgentTrace {
+    $route = $null
+    $routeAdded = $false
+    $probeRouteMetric = 42713
+    $response = $null
+    $reader = $null
+    try {
+        $route = Get-PhysicalDefaultIPv4Route
+        if ($null -eq $route) { return "" }
+
+        $existingRoute = @(Get-NetRoute -AddressFamily IPv4 -DestinationPrefix "1.1.1.1/32" -ErrorAction SilentlyContinue |
+            Where-Object { $_.InterfaceIndex -eq $route.InterfaceIndex })
+        $ownedProbeRoute = @($existingRoute | Where-Object {
+            [string]($_.NextHop) -eq [string]($route.NextHop) -and $_.RouteMetric -eq $probeRouteMetric
+        })
+        if ($ownedProbeRoute.Count -gt 0) {
+            $routeAdded = $true
+        } elseif ($existingRoute.Count -eq 0) {
+            # A temporary host route outranks Clash's broad TUN routes without changing other traffic.
+            $newRouteParams = @{
+                AddressFamily = "IPv4"
+                DestinationPrefix = "1.1.1.1/32"
+                InterfaceIndex = $route.InterfaceIndex
+                NextHop = [string]$route.NextHop
+                RouteMetric = $probeRouteMetric
+                PolicyStore = "ActiveStore"
+                ErrorAction = "Stop"
+            }
+            New-NetRoute @newRouteParams | Out-Null
+            $routeAdded = $true
+        }
+
+        $request = [System.Net.HttpWebRequest]::Create("http://1.1.1.1/cdn-cgi/trace")
+        $request.Proxy = $null
+        $request.Host = "cloudflare.com"
+        $request.UserAgent = "CF-Server-Monitor/$AGENT_VERSION"
+        $request.Timeout = 4000
+        $request.ReadWriteTimeout = 4000
+        $response = $request.GetResponse()
+        $reader = New-Object System.IO.StreamReader($response.GetResponseStream())
+        return $reader.ReadToEnd()
+    } catch {
+        return ""
+    } finally {
+        if ($null -ne $reader) { $reader.Dispose() }
+        if ($null -ne $response) { $response.Dispose() }
+        if ($routeAdded -and $null -ne $route) {
+            Get-NetRoute -AddressFamily IPv4 -DestinationPrefix "1.1.1.1/32" -ErrorAction SilentlyContinue |
+                Where-Object {
+                    $_.InterfaceIndex -eq $route.InterfaceIndex -and
+                    [string]($_.NextHop) -eq [string]($route.NextHop) -and
+                    $_.RouteMetric -eq $probeRouteMetric
+                } |
+                Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 function Test-PublicIPv4 {
-    try {
-        $ip = (Invoke-DirectRestMethod -Uri "https://ipv4.icanhazip.com" -TimeoutSec 3).Trim()
-        if ($ip -match '\.') { return $true }
-    } catch {}
-    try {
-        $ip = (Invoke-DirectRestMethod -Uri "https://api.ipify.org" -TimeoutSec 3).Trim()
-        if ($ip -match '\.') { return $true }
-    } catch {}
+    param([string]$Trace = "")
+    if (-not $Trace) { $Trace = Get-DirectAgentTrace }
+    foreach ($line in ($Trace -split '\r?\n')) {
+        if ($line -match '^ip=([0-9]{1,3}\.){3}[0-9]{1,3}$') { return $true }
+    }
     return $false
 }
 
@@ -1096,14 +1168,13 @@ function Test-PublicIPv6 {
 }
 
 function Get-DirectAgentRegion {
-    try {
-        $trace = [string](Invoke-DirectRestMethod -Uri "https://cloudflare.com/cdn-cgi/trace" -TimeoutSec 3)
-        foreach ($line in ($trace -split '\r?\n')) {
-            if ($line -match '^loc=([A-Za-z]{2})$') {
-                return $Matches[1].ToUpperInvariant()
-            }
+    param([string]$Trace = "")
+    if (-not $Trace) { $Trace = Get-DirectAgentTrace }
+    foreach ($line in ($Trace -split '\r?\n')) {
+        if ($line -match '^loc=([A-Za-z]{2})$') {
+            return $Matches[1].ToUpperInvariant()
         }
-    } catch {}
+    }
     return ""
 }
 
@@ -1526,10 +1597,10 @@ function Start-TimerCollectLoop {
 
             # IP 检测（每 10 分钟）
             if ($now - $script:cs_lastIpCheck -ge 600 -or $script:cs_lastIpCheck -eq 0) {
-                $script:cs_ipV4 = if (Test-PublicIPv4) { "1" } else { "0" }
+                $directTrace = Get-DirectAgentTrace
+                $script:cs_ipV4 = if (Test-PublicIPv4 -Trace $directTrace) { "1" } else { "0" }
                 $script:cs_ipV6 = if (Test-PublicIPv6) { "1" } else { "0" }
-                $detectedRegion = Get-DirectAgentRegion
-                if ($detectedRegion) { $script:cs_region = $detectedRegion }
+                $script:cs_region = Get-DirectAgentRegion -Trace $directTrace
                 $script:cs_lastIpCheck = $now
             }
 

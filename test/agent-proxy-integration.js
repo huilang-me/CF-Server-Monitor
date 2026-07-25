@@ -34,6 +34,7 @@ const target = http.createServer((request, response) => {
   targetRequests++;
   response.writeHead(200, { 'content-type': 'text/plain' });
   if (request.url === '/trace') {
+    assert.equal(request.headers.host, 'cloudflare.com');
     response.end('ip=203.0.113.10\nloc=JP\n');
     return;
   }
@@ -95,7 +96,8 @@ try {
   assert.equal(targetRequests, 2);
 
   const traceBody = await runCurl([
-    '--noproxy', '*', '-fsSL', `http://127.0.0.1:${targetPort}/trace`
+    '--noproxy', '*', '--interface', '127.0.0.1', '-H', 'Host: cloudflare.com',
+    '-fsSL', `http://127.0.0.1:${targetPort}/trace`
   ], {
     HTTP_PROXY: proxyUrl,
     http_proxy: proxyUrl,
