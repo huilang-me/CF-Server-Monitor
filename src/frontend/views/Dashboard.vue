@@ -237,6 +237,7 @@ import { currentLang, useTranslation } from '../utils/i18n.js'
 import { TIME, DEFAULT_SITE_TITLE, STORAGE } from '../utils/constants'
 import { normalizeTimestamp as normalizeMetricTimestamp } from '../utils/time.js'
 import { normalizeDashboardView, normalizeDisplayMode, resolveDisplayMode } from '../utils/displayMode.js'
+import { getPlaybackElapsedMs, resolvePlaybackCursor } from '../utils/playback.js'
 
 const servers = ref([])
 const stats = ref({ total: '-', online: 0, offline: 0, globalNetRx: 0, globalNetTx: 0, globalSpeedIn: 0, globalSpeedOut: 0 })
@@ -408,19 +409,25 @@ const queueLiveSamples = (serverId, samples, reportTs, { replayCachedReport = fa
 
   const current = servers.value.find(s => s.id === serverId)
   const currentTs = getServerSampleTimestamp(current)
+  const currentDisplayTs = getServerDisplayTimestamp(current)
   const incoming = replayCachedReport
     ? normalized
     : normalized.filter(sample => !currentTs || sample.ts > currentTs)
   if (incoming.length === 0) return
 
+  const playbackStartTs = resolvePlaybackCursor(incoming[0].ts, currentDisplayTs, {
+    replayCachedReport,
+    reportAgeMs
+  })
+  if (playbackStartTs === null) return
+
   if (incoming.length === 1) {
     playbackBuffers.delete(serverId)
     const sample = incoming[0]
-    applyServerSample(serverId, sample.data, sample.ts, sample.ts, reportTs)
+    applyServerSample(serverId, sample.data, sample.ts, playbackStartTs, reportTs)
     return
   }
 
-  const firstTs = incoming[0].ts
   const unique = []
   const seen = new Set()
   for (const sample of incoming) {
@@ -429,12 +436,6 @@ const queueLiveSamples = (serverId, samples, reportTs, { replayCachedReport = fa
     unique.push(sample)
   }
   playbackBuffers.set(serverId, unique.slice(-MAX_BUFFER_SAMPLES_PER_SERVER))
-  const normalizedReportAgeMs = Number(reportAgeMs)
-  const elapsedMs = replayCachedReport && Number.isFinite(normalizedReportAgeMs)
-    ? Math.max(0, normalizedReportAgeMs)
-    : 0
-  const lastTs = unique[unique.length - 1].ts
-  const playbackStartTs = Math.min(firstTs + elapsedMs, lastTs)
   applyPlaybackSamplesForServer(serverId, playbackStartTs)
 }
 
@@ -522,7 +523,8 @@ const advanceServerClocks = () => {
     const reportTs = getServerReportTimestamp(server, null)
     const isOnline = reportTs && (currentTs - reportTs) < TIME.ONLINE_THRESHOLD_MS
     const currentDisplayTs = getServerDisplayTimestamp(server) || getServerSampleTimestamp(server) || reportTs
-    const nextDisplayTs = isOnline && currentDisplayTs ? currentDisplayTs + PLAYBACK_TICK_MS : currentDisplayTs
+    const elapsedMs = getPlaybackElapsedMs(currentTs, server.current_timestamp, PLAYBACK_TICK_MS)
+    const nextDisplayTs = isOnline && currentDisplayTs ? currentDisplayTs + elapsedMs : currentDisplayTs
     return withDisplayTiming(server, nextDisplayTs, currentTs)
   })
   applyPlaybackSamples()
