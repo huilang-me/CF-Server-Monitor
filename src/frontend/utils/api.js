@@ -246,6 +246,7 @@ export const fetchServersAll = async () => {
 
 const createEmptyMergedData = () => ({
   servers: [],
+  latestReportUpdates: [],
   stats: { total: 0, online: 0, offline: 0, globalNetRx: 0, globalNetTx: 0, globalSpeedIn: 0, globalSpeedOut: 0 },
   regionStats: {},
   sysConfig: {
@@ -267,6 +268,12 @@ const mergeSiteResult = (mergedData, { data, error, baseUrl }, multiSite, localT
 
   for (const server of rawServers) {
     mergedData.servers.push({ ...server, source: baseUrl })
+  }
+
+  const latestReportUpdates = Array.isArray(data.latestReportUpdates) ? data.latestReportUpdates : []
+  for (const update of latestReportUpdates) {
+    if (!update || !update.serverId || !Array.isArray(update.samples)) continue
+    mergedData.latestReportUpdates.push({ ...update, source: baseUrl })
   }
 
   if (data.stats) {

@@ -396,7 +396,7 @@ const toLiveSample = (serverId, data, timestamp, reportTs) => {
   }
 }
 
-const queueLiveSamples = (serverId, samples, reportTs) => {
+const queueLiveSamples = (serverId, samples, reportTs, { replayCachedReport = false, reportAgeMs = 0 } = {}) => {
   if (!serverId || !Array.isArray(samples) || samples.length === 0) return
 
   const normalized = samples
@@ -408,7 +408,9 @@ const queueLiveSamples = (serverId, samples, reportTs) => {
 
   const current = servers.value.find(s => s.id === serverId)
   const currentTs = getServerSampleTimestamp(current)
-  const incoming = normalized.filter(sample => !currentTs || sample.ts > currentTs)
+  const incoming = replayCachedReport
+    ? normalized
+    : normalized.filter(sample => !currentTs || sample.ts > currentTs)
   if (incoming.length === 0) return
 
   if (incoming.length === 1) {
@@ -427,19 +429,27 @@ const queueLiveSamples = (serverId, samples, reportTs) => {
     unique.push(sample)
   }
   playbackBuffers.set(serverId, unique.slice(-MAX_BUFFER_SAMPLES_PER_SERVER))
-  applyPlaybackSamplesForServer(serverId, firstTs)
+  const normalizedReportAgeMs = Number(reportAgeMs)
+  const elapsedMs = replayCachedReport && Number.isFinite(normalizedReportAgeMs)
+    ? Math.max(0, normalizedReportAgeMs)
+    : 0
+  const lastTs = unique[unique.length - 1].ts
+  const playbackStartTs = Math.min(firstTs + elapsedMs, lastTs)
+  applyPlaybackSamplesForServer(serverId, playbackStartTs)
 }
 
-const queueLiveMessage = (msg) => {
+const queueLiveMessage = (msg, { replayCachedReport = false } = {}) => {
   if (!msg || msg.type !== 'batchUpdate') return
 
-  const reportTs = normalizeMetricTimestamp(msg.ts, Date.now())
+  const messageReportTs = normalizeMetricTimestamp(msg.ts, Date.now())
 
   const updates = Array.isArray(msg.updates) ? msg.updates : []
 
   for (const update of updates) {
     if (!update || !update.serverId) continue
     const samples = Array.isArray(update.samples) ? update.samples : []
+    const reportTs = normalizeMetricTimestamp(update.reportTs ?? update.report_timestamp, messageReportTs)
+    const reportAgeMs = replayCachedReport ? update.reportAgeMs : 0
 
     const liveSamples = []
     for (const sample of samples) {
@@ -451,8 +461,14 @@ const queueLiveMessage = (msg) => {
         data
       })
     }
-    queueLiveSamples(update.serverId, liveSamples, reportTs)
+    queueLiveSamples(update.serverId, liveSamples, reportTs, { replayCachedReport, reportAgeMs })
   }
+}
+
+const replayLatestReportUpdates = (data) => {
+  const updates = Array.isArray(data?.latestReportUpdates) ? data.latestReportUpdates : []
+  if (updates.length === 0) return
+  queueLiveMessage({ type: 'batchUpdate', ts: Date.now(), updates }, { replayCachedReport: true })
 }
 
 const applyServerSample = (serverId, data, sampleTs, displayTs, reportTs = null) => {
@@ -583,13 +599,14 @@ const loadDashboardConfig = async () => {
 const refreshData = async () => {
   const bases = getApiBases()
   const isMultiSite = bases.length > 1
+  playbackBuffers.clear()
 
   if (isMultiSite) {
     sitesRemaining.value = bases.length
     hasCorsError.value = null
 
     try {
-      await fetchServersAllWithProgress((data) => {
+      const data = await fetchServersAllWithProgress((data) => {
         const rawServers = Array.isArray(data.servers)
           ? data.servers
           : Object.entries(data.latestMetricsMap || {}).map(([id, metrics]) => ({ id, ...metrics }))
@@ -611,6 +628,7 @@ const refreshData = async () => {
         drawMarkers()
         sitesRemaining.value = Math.max(0, sitesRemaining.value - 1)
       })
+      replayLatestReportUpdates(data)
     } catch (e) {
       console.log('[INFO] Multi-site refresh error:', e)
     }
@@ -629,6 +647,7 @@ const refreshData = async () => {
       : Object.entries(data.latestMetricsMap || {}).map(([id, metrics]) => ({ id, ...metrics }))
 
     servers.value = mergeServersIntoList(rawServers)
+    replayLatestReportUpdates(data)
     recomputeStats(now.value)
 
     sysConfig.value = {

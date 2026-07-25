@@ -4,12 +4,41 @@ import { getAllServers, getServerDetail } from '../utils/cache.js';
 import { mergeMetricsIntoServer } from '../utils/metrics.js';
 import { createSuccessResponse, createBadRequestResponse, createNotFoundResponse } from '../utils/errors.js';
 
+const LATEST_REPORT_ID_CHUNK_SIZE = 500;
+
 function withoutPrivateServerFields(server) {
   const item = { ...server };
   delete item.bandwidth;
   delete item.note;
   delete item.auto_update;
   return item;
+}
+
+async function getLatestReportUpdates(env, serverIds) {
+  if (!env.METRICS_BROADCASTER || !Array.isArray(serverIds) || serverIds.length === 0) return [];
+
+  try {
+    const id = env.METRICS_BROADCASTER.idFromName('global');
+    const stub = env.METRICS_BROADCASTER.get(id);
+    const updates = [];
+
+    for (let offset = 0; offset < serverIds.length; offset += LATEST_REPORT_ID_CHUNK_SIZE) {
+      const chunk = serverIds.slice(offset, offset + LATEST_REPORT_ID_CHUNK_SIZE);
+      const response = await stub.fetch('http://internal/latest-report-updates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ serverIds: chunk })
+      });
+      if (!response.ok) continue;
+      const data = await response.json();
+      if (Array.isArray(data?.updates)) updates.push(...data.updates);
+    }
+
+    return updates;
+  } catch (e) {
+    console.warn('[Dashboard] Failed to read latest report updates:', e?.message || e);
+    return [];
+  }
 }
 
 export async function handleServerAPI(request, env, sys) {
@@ -45,7 +74,10 @@ export async function handleServersAPI(request, env, sys) {
   
   const results = (await getAllServers(env.DB, isLoggedIn)).map(withoutPrivateServerFields);
   
-  const latestMetricsMap = await getLatestMetricsForAllServers(env.DB);
+  const [latestMetricsMap, latestReportUpdates] = await Promise.all([
+    getLatestMetricsForAllServers(env.DB),
+    getLatestReportUpdates(env, results.map(server => server.id).filter(Boolean))
+  ]);
   
   const now = Date.now();
   let globalOnline = 0;
@@ -81,6 +113,7 @@ export async function handleServersAPI(request, env, sys) {
 
   const data = {
     servers: results,
+    latestReportUpdates,
     stats: {
       total: results.length,
       online: globalOnline,

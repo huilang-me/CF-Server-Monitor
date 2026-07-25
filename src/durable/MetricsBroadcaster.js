@@ -15,6 +15,8 @@ const MAX_SUBSCRIBE_IDS = 500;
 const MAX_SERVER_ID_LENGTH = 64;
 const SERVER_ID_PATTERN = /^[A-Za-z0-9._:-]+$/;
 const WS_POLICY_VIOLATION = 1008;
+const LATEST_REPORT_TTL_MS = 5 * 60 * 1000;
+const MAX_LATEST_REPORT_SERVERS = 1000;
 
 function parseAllowedOrigins(corsAllowedOrigins) {
   if (!corsAllowedOrigins || corsAllowedOrigins.trim() === '') {
@@ -30,6 +32,8 @@ export class MetricsBroadcaster {
   constructor(state, env) {
     this.state = state;
     this.env = env;
+    // 仅用于新页面快速接上最近一包数据；DO 重启或休眠回收后允许自然丢失。
+    this.latestReportUpdates = new Map();
 
     // 自动响应 ping 心跳，DO 无需被唤醒
     // @ts-ignore - Cloudflare Workers 运行时提供 WebSocketRequestResponsePair
@@ -223,11 +227,42 @@ export class MetricsBroadcaster {
         });
       }
 
-      this._broadcastBatch(normalizedUpdates);
+      const reportTs = Date.now();
+      this._cacheLatestReportUpdates(normalizedUpdates, reportTs);
+      this._broadcastBatch(normalizedUpdates, reportTs);
 
       const count = this.state.getWebSockets().length;
       return new Response(JSON.stringify({ ok: true, count: normalizedUpdates.length, subscribers: count }), {
         headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    // Worker 内部读取每台服务器最近一次上报的完整样本包。
+    if (method === 'POST' && path === '/latest-report-updates') {
+      let body = null;
+      try {
+        body = await request.json();
+      } catch (_) {
+        return new Response(JSON.stringify({ error: 'invalid JSON' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      const normalizedServerIds = this._normalizeServerIds(body?.serverIds);
+      if (!normalizedServerIds.ok) {
+        return new Response(JSON.stringify({ error: 'invalid serverIds' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      const updates = this._getLatestReportUpdates(normalizedServerIds.ids);
+      return new Response(JSON.stringify({ updates }), {
+        headers: {
+          'Cache-Control': 'no-store',
+          'Content-Type': 'application/json'
+        }
       });
     }
 
@@ -249,7 +284,54 @@ export class MetricsBroadcaster {
       serverId,
       samples: [{ ts, data: payload }]
     }];
-    this._broadcastBatch(updates);
+    this._cacheLatestReportUpdates(updates, ts);
+    this._broadcastBatch(updates, ts);
+  }
+
+  _pruneLatestReportUpdates(now = Date.now()) {
+    for (const [serverId, update] of this.latestReportUpdates) {
+      if (!update || now - update.reportTs > LATEST_REPORT_TTL_MS) {
+        this.latestReportUpdates.delete(serverId);
+      }
+    }
+  }
+
+  _cacheLatestReportUpdates(updates, reportTs = Date.now()) {
+    this._pruneLatestReportUpdates(reportTs);
+
+    for (const update of updates) {
+      if (!update || !update.serverId || !Array.isArray(update.samples) || update.samples.length === 0) continue;
+      const serverId = String(update.serverId);
+      // delete + set 让 Map 的插入顺序同时代表最近更新时间，便于限制内存上限。
+      this.latestReportUpdates.delete(serverId);
+      this.latestReportUpdates.set(serverId, {
+        serverId,
+        reportTs,
+        samples: update.samples
+      });
+    }
+
+    while (this.latestReportUpdates.size > MAX_LATEST_REPORT_SERVERS) {
+      const oldestServerId = this.latestReportUpdates.keys().next().value;
+      if (oldestServerId === undefined) break;
+      this.latestReportUpdates.delete(oldestServerId);
+    }
+  }
+
+  _getLatestReportUpdates(serverIds) {
+    const now = Date.now();
+    this._pruneLatestReportUpdates(now);
+    const updates = [];
+    for (const serverId of serverIds) {
+      const update = this.latestReportUpdates.get(serverId);
+      if (update) {
+        updates.push({
+          ...update,
+          reportAgeMs: Math.max(0, now - update.reportTs)
+        });
+      }
+    }
+    return updates;
   }
 
   // WebSocket 收到消息（ping 已被自动响应拦截，不会到达此处）
@@ -276,8 +358,7 @@ export class MetricsBroadcaster {
     }).filter(Boolean);
   }
 
-  _broadcastBatch(updates) {
-    const ts = Date.now();
+  _broadcastBatch(updates, ts = Date.now()) {
     const websockets = this.state.getWebSockets();
 
     for (const ws of websockets) {
