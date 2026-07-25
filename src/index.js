@@ -6,6 +6,7 @@ import { serveFrontend } from './handlers/frontend.js';
 import { handleUpdate, handleWebSocketUpgrade } from './handlers/update.js';
 import { handleServerAPI, handleServersAPI } from './handlers/dashboard.js';
 import { handleTheme } from './handlers/theme.js';
+import { tryServeThemeProxy } from './handlers/themeProxy.js';
 import { loadSettings, loadSiteSettings, loadAppearanceOptions, setDebug, debug, getCurrentVersion } from './utils/settings.js';
 import { checkAuth, simpleAuthResponse } from './middleware/auth.js';
 import { getServerDetail, getMetricsHistoryCache, setMetricsHistoryCache, getCacheDuration } from './utils/cache.js';
@@ -154,6 +155,11 @@ export default {
     
     if (method === 'OPTIONS') {
       return createOptionsResponse(request, corsAllowedOrigins);
+    }
+
+    const themeProxyResponse = await tryServeThemeProxy(request);
+    if (themeProxyResponse) {
+      return applyCors(themeProxyResponse, request, corsAllowedOrigins);
     }
 
     if (env.ASSETS && method === 'GET') {
