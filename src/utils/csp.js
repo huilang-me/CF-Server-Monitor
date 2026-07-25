@@ -42,6 +42,7 @@ export function rebuildCsp(html, { staticDomains, apiDomains }) {
   const insightsDomain = 'https://static.cloudflareinsights.com';
   const fontsApiDomain = 'https://fonts.googleapis.com';
   const fontsStaticDomain = 'https://fonts.gstatic.com';
+  const rawGithubDomain = 'https://raw.githubusercontent.com';
 
   const scriptSrcDomains = [...new Set([
     ...existingDomains.filter(d => [turnstileDomain, insightsDomain].includes(d)),
@@ -54,7 +55,7 @@ export function rebuildCsp(html, { staticDomains, apiDomains }) {
   ])].join(' ');
 
   const imgSrcDomains = [...new Set([
-    ...existingDomains.filter(d => [turnstileDomain].includes(d)),
+    ...existingDomains.filter(d => [turnstileDomain, rawGithubDomain].includes(d)),
     ...staticDomains
   ])].join(' ');
 

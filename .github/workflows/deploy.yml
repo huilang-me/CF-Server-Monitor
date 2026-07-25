@@ -45,7 +45,7 @@ jobs:
         run: npm install
 
       - name: 🏗️ Build frontend assets
-        run: npm run build
+        run: npm run build:frontend
 
       - name: 📝 Create wrangler.toml
         run: |

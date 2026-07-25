@@ -96,7 +96,7 @@
 3. 点击 **Create application**
 4. 选择 Continue with GitHub（第一次使用需要连接 GitHub 账户），选择本项目
 5. Project Name填写：`cf-server-monitor`
-6. Build command 保留默认值：`npm run build`
+6. Build command 填写：`npm run build:frontend`
 7. Deploy command 保留默认值：`npx wrangler deploy`
 8. 点击 **Deploy**，成功会在底部显示`✨ Success! Build completed.`
 
@@ -474,8 +474,8 @@ Content Security Policy (CSP) 是一种安全层，用于检测和缓解某些�
 ### OneBot (QQ)
 
 1. 部署 OneBot 协议实现（如 go-cqhttp、Lagrange 等），获取 HTTP API 地址
-2. 将 API 地址填入 **Bot Token** 字段，格式为 `onebot:http://127.0.0.1:3000`
-3. **Chat ID** 填入目标用户 ID（如 `123456`）或群 ID（如 `group:789012`）
+2. 将 API 地址填入 **Bot Token** 字段，格式为 `onebot:http://127.0.0.1:3000/send_private_msg?access_token=xxx`，或 `onebot:http://127.0.0.1:3000/send_group_msg?access_token=xxx`
+3. **Chat ID** 填入目标用户 ID（如 `123456`）或群 ID（如 `789012`）
 
 ### 企业微信
 

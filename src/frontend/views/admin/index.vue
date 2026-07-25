@@ -92,6 +92,11 @@
             :class="{ active: activeTab === 'database' }"
             @click="activeTab = 'database'"
           >▸ {{ trans.dbManagement }}</button>
+          <button
+            class="tab-btn"
+            :class="{ active: activeTab === 'themeStore' }"
+            @click="activeTab = 'themeStore'"
+          >▸ {{ trans.themeStore }}</button>
         </div>
 
         <ServerTable
@@ -145,6 +150,11 @@
           :db-loading="dbLoading"
           :selected-api-index="selectedApiIndex"
           @open-db-modal="openDbModal"
+        />
+
+        <ThemeStorePanel
+          :trans="trans"
+          :active-tab="activeTab"
         />
       </div>
 
@@ -442,6 +452,7 @@ import AdminLogin from './components/AdminLogin.vue'
 import ServerTable from './components/ServerTable.vue'
 import SettingsPanel from './components/SettingsPanel.vue'
 import DatabasePanel from './components/DatabasePanel.vue'
+import ThemeStorePanel from './components/ThemeStorePanel.vue'
 import EditServerModal from './components/EditServerModal.vue'
 import DeleteServerModal from './components/DeleteServerModal.vue'
 import CopyCommandModal from './components/CopyCommandModal.vue'

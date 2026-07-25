@@ -350,6 +350,13 @@ const translations = reactive({
     skippedCount: 'Skipped',
     skippedIds: 'Skipped IDs',
     selectJsonFile: 'Select a JSON file to import',
+    themeStore: 'Theme Store',
+    themeStoreLoading: 'Loading themes',
+    themeStoreEmpty: 'No themes available',
+    themeStoreWarning: 'Third-party themes are not verified',
+    themeStoreWarningDesc: 'Third-party themes may contain malicious code. Please review the source code or trust the author before using. CFSM is not responsible for any damage caused by third-party themes.',
+    preview: 'Preview',
+    view: 'View',
   },
   zh: {
     collectInterval: '采集间隔（秒）',
@@ -699,6 +706,13 @@ const translations = reactive({
     skippedCount: '已跳过',
     skippedIds: '跳过的 ID',
     selectJsonFile: '选择要导入的 JSON 文件',
+    themeStore: '主题商店',
+    themeStoreLoading: '加载主题列表',
+    themeStoreEmpty: '暂无可用主题',
+    themeStoreWarning: '以下为第三方主题，未经验证',
+    themeStoreWarningDesc: '第三方主题可能包含恶意代码，请在确认来源可靠或审核源码后再使用。使用第三方主题造成的任何后果由使用者自行承担。',
+    preview: '预览',
+    view: '查看',
   }
 })
 

@@ -4,11 +4,10 @@
   "description": "Cloudflare Workers Server Monitor - 多服务器监控探针",
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev --ip 0.0.0.0",
-    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "deploy": "npm run build:frontend && wrangler deploy",
     "tail": "wrangler tail",
     "dev:frontend": "vite",
-    "build": "node scripts/build.js",
     "build:frontend": "node scripts/build.js",
     "build:github-page": "node scripts/build-github-page.js",
     "test:agent-config": "node test/agent-config.js",

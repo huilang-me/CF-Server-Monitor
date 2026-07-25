@@ -5,6 +5,7 @@ import { handleAdminAPI } from './handlers/admin.js';
 import { serveFrontend } from './handlers/frontend.js';
 import { handleUpdate, handleWebSocketUpgrade } from './handlers/update.js';
 import { handleServerAPI, handleServersAPI } from './handlers/dashboard.js';
+import { handleTheme } from './handlers/theme.js';
 import { loadSettings, loadSiteSettings, loadAppearanceOptions, setDebug, debug, getCurrentVersion } from './utils/settings.js';
 import { checkAuth, simpleAuthResponse } from './middleware/auth.js';
 import { getServerDetail, getMetricsHistoryCache, setMetricsHistoryCache, getCacheDuration } from './utils/cache.js';
@@ -275,6 +276,10 @@ export default {
           turnstile_verified: turnstileVerified,
           show_long_history: sys.show_long_history === 'true'
         });
+      }},
+      { method: 'GET', path: '/theme', handler: async () => {
+        const themes = await handleTheme()
+        return createSuccessResponse({ themes })
       }},
       { method: 'GET', path: '/api/server', handler: async () => {
         await ensureSiteSettings();

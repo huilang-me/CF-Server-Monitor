@@ -40,21 +40,27 @@ export async function sendNotification(settings, msg) {
   if(!settings.tg_bot_token) return;
   const title = "💌 Cloudflare Server Monitor";
   if(settings.tg_bot_token.indexOf("onebot:") == 0) {
-    // OneBot 协议 (QQ 等)，格式: onebot:http://127.0.0.1:3000
+    // OneBot 协议 (QQ 等)，私聊格式: onebot:http://127.0.0.1:3000/send_private_msg?access_token=xxx
+    // 群聊格式: onebot:http://127.0.0.1:3000/send_group_msg?access_token=xxx
     let onebotUrl = settings.tg_bot_token.replace("onebot:", "");
-    const chatId = settings.tg_chat_id || '';
-    const isGroup = chatId.startsWith('group:');
-    const targetId = isGroup ? chatId.replace('group:', '') : chatId;
+    const targetId = settings.tg_chat_id || '';
+    const isGroup = onebotUrl.indexOf("send_group_msg") != -1;
     if (!targetId) {
       return "OneBot 通知失败: 缺少 tg_chat_id（私人: QQ号，群: group:群号）";
     }
     try {
-      const endpoint = isGroup
-        ? onebotUrl.replace(/\/$/, '') + '/send_group_msg'
-        : onebotUrl.replace(/\/$/, '') + '/send_private_msg';
-      const body = isGroup
-        ? { group_id: parseInt(targetId), message: msg }
-        : { user_id: parseInt(targetId), message: msg };
+      const endpoint = onebotUrl.trim();
+      const body = {
+        [isGroup ? 'group_id' : 'user_id']: targetId,
+        message: [
+          {
+            type: 'text',
+            data: {
+              text: `${title}\n${String(msg || '').replace(/\*/g, '')}\n`
+            }
+          }
+        ]
+      };
       await fetchWithRetry(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
