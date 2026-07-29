@@ -131,18 +131,19 @@ export function clearLatestMetricsCache() {
   latestAllCacheTime = 0;
 }
 
-function getCacheKey(serverId, hours, columns) {
+function getCacheKey(serverId, hours, columns, samplePoints = null) {
   const sortedColumns = columns.split(',').sort().join(',');
-  return `${serverId}:${hours}:${sortedColumns}`;
+  const sampleSuffix = samplePoints ? `:points=${samplePoints}` : '';
+  return `${serverId}:${hours}:${sortedColumns}${sampleSuffix}`;
 }
 
-export function getMetricsHistoryCache(serverId, hours, columns) {
-  const key = getCacheKey(serverId, hours, columns);
+export function getMetricsHistoryCache(serverId, hours, columns, samplePoints = null) {
+  const key = getCacheKey(serverId, hours, columns, samplePoints);
   return metricsHistoryCache.get(key);
 }
 
-export function setMetricsHistoryCache(serverId, hours, columns, data) {
-  const key = getCacheKey(serverId, hours, columns);
+export function setMetricsHistoryCache(serverId, hours, columns, data, samplePoints = null) {
+  const key = getCacheKey(serverId, hours, columns, samplePoints);
   metricsHistoryCache.set(key, { data, timestamp: Date.now() });
 }
 

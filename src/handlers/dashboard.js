@@ -2,6 +2,7 @@ import { checkAuth, simpleAuthResponse } from '../middleware/auth.js';
 import { getLatestMetrics, getLatestMetricsForAllServers } from '../database/schema.js';
 import { getAllServers, getServerDetail } from '../utils/cache.js';
 import { mergeMetricsIntoServer } from '../utils/metrics.js';
+import { normalizeLongHistoryPoints } from '../utils/settings.js';
 import { createSuccessResponse, createBadRequestResponse, createNotFoundResponse } from '../utils/errors.js';
 import {
   cacheLatestReportUpdate,
@@ -89,7 +90,8 @@ export async function handleServerAPI(request, env, sys) {
   const latestMetrics = await getLatestMetrics(env.DB, id, server);
   mergeMetricsIntoServer(server, latestMetrics);
   server.sysConfig = {
-    show_long_history: sys.show_long_history === 'true'
+    show_long_history: sys.show_long_history === 'true',
+    long_history_points: Number(normalizeLongHistoryPoints(sys.long_history_points))
   };
   
   return createSuccessResponse(withoutPrivateServerFields(server));

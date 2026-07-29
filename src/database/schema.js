@@ -1,12 +1,17 @@
 import { getAllServers, getLatestMetricsCache, setLatestMetricsCache, getMetricsHistoryCache, setMetricsHistoryCache, getCacheDuration, clearAllCaches } from '../utils/cache.js';
-import { saveSiteOptions, debug, getSettingByKey } from '../utils/settings.js';
+import { saveSiteOptions, debug, getSettingByKey, normalizeLongHistoryPoints, DEFAULT_LONG_HISTORY_POINTS } from '../utils/settings.js';
 import { isDisabledProbeMetric, normalizeProbeMetricRow } from '../utils/metrics.js';
 import { ensureServerOptimization, buildHistoryId, getServerHistoryInfo, getHistoryIdRange } from './indexOptimization.js';
 import { addHistoryColumns, ensureHistoryIndex, isHistoryOptimized } from './updateDatabase.js';
+import {
+  buildSparseHistoryQuery,
+  shouldUseSparseHistorySampling
+} from './historySampling.js';
 
 let dbInitialized = false;
 
 const LOSS_AGG_COLUMNS = new Set(['loss_ct', 'loss_cu', 'loss_cm', 'loss_bd']);
+const DEFAULT_HISTORY_MAX_POINTS = 160;
 
 export async function initDatabase(db) {
   if (dbInitialized) return;
@@ -196,35 +201,32 @@ function buildHistorySourceQuery(tableName, useIdRange, columns) {
   `;
 }
 
-export async function getMetricsHistory(db, serverId, hours, columns, server = null) {
+export async function getMetricsHistory(
+  db,
+  serverId,
+  hours,
+  columns,
+  server = null,
+  longHistoryPoints = DEFAULT_LONG_HISTORY_POINTS
+) {
   const now = Date.now();
   const cacheDuration = getCacheDuration(hours);
+  const queryHours = Math.min(hours, 168);
+  const configuredLongHistoryPoints = queryHours > 1
+    ? Number(normalizeLongHistoryPoints(longHistoryPoints))
+    : null;
   
-  const cached = getMetricsHistoryCache(serverId, hours, columns);
+  const cached = getMetricsHistoryCache(serverId, hours, columns, configuredLongHistoryPoints);
   if (cached && now - cached.timestamp < cacheDuration) {
     debug(`[History] CACHE HIT: ${serverId}, hours: ${hours}`);
     return cached.data;
   }
   
-  // 最多返回160个数据点,前端需要配合这个计算断点阈值
-  const queryHours = Math.min(hours, 168);
-  const MAX_POINTS = 160;
   const totalMs = queryHours * 60 * 60 * 1000;
-  const intervalMs = Math.max(10_000, Math.ceil(totalMs / MAX_POINTS));
 
   const cutoff = now - queryHours * 60 * 60 * 1000;
   const historyInfo = await getServerHistoryInfo(db, serverId, server);
   const queryStart = Math.max(cutoff, historyInfo.startTimestamp);
-
-  debug(
-    '[History]',
-    'server:', serverId,
-    'hours:', hours,
-    'queryHours:', queryHours,
-    'interval:', intervalMs,
-    'cutoff:', new Date(cutoff).toISOString(),
-    'start:', new Date(queryStart).toISOString()
-  );
 
   // 判断是否需要查询 metrics_history_old 表
   // 如果实际查询起点早于本周日 00:00 UTC（表轮换时间），说明需要查旧表
@@ -266,54 +268,112 @@ export async function getMetricsHistory(db, serverId, hours, columns, server = n
     LOSS_AGG_COLUMNS.has(col) ? `${col}_bucket_max AS ${col}` : col
   );
 
-  const sourceQueries = [];
-  const bindValues = [];
+  const useSparseSampling = shouldUseSparseHistorySampling(
+    queryHours,
+    currentUsesIdRange,
+    oldTableExists,
+    oldUsesIdRange
+  );
+  const sparseQueryEnd = Math.floor(now / 1000) * 1000 + 1000;
+  const maxPoints = queryHours > 1
+    ? configuredLongHistoryPoints
+    : DEFAULT_HISTORY_MAX_POINTS;
+  const samplingDurationMs = useSparseSampling
+    ? Math.max(0, sparseQueryEnd - queryStart)
+    : totalMs;
+  const intervalMs = Math.max(10_000, Math.ceil(samplingDurationMs / maxPoints));
 
-  sourceQueries.push(buildHistorySourceQuery('metrics_history', currentUsesIdRange, sourceColumns));
-  if (currentUsesIdRange) {
-    bindValues.push(idRange.startId, idRange.endId);
+  debug(
+    '[History]',
+    'server:', serverId,
+    'hours:', hours,
+    'queryHours:', queryHours,
+    'maxPoints:', maxPoints,
+    'interval:', intervalMs,
+    'cutoff:', new Date(cutoff).toISOString(),
+    'start:', new Date(queryStart).toISOString()
+  );
+
+  let rawResult;
+
+  if (useSparseSampling) {
+    // Long-range queries sample one complete row per time bucket via primary-key seeks.
+    // Computing an exact maximum for loss columns would require scanning every row in the bucket.
+    const queryEnd = sparseQueryEnd;
+    const firstRangeEnd = Math.min(
+      queryEnd,
+      queryStart + intervalMs
+    );
+    const idPrefix = getHistoryIdRange(historyInfo.partitionId).startId;
+    const sparseQuery = buildSparseHistoryQuery({
+      columns: sourceColumns,
+      queryStart,
+      queryEnd,
+      firstRangeEnd,
+      intervalMs,
+      idPrefix,
+      oldTableExists,
+      tableBoundary: thisSunday.getTime()
+    });
+
+    debug('[History] SPARSE ID SAMPLING:', sparseQuery.bindValues.length, 'bind values');
+    const sparseResult = await db.prepare(sparseQuery.sql).bind(...sparseQuery.bindValues).all();
+    rawResult = {
+      ...sparseResult,
+      results: sparseResult.results
+        .filter(row => row.sample_json)
+        .map(row => JSON.parse(row.sample_json))
+    };
   } else {
-    bindValues.push(serverId, queryStart);
-  }
+    const sourceQueries = [];
+    const bindValues = [];
 
-  if (oldTableExists) {
-    debug('[History] 跨周查询，合并 metrics_history 和 metrics_history_old');
-    sourceQueries.push(buildHistorySourceQuery('metrics_history_old', oldUsesIdRange, sourceColumns));
-    if (oldUsesIdRange) {
+    sourceQueries.push(buildHistorySourceQuery('metrics_history', currentUsesIdRange, sourceColumns));
+    if (currentUsesIdRange) {
       bindValues.push(idRange.startId, idRange.endId);
     } else {
       bindValues.push(serverId, queryStart);
     }
+
+    if (oldTableExists) {
+      debug('[History] 跨周查询，合并 metrics_history 和 metrics_history_old');
+      sourceQueries.push(buildHistorySourceQuery('metrics_history_old', oldUsesIdRange, sourceColumns));
+      if (oldUsesIdRange) {
+        bindValues.push(idRange.startId, idRange.endId);
+      } else {
+        bindValues.push(serverId, queryStart);
+      }
+    }
+
+    bindValues.push(intervalMs);
+
+    rawResult = await db.prepare(`
+      WITH history_rows AS (
+        ${sourceQueries.join('\n        UNION ALL\n')}
+      ),
+      bucketed AS (
+        SELECT
+          timestamp,
+          ${sourceColumns},
+          CAST(timestamp / ? AS INTEGER) AS bucket
+        FROM history_rows
+      ),
+      sampled AS (
+        SELECT
+          timestamp,
+          ${sourceColumns},
+          ROW_NUMBER() OVER (
+            PARTITION BY bucket
+            ORDER BY timestamp
+          ) AS rn
+          ${lossWindowExpressions.length ? `,\n          ${lossWindowExpressions.join(',\n          ')}` : ''}
+        FROM bucketed
+      )
+      SELECT timestamp, ${selectColumns.join(', ')}
+      FROM sampled
+      WHERE rn = 1
+    `).bind(...bindValues).all();
   }
-
-  bindValues.push(intervalMs);
-
-  const rawResult = await db.prepare(`
-    WITH history_rows AS (
-      ${sourceQueries.join('\n        UNION ALL\n')}
-    ),
-    bucketed AS (
-      SELECT
-        timestamp,
-        ${sourceColumns},
-        CAST(timestamp / ? AS INTEGER) AS bucket
-      FROM history_rows
-    ),
-    sampled AS (
-      SELECT
-        timestamp,
-        ${sourceColumns},
-        ROW_NUMBER() OVER (
-          PARTITION BY bucket
-          ORDER BY timestamp
-        ) AS rn
-        ${lossWindowExpressions.length ? `,\n        ${lossWindowExpressions.join(',\n        ')}` : ''}
-      FROM bucketed
-    )
-    SELECT timestamp, ${selectColumns.join(', ')}
-    FROM sampled
-    WHERE rn = 1
-  `).bind(...bindValues).all();
 
   const result = rawResult.results.map(row => normalizeProbeMetricRow({
     ...row,
@@ -322,7 +382,7 @@ export async function getMetricsHistory(db, serverId, hours, columns, server = n
 
   result.sort((a, b) => a.timestamp - b.timestamp);
 
-  setMetricsHistoryCache(serverId, hours, columns, result);
+  setMetricsHistoryCache(serverId, hours, columns, result, configuredLongHistoryPoints);
 
   debug(`[History] FINAL: ${result.length}, interval: ${intervalMs}ms`);
 

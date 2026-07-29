@@ -12,6 +12,7 @@
     "build:frontend": "node scripts/build.js",
     "build:github-page": "node scripts/build-github-page.js",
     "test:agent-config": "node test/agent-config.js",
+    "test:history-query": "node --test test/history-query.test.js",
     "preview": "vite preview"
   },
   "keywords": [

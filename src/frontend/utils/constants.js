@@ -16,6 +16,11 @@ export const CHART = {
   MAX_TICKS_HOUR: 12
 }
 
+export const HISTORY = {
+  LONG_RANGE_POINT_OPTIONS: [30, 60, 90, 120],
+  DEFAULT_LONG_RANGE_POINTS: 60
+}
+
 export const PING = {
   GOOD_THRESHOLD: 100,
   WARNING_THRESHOLD: 200
@@ -46,6 +51,7 @@ export const COLORS = {
 export default {
   TIME,
   CHART,
+  HISTORY,
   PING,
   STORAGE,
   STATUS,

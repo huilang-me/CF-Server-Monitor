@@ -6,7 +6,7 @@ import { serveFrontend } from './handlers/frontend.js';
 import { handleUpdate, handleWebSocketUpgrade } from './handlers/update.js';
 import { handleServerAPI, handleServersAPI } from './handlers/dashboard.js';
 import { handleTheme } from './handlers/theme.js';
-import { loadSettings, loadSiteSettings, loadAppearanceOptions, setDebug, debug, getCurrentVersion } from './utils/settings.js';
+import { loadSettings, loadSiteSettings, loadAppearanceOptions, normalizeLongHistoryPoints, setDebug, debug, getCurrentVersion } from './utils/settings.js';
 import { checkAuth, simpleAuthResponse } from './middleware/auth.js';
 import { getServerDetail, getMetricsHistoryCache, setMetricsHistoryCache, getCacheDuration } from './utils/cache.js';
 import { AppError, createSuccessResponse, createUnauthorizedResponse, createBadRequestResponse, createNotFoundResponse, createErrorResponse } from './utils/errors.js';
@@ -161,15 +161,25 @@ async function fetchHistoryData(env, request, id, hours, columns, sys = null) {
   // 最多查询7天数据
   const clampedHours = Math.min(hours, 168);
   const cacheDuration = getCacheDuration(clampedHours);
+  const longHistoryPoints = clampedHours > 1
+    ? Number(normalizeLongHistoryPoints(sys.long_history_points))
+    : null;
 
-  const cached = getMetricsHistoryCache(id, clampedHours, columns);
+  const cached = getMetricsHistoryCache(id, clampedHours, columns, longHistoryPoints);
   if (cached && Date.now() - cached.timestamp < cacheDuration) {
     return createSuccessResponse(cached.data, { 'X-Cache': 'HIT' });
   }
   
   let data;
   try {
-    data = await getMetricsHistory(env.DB, id, clampedHours, columns, server);
+    data = await getMetricsHistory(
+      env.DB,
+      id,
+      clampedHours,
+      columns,
+      server,
+      longHistoryPoints
+    );
   } catch (e) {
     const message = e && e.message ? e.message : String(e);
     if (/no such column/i.test(message)) {
@@ -184,7 +194,7 @@ async function fetchHistoryData(env, request, id, hours, columns, sys = null) {
     throw e;
   }
   
-  setMetricsHistoryCache(id, clampedHours, columns, data);
+  setMetricsHistoryCache(id, clampedHours, columns, data, longHistoryPoints);
   
   return createSuccessResponse(data, { 'X-Cache': 'MISS' });
 }
@@ -349,7 +359,8 @@ export default {
           theme_options: appearanceOptions.theme_options || {},
           verified: verified,
           turnstile_verified: turnstileVerified,
-          show_long_history: sys.show_long_history === 'true'
+          show_long_history: sys.show_long_history === 'true',
+          long_history_points: Number(normalizeLongHistoryPoints(sys.long_history_points))
         });
       }},
       { method: 'GET', path: '/theme', handler: async () => {

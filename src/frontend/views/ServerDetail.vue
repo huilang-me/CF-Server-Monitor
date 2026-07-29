@@ -301,7 +301,7 @@ import { hasMultipleApiBases, getPublicAssetUrl } from '../utils/config.js'
 import Chart from 'chart.js/auto'
 import 'chartjs-adapter-date-fns'
 import { t, currentLang, useTranslation } from '../utils/i18n'
-import { CHART } from '../utils/constants'
+import { CHART, HISTORY } from '../utils/constants'
 import { formatDateTime } from '../utils/time.js'
 import useTheme from '../composables/useTheme'
 import { isDisabledProbeMetric } from '../utils/server.js'
@@ -769,10 +769,14 @@ const updateChartsTheme = (theme) => {
 const { onThemeChange } = useTheme()
 onThemeChange(updateChartsTheme)
 
-// ≤1h: gap超过5分钟断线; >1h: 总时长/160，最低5分钟基础阈值
+// ≤1h: gap超过5分钟断线; >1h: 按后端采样点数计算，最低5分钟基础阈值
 const getHistoryGapBreakMs = (hours = currentHours.value) => {
   if (hours <= 1) return 5 * 60 * 1000
-  return Math.max(5 * 60 * 1000, Math.ceil(hours * 60 * 60 * 1000 / 160))
+  const configuredPoints = Number(config.value?.long_history_points)
+  const samplePoints = HISTORY.LONG_RANGE_POINT_OPTIONS.includes(configuredPoints)
+    ? configuredPoints
+    : HISTORY.DEFAULT_LONG_RANGE_POINTS
+  return Math.max(5 * 60 * 1000, Math.ceil(hours * 60 * 60 * 1000 / samplePoints))
 }
 
 const shouldBreakGap = (prevPoint, nextPoint) => {
