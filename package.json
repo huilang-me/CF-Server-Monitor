@@ -35,6 +35,7 @@
     "chart.js": "^4.4.0",
     "chartjs-adapter-date-fns": "^3.0.0",
     "leaflet": "^1.9.4",
+    "postcss": "^8.5.18",
     "vue": "^3.4.0",
     "vue-router": "^4.4.0"
   },
