@@ -150,18 +150,6 @@ export async function verifyPasswordHash(password, storedHash) {
     };
   }
 
-  if (isLegacyMd5Hash(storedHash)) {
-    const hashedPassword = await md5Hash(password);
-    const actual = hexToBytes(hashedPassword);
-    const expected = hexToBytes(storedHash.trim().toLowerCase());
-    const valid = timingSafeEqualBytes(actual, expected);
-    return {
-      valid,
-      needsRehash: valid,
-      algorithm: 'md5'
-    };
-  }
-
   return {
     valid: false,
     needsRehash: false,
