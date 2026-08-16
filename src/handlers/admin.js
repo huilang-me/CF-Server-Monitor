@@ -631,13 +631,22 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       }
     }
     else if (data.action === 'send_test_notification') {
-      const { tg_bot_token, tg_chat_id } = data;
-      if (!tg_bot_token || tg_bot_token.trim().length === 0) {
+      const { tg_bot_token, tg_chat_id, notify_type, notify_http_url, notify_http_auth, notify_http_method } = data;
+      const hasChannel = (tg_bot_token && tg_bot_token.trim().length > 0) ||
+        (notify_type === 'custom_http' && notify_http_url && notify_http_url.trim().length > 0);
+      if (!hasChannel) {
         return createBadRequestResponse('tgBotTokenRequired');
       }
       try {
         const testMsg = `✅ **测试通知**\n\n这是一条来自 CF Server Monitor 的测试消息。\n\n**时间:** ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`;
-        const result = await sendNotification({ tg_bot_token, tg_chat_id: tg_chat_id || '' }, testMsg);
+        const result = await sendNotification({
+          tg_bot_token: tg_bot_token || '',
+          tg_chat_id: tg_chat_id || '',
+          notify_type: notify_type || '',
+          notify_http_url: notify_http_url || '',
+          notify_http_auth: notify_http_auth || '',
+          notify_http_method: notify_http_method || 'POST'
+        }, testMsg);
         if(result) {
           console.warn('Test notification failed:', result);
           return createBadRequestResponse('testNotificationFailed');
@@ -684,7 +693,15 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
         const effectiveTgBotToken = settings.tg_bot_token !== undefined
           ? settings.tg_bot_token
           : sys?.tg_bot_token;
-        if (!effectiveTgBotToken || String(effectiveTgBotToken).trim().length === 0) {
+        const effectiveNotifyType = settings.notify_type !== undefined
+          ? settings.notify_type
+          : sys?.notify_type;
+        const effectiveNotifyHttpUrl = settings.notify_http_url !== undefined
+          ? settings.notify_http_url
+          : sys?.notify_http_url;
+        const customHttpOk = effectiveNotifyType === 'custom_http' &&
+          effectiveNotifyHttpUrl && String(effectiveNotifyHttpUrl).trim().length > 0;
+        if ((!effectiveTgBotToken || String(effectiveTgBotToken).trim().length === 0) && !customHttpOk) {
           return createBadRequestResponse('tgBotTokenRequired');
         }
       }

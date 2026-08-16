@@ -165,7 +165,7 @@
 
         </div>
 
-        <div class="form-row">
+        <div class="form-row" v-if="settings.notify_type !== 'custom_http'">
           <div class="form-group flex-1">
             <label class="form-label">{{ trans.telegramToken }}</label>
             <div class="password-input-wrapper">
@@ -186,6 +186,34 @@
             </div>
           </div>
         </div>
+
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label class="form-label">{{ trans.notifyType }}</label>
+            <select v-model="settings.notify_type" class="form-select">
+              <option value="">{{ trans.notifyTypeAuto }}</option>
+              <option value="custom_http">{{ trans.notifyTypeCustomHttp }}</option>
+            </select>
+          </div>
+        </div>
+
+        <div v-if="settings.notify_type === 'custom_http'" class="form-row">
+          <div class="form-group flex-1">
+            <label class="form-label">{{ trans.customHttpUrl }}</label>
+            <input type="text" name="notify_http_url" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" v-model="settings.notify_http_url" class="form-input" placeholder="https://your-webhook.example.com/path">
+          </div>
+          <div class="form-group flex-1">
+            <label class="form-label">{{ trans.customHttpAuth }}</label>
+            <div class="password-input-wrapper">
+              <input type="text" name="notify_http_auth" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" v-model="settings.notify_http_auth" :class="['form-input', { 'secret-input-masked': !passwordVisible.tgHttpAuth }]" placeholder="Authorization 头的值（如 API Token）">
+              <button type="button" class="password-toggle" @click="() => $emit('toggle-password', 'tgHttpAuth')">
+                {{ passwordVisible.tgHttpAuth ? '🙈' : '👁️' }}
+              </button>
+            </div>
+          </div>
+        </div>
+        <p v-if="settings.notify_type === 'custom_http'" class="text-muted text-sm mt-1">{{ trans.customHttpTip }}</p>
+
         <div class="form-row">
           <div class="form-group flex-1">
             <button type="button" @click="$emit('send-test-notification')" class="btn btn-primary" :disabled="testNotificationLoading">{{ testNotificationLoading ? '⏳' : '📨' }} {{ trans.sendTestNotification }}</button>

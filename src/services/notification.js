@@ -280,7 +280,34 @@ async function fetchWithRetry(url, options, retries = MAX_RETRIES) {
 }
 
 
+export function hasNotifyChannel(settings) {
+  if (!settings) return false;
+  if (settings.tg_bot_token && String(settings.tg_bot_token).trim().length > 0) return true;
+  if (settings.notify_type === 'custom_http' && settings.notify_http_url && String(settings.notify_http_url).trim().length > 0) return true;
+  return false;
+}
+
 export async function sendNotification(settings, msg) {
+  if(!settings.tg_bot_token && !hasNotifyChannel(settings)) return;
+
+  // 自定义 HTTP Webhook（如 WXPush 微信模板消息中继：POST {title, content} + Authorization 头）
+  if (settings.notify_type === 'custom_http' && settings.notify_http_url) {
+    try {
+      const httpTitle = "💌 Cloudflare Server Monitor";
+      const body = JSON.stringify({ title: httpTitle, content: String(msg || '') });
+      const headers = { 'Content-Type': 'application/json' };
+      if (settings.notify_http_auth) headers['Authorization'] = String(settings.notify_http_auth);
+      await fetchWithRetry(settings.notify_http_url, {
+        method: (settings.notify_http_method || 'POST').toUpperCase(),
+        headers,
+        body
+      });
+      return null;
+    } catch (e) {
+      return '自定义HTTP通知发送失败: ' + (e && e.message ? e.message : e);
+    }
+  }
+
   if(!settings.tg_bot_token) return;
   const title = "💌 Cloudflare Server Monitor";
   if(settings.tg_bot_token.indexOf("onebot:") == 0) {
@@ -455,7 +482,7 @@ export async function checkOfflineNodes(db) {
   const siteSettings = await loadSiteSettings(db);
   const tgNotifyMinutes = getTgNotifyMinutes(siteSettings.tg_notify);
 
-  if (tgNotifyMinutes === 0 || !siteSettings.tg_bot_token) return;
+  if (tgNotifyMinutes === 0 || !hasNotifyChannel(siteSettings)) return;
 
   try {
     const allServers = await getAllServers(db);
@@ -532,7 +559,7 @@ export async function checkResourceAlerts(env) {
 
   const db = env.DB;
   const siteSettings = await loadSiteSettings(db, { forceRefresh: true });
-  if (!siteSettings.tg_bot_token) return;
+  if (!hasNotifyChannel(siteSettings)) return;
 
   const resourceConfig = getResourceAlertConfig(siteSettings);
 
@@ -739,7 +766,7 @@ export async function checkExpiringServers(db) {
     const now = Date.now();
     const expiringServers = [];
     const reminderDays = getExpireReminderDays(siteSettings.expire_reminder);
-    const shouldNotify = reminderDays > 0 && !!siteSettings.tg_bot_token;
+    const shouldNotify = reminderDays > 0 && hasNotifyChannel(siteSettings);
     let hasRenewedServers = false;
 
     for (const s of allServers) {

@@ -873,7 +873,7 @@ const toggleAdminPasswordChange = () => {
 }
 
 const { visibility: passwordVisible, toggle: togglePassword } = usePasswordVisibility([
-  'login', 'tgBotToken', 'tgChatId', 'turnstileSecret', 'cloudflareToken', 'jwtSecret', 'password', 'confirmPassword'
+  'login', 'tgBotToken', 'tgChatId', 'turnstileSecret', 'cloudflareToken', 'jwtSecret', 'password', 'confirmPassword', 'tgHttpAuth'
 ])
 
 const {
@@ -1221,7 +1221,11 @@ const loadSettings = async () => {
         custom_bd: settingsData.custom_bd || '',
         theme_url: settingsData.theme_url || '',
         csp_static: settingsData.csp_static || '',
-        csp_api: settingsData.csp_api || ''
+        csp_api: settingsData.csp_api || '',
+        notify_type: settingsData.notify_type || '',
+        notify_http_url: settingsData.notify_http_url || '',
+        notify_http_auth: settingsData.notify_http_auth || '',
+        notify_http_method: settingsData.notify_http_method || 'POST'
       }
       applyMikusThemeOptions(settingsData.theme_options)
       changeAdminPassword.value = !String(settings.value.username || '').trim()
@@ -1291,7 +1295,12 @@ const saveSettings = async () => {
   }
 
   if (isTgNotifyEnabled(settings.value.tg_notify) || isExpireReminderEnabled(settings.value.expire_reminder) || isResourceAlertEnabled(settings.value.resource_alert_rules)) {
-    if (!settings.value.tg_bot_token || settings.value.tg_bot_token.trim().length === 0) {
+    if (settings.value.notify_type === 'custom_http') {
+      if (!settings.value.notify_http_url || settings.value.notify_http_url.trim().length === 0) {
+        validationError.value = trans.value.customHttpUrlRequired
+        return
+      }
+    } else if (!settings.value.tg_bot_token || settings.value.tg_bot_token.trim().length === 0) {
       validationError.value = trans.value.tgBotTokenRequired
       return
     }
@@ -1344,6 +1353,10 @@ const saveSettings = async () => {
       resource_alert_rules: normalizeResourceAlertRulesSetting(settings.value.resource_alert_rules),
       tg_bot_token: settings.value.tg_bot_token,
       tg_chat_id: settings.value.tg_chat_id,
+      notify_type: settings.value.notify_type || '',
+      notify_http_url: settings.value.notify_http_url || '',
+      notify_http_auth: settings.value.notify_http_auth || '',
+      notify_http_method: settings.value.notify_http_method || 'POST',
       turnstile_enabled: settings.value.turnstile_enabled ? 'true' : 'false',
       turnstile_login_enabled: settings.value.turnstile_login_enabled ? 'true' : 'false',
       turnstile_site_key: settings.value.turnstile_site_key,
@@ -1926,7 +1939,11 @@ const sendTestNotification = async () => {
     const result = await adminApiForSite({
       action: 'send_test_notification',
       tg_bot_token: settings.value.tg_bot_token,
-      tg_chat_id: settings.value.tg_chat_id
+      tg_chat_id: settings.value.tg_chat_id,
+      notify_type: settings.value.notify_type || '',
+      notify_http_url: settings.value.notify_http_url || '',
+      notify_http_auth: settings.value.notify_http_auth || '',
+      notify_http_method: settings.value.notify_http_method || 'POST'
     })
     if (!result.error) {
       alertMessage.value = getMessage(result.data.message) || trans.value.testNotificationSent
