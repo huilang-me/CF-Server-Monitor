@@ -198,12 +198,15 @@ export async function handleServersAPI(request, env, sys) {
   markFrontendRealtimeActive();
   
   const results = (await getAllServers(env.DB, isLoggedIn)).map(withoutPrivateServerFields);
+  const shouldIncludeLatencyHistory = sys.show_three_net_details === 'true';
   
   const serverIds = results.map(server => server.id).filter(Boolean);
   const [latestMetricsMap, realtimeState, latencyHistory] = await Promise.all([
     getLatestMetricsForAllServers(env.DB),
     getRealtimeStateForServers(env, serverIds),
-    getDashboardLatencyHistory(env.DB, results)
+    shouldIncludeLatencyHistory
+      ? getDashboardLatencyHistory(env.DB, results)
+      : Promise.resolve(new Map())
   ]);
   attachLatencyHistoryToServers(results, latencyHistory);
   

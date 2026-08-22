@@ -254,7 +254,8 @@ Headers: (按需) Authorization: Bearer <jwt>, X-Turnstile-Token/Verified
   "sysConfig": {
     "show_price": true,
     "show_expire": true,
-    "show_tf": true
+    "show_tf": true,
+    "show_three_net_details": true
   }
 }
 ```
@@ -268,7 +269,7 @@ Headers: (按需) Authorization: Bearer <jwt>, X-Turnstile-Token/Verified
 | `regionStats` | 按区域统计服务器数量                  |
 | `sysConfig`   | 站点开关配置，控制 UI 显示；主题配置请从 `/api/config` 的 `theme_options` 读取 |
 
-`servers[].ping` / `servers[].loss` 仅在列表接口返回，均为固定 30 个点的 1 小时延迟/丢包窗口数组，点格式为 `{ ts, ct, cu, cm, bd }`。
+`servers[].ping` / `servers[].loss` 仅在列表接口返回，点格式为 `{ ts, ct, cu, cm, bd }`。只有后台开启三网详情（`sysConfig.show_three_net_details === true`）时，后端才会从 D1 最近 1 小时历史中抽样这些窗口数据；关闭时为节省 D1 / Workers 消耗，数组为空。
 
 **示例**：
 
@@ -370,7 +371,7 @@ Headers: (按需) Authorization, X-Turnstile-Token/Verified
 
 `tags` 为英文逗号分隔字符串。`note` 属于管理端内部字段，不从 dashboard 公共接口返回。`disk` 为可选磁盘 IO 指标对象：`read_bps` / `write_bps` 单位为 B/s，`read_iops` / `write_iops` 为 IOPS，`await_ms` 为毫秒，`util` 为百分比；旧探针、旧数据缺失，或者 6 个子字段全为 0 时，API / WebSocket 不返回该对象，主题不应展示依赖磁盘 IO 的图表。`latestReportUpdates` 与 `/api/servers` 同名字段形状一致，REST 样本统一为 `{ ts, data }` 并按探针批量采样包透传；内置探针默认只在普通采样点上报 `cpu`、`ram_total`、`ram_used`、`swap_total`、`swap_used`、`net_in_speed`、`net_out_speed`，每次报告最后一个样本可能额外携带 `disk` 等报告级字段；回放状态保留约 5 分钟，允许为空数组。`gpu` 已废弃，主题应使用 `gpu_info`；新版上报和 WebSocket 实时数据为 `[{ id, name, info }]` 数组，历史/详情 REST 响应中可能是同结构的 JSON 字符串。
 
-`ping` / `loss` 窗口数组仅在 `/api/servers` 的 `servers[]` 中返回，`/api/server` 详情接口不返回新增窗口数组。窗口固定 30 个点，覆盖约 1 小时，每 2 分钟一个槽位；点格式为 `{ ts, ct, cu, cm, bd }`，其中 `ct` / `cu` / `cm` / `bd` 分别对应不同探测线路。实际采样不足 30 个槽位时，后端会用时间最近的已有点补齐；若 DO/Worker 缓存窗口最后一点落后当前最新指标超过 2 分钟，后端会用本次响应已查询到的最新指标追加一组点，不增加额外查询。DO 延迟窗口在当前 Worker isolate 内短缓存约 2 分钟，缓存不跨 isolate 共享。
+`ping` / `loss` 窗口数组仅在 `/api/servers` 的 `servers[]` 中返回，`/api/server` 详情接口不返回新增窗口数组。只有后台开启三网详情时才会查询窗口数据；关闭时后端仍返回 `ping: []` / `loss: []`，主题不应展示三网小图。开启后，窗口从 D1 历史表最近 1 小时按时间范围抽样，最多 30 个真实样本点，点格式为 `{ ts, ct, cu, cm, bd }`，其中 `ct` / `cu` / `cm` / `bd` 分别对应不同探测线路。时间间隔目标约 2 分钟，但 `ts` 保留真实上报时间，不会强制对齐为等差序列；历史不足、上报中断或某个时间段无数据时不会用最近点补齐，数组可能少于 30 个。该 D1 抽样结果在当前 Worker isolate 内缓存约 2 分钟，缓存不跨 isolate 共享。
 
 **失败返回**：
 
@@ -678,8 +679,8 @@ interface Server {
   loss_cu: number | null | false;
   loss_cm: number | null | false;
   loss_bd: number | null | false;
-  ping?: LatencyWindowPoint[]; // 仅 /api/servers 的列表项返回
-  loss?: LatencyWindowPoint[]; // 仅 /api/servers 的列表项返回
+  ping?: LatencyWindowPoint[]; // 仅 /api/servers 的列表项返回；三网详情关闭时为空数组
+  loss?: LatencyWindowPoint[]; // 仅 /api/servers 的列表项返回；三网详情关闭时为空数组
   ram_total: number;
   ram_used: number;
   swap_total: number;

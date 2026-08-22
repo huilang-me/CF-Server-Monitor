@@ -410,7 +410,7 @@ export function useServerCardData(props) {
     { label: 'CT', value: props.server.ping_ct },
     { label: 'CU', value: props.server.ping_cu },
     { label: 'CM', value: props.server.ping_cm },
-    { label: 'BD', value: props.server.ping_bd }
+    { label: 'BGP', value: props.server.ping_bd }
   ].filter(ping => !isPingDisabled(ping.value)))
 
   const hasPingData = computed(() => pingList.value.length > 0)

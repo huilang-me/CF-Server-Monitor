@@ -64,7 +64,7 @@ Compared with traditional controller-style monitoring tools, CF-Server-Monitor i
 | --- | --- |
 | Realtime monitoring | CPU, GPU, memory, swap, disk, disk IO, network, connections, process count, load average, uptime |
 | History | 7-day charts, long-range sampling, realtime network speed, monthly traffic and correction |
-| Network quality | Latency and packet loss tracking for CT, CU, CM, and BGP/BD nodes |
+| Network quality | Latency and packet loss tracking for CT, CU, CM, and BGP nodes; when three-net details are enabled, the dashboard samples up to 30 real points from the last hour of D1 history and caches them for 2 minutes |
 | Dashboard views | Bar chart, ring chart, table, and map views for desktop and mobile |
 | Admin panel | Server CRUD, drag sorting, hidden servers, import/export, batch delete, database maintenance |
 | Cross-platform Agent | Mainstream Linux, Alpine Linux, OpenWrt, Synology DSM, Feiniu fnOS, FreeBSD, macOS, Windows; Go Agent by default, Shell/PowerShell still available |
@@ -256,7 +256,7 @@ npm run build:github-page
 
 | Category | Main options |
 | --- | --- |
-| Site | Title, background, favicon, default display mode, public access |
+| Site | Title, background, favicon, default display mode, three-net details, public access |
 | Server | HTTP/WSS report intervals, collect interval, ping nodes, network interfaces, monthly traffic, price, expiration, auto-renew |
 | Security | Admin account, password, JWT Secret, Turnstile |
 | Notifications | Offline alerts, expiration reminders, resource alerts, test notification |
