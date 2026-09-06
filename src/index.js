@@ -5,6 +5,7 @@ import { handleAdminAPI } from './handlers/admin.js';
 import { serveFrontend } from './handlers/frontend.js';
 import { handleUpdate, handleWebSocketUpgrade, handleUpdateWebSocketUpgrade } from './handlers/update.js';
 import { handleServerAPI, handleServersAPI } from './handlers/dashboard.js';
+import { handleIpQualityRead, handleIpQualityReport } from './handlers/ipQuality.js';
 import { handleTheme } from './handlers/theme.js';
 import { isValidThemeOptions, loadSettings, loadSiteSettings, loadAppearanceOptions, normalizeFrontendWsTimeoutMinutes, normalizeLongHistoryPoints, saveThemeOptions, setDebug, debug } from './utils/settings.js';
 import { checkAuth, simpleAuthResponse } from './middleware/auth.js';
@@ -261,6 +262,11 @@ export default {
     }
 
     const routes = [
+      { method: 'POST', path: '/ip-quality/report', handler: () => handleIpQualityReport(request, env) },
+      { method: 'GET', path: '/api/ip-quality', handler: async () => {
+        await ensureSiteSettings();
+        return handleIpQualityRead(request, env, sys);
+      }},
       { method: 'POST', path: '/update', handler: () => handleUpdate(request, env, ctx) },
       { method: 'GET', path: '/update', handler: () => handleUpdateWebSocketUpgrade(request, env) },
       { method: 'GET', path: '/__do/health', handler: async () => {
