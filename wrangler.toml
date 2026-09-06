@@ -20,6 +20,7 @@ binding = "ASSETS"
 [[d1_databases]]
 binding = "DB"
 database_name = "server-monitor-db"
+database_id = "10ddcccb-4b53-44ec-929b-c3c672439261"
 
 # Durable Objects：实时指标广播中心
 # 注意：首次部署前需要执行 `wrangler durable-object create MetricsBroadcaster --class MetricsBroadcaster`
