@@ -1,0 +1,15 @@
+[Unit]
+Description=Daily IP quality report for CF Server Monitor
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %h/.cf-probe/ip-quality/collector.py
+WorkingDirectory=%h/.cf-probe/ip-quality
+UMask=0077
+Nice=10
+NoNewPrivileges=yes
+MemoryMax=256M
+TasksMax=128
+CPUQuota=50%
+TimeoutStartSec=15min
+KillMode=control-group

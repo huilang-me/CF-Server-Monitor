@@ -1,0 +1,11 @@
+[Unit]
+Description=Check IP quality daily at 03:15 China time
+
+[Timer]
+OnCalendar=*-*-* 19:15:00 UTC
+RandomizedDelaySec=600
+Persistent=true
+Unit=cf-ip-quality.service
+
+[Install]
+WantedBy=timers.target
