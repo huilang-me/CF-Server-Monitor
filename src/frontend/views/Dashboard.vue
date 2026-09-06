@@ -359,6 +359,7 @@
       @continue="continueLiveConnection"
     />
 
+    <IpQualityPanel v-if="!isLoading" />
     <Footer />
   </div>
 </template>
@@ -367,6 +368,7 @@
 import { ref, computed, inject, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import TerminalHeader from '../components/TerminalHeader.vue'
+import IpQualityPanel from '../components/IpQualityPanel.vue'
 import ServerBarCard from '../components/ServerBarCard.vue'
 import ServerRingCard from '../components/ServerRingCard.vue'
 import Footer from '../components/Footer.vue'

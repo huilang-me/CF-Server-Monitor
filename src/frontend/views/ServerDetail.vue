@@ -111,6 +111,8 @@
       </div>
     </div>
 
+    <IpQualityPanel :server-id="serverId" :api-index="apiIndex" />
+
     <div class="charts-container">
       <div class="chart-card" :class="{ 'full-width': isChartExpanded('cpu') }">
         <div class="chart-card-header">
@@ -352,6 +354,7 @@
 import { ref, computed, inject, onMounted, onUnmounted, watch, nextTick, h } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import TerminalHeader from '../components/TerminalHeader.vue'
+import IpQualityPanel from '../components/IpQualityPanel.vue'
 import Footer from '../components/Footer.vue'
 import OsIcon from '../components/OsIcon.vue'
 import LiveConnectionTimeoutModal from '../components/LiveConnectionTimeoutModal.vue'
