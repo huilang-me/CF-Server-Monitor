@@ -23,6 +23,7 @@ def upload(config, payload):
     url += '/ip-quality/report?id=' + urllib.parse.quote(config['server_id'], safe='')
     request = urllib.request.Request(url, data=json.dumps(payload).encode(), headers={
         'Content-Type': 'application/json',
+        'User-Agent': 'CF-Server-Monitor-IPQuality/1.0',
         'Authorization': 'Bearer ' + config['report_token'],
     })
     for attempt in range(3):
@@ -55,7 +56,9 @@ def collect(directory):
                 os.killpg(process.pid, signal.SIGKILL)
                 process.wait()
                 return {'error': 'timeout'}
-        if code != 0:
+        # The pinned script ends with a disabled IPv6 condition, returning 1
+        # even when its IPv4 JSON report was generated successfully.
+        if code not in (0, 1):
             return {'error': 'check_failed'}
         try:
             report = json.loads(output.read_text())
