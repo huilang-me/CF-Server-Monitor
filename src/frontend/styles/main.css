@@ -26,7 +26,7 @@
     /* Background Colors */
     --bg-primary: #0a0e14;
     --bg-secondary: rgba(18, 23, 31, 0.6);
-    
+
     --bg-card: rgba(21, 27, 38, 0.6);
     --bg-hover: rgba(26, 34, 48, 0.6);
 
@@ -1839,6 +1839,88 @@ body::before {
     background: var(--bg-hover);
 }
 
+.terminal-table th.th-sortable {
+    padding: 0;
+}
+
+.terminal-table th.th-sorted {
+    box-shadow: inset 0 -2px 0 var(--accent-green);
+}
+
+.th-content {
+    display: flex;
+    align-items: center;
+}
+
+.th-sort-btn {
+    appearance: none;
+    border: none;
+    margin: 0;
+    width: 100%;
+    padding: 8px 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    letter-spacing: inherit;
+    text-transform: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: color 150ms ease, background 150ms ease;
+}
+
+.th-sort-btn:hover {
+    background: var(--bg-hover);
+}
+
+.th-sort-btn:focus-visible {
+    outline: 2px solid var(--accent-blue);
+    outline-offset: -2px;
+}
+
+.th-sort-btn .th-label {
+    flex: 0 1 auto;
+}
+
+.th-sort-arrow {
+    flex: 0 0 auto;
+    font-size: 9px;
+    line-height: 1;
+    transition: color 150ms ease;
+}
+
+.th-sort-btn.is-idle .th-sort-arrow {
+    color: var(--text-secondary);
+    opacity: 0.7;
+}
+
+.th-sort-btn.is-idle:hover .th-sort-arrow {
+    opacity: 1;
+    color: var(--text-primary);
+}
+
+.th-sort-btn.is-asc,
+.th-sort-btn.is-desc {
+    color: var(--accent-green);
+}
+
+.th-sort-btn.is-asc .th-sort-arrow,
+.th-sort-btn.is-desc .th-sort-arrow {
+    color: var(--accent-green);
+}
+
+.drag-handle.drag-handle-locked {
+    color: var(--text-secondary);
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.drag-handle.drag-handle-locked:hover {
+    color: var(--text-secondary);
+}
+
 .table-stat {
     display: flex;
     align-items: center;
@@ -2105,6 +2187,56 @@ body::before {
 
 .toolbar-select:hover {
     border-color: var(--border-active);
+}
+
+.toolbar-filter {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+    flex-wrap: nowrap;
+}
+
+.toolbar-select-compact {
+    width: 120px;
+}
+
+.toolbar-search-input {
+    width: 220px;
+    flex: 0 1 220px;
+    min-width: 0;
+}
+
+.toolbar-filter-clear {
+    padding: 8px 10px;
+    line-height: 1;
+}
+
+.batch-selected-count {
+    display: inline-flex;
+    align-items: center;
+    padding: 0 10px;
+    color: var(--text-secondary);
+    font-family: var(--terminal-font);
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.empty-state .empty-action {
+    margin-left: 8px;
+    background: transparent;
+    border: 1px solid var(--input-border);
+    border-radius: 4px;
+    color: var(--accent-cyan);
+    font-family: var(--terminal-font);
+    font-size: 12px;
+    padding: 2px 8px;
+    cursor: pointer;
+    transition: border-color 0.2s;
+}
+
+.empty-state .empty-action:hover {
+    border-color: var(--accent-cyan);
 }
 
 .toolbar-select:focus {
@@ -4983,7 +5115,7 @@ body.mikus-theme .mikus-stats-mascot-img {
         padding: 8px 5px;
         font-size: 11px;
     }
-    
+
     .tab-btn::before{
         margin-right: 4px;
     }
@@ -5200,5 +5332,44 @@ body.mikus-theme .mikus-stats-mascot-img {
     .btn-lg {
         font-size: 12px;
         padding: 12px;
+    }
+}
+
+@media (max-width: 1200px) {
+    .toolbar-filter {
+        width: 100%;
+        margin-left: 0;
+        justify-content: flex-end;
+    }
+
+    .toolbar-filter .toolbar-search-input {
+        flex: 0 1 240px;
+    }
+}
+
+@media (max-width: 640px) {
+    .toolbar-filter {
+        flex-wrap: wrap;
+        justify-content: flex-start;
+    }
+
+    .toolbar-filter .toolbar-search-input {
+        order: -1;
+        flex: 1 1 100%;
+        width: 100%;
+    }
+
+    .toolbar-filter .toolbar-select-wrapper {
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+
+    .toolbar-filter .toolbar-select-compact {
+        width: 100%;
+    }
+
+    .toolbar-filter .btn {
+        flex: 0 0 auto;
+        white-space: nowrap;
     }
 }

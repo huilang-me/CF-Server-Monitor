@@ -2285,16 +2285,23 @@ const saveBatchEdit = async () => {
   }
 }
 
-const handleSelectAll = (e) => {
-  const checked = e.target.checked
-  selectedServers.value = checked ? servers.value.map(s => s.id) : []
+const resolveSelectableIds = (visibleIds) => {
+  if (Array.isArray(visibleIds) && visibleIds.length) return visibleIds
+  return servers.value.map(s => s.id)
 }
 
-const toggleSelectAll = () => {
-  if (selectedServers.value.length === servers.value.length) {
-    selectedServers.value = []
+const handleSelectAll = (e, visibleIds) => {
+  const checked = e.target.checked
+  selectedServers.value = checked ? resolveSelectableIds(visibleIds) : []
+}
+
+const toggleSelectAll = (visibleIds) => {
+  const target = resolveSelectableIds(visibleIds)
+  const allSelected = target.every(id => selectedServers.value.includes(id))
+  if (allSelected) {
+    selectedServers.value = selectedServers.value.filter(id => !target.includes(id))
   } else {
-    selectedServers.value = servers.value.map(s => s.id)
+    selectedServers.value = Array.from(new Set([...selectedServers.value, ...target]))
   }
 }
 
