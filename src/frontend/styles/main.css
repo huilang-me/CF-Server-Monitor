@@ -1482,8 +1482,10 @@ body::before {
 /* Ping row — ring card */
 .server-card-ping-row {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 8px;
+    row-gap: 6px;
     margin-top: 12px;
     justify-content: space-between;
 }
@@ -1598,6 +1600,7 @@ body::before {
    -------------------------------------------------------------------------- */
 .ping-panel {
     display: flex;
+    flex-wrap: wrap;
     justify-content: space-around;
     gap: 4px;
     padding: 8px;
@@ -1606,7 +1609,10 @@ body::before {
     border: 1px solid var(--border-color);
 }
 
+/* 每行最多 4 个节点，超过自动换行（最多 8 个 Ping 节点） */
 .ping-item {
+    flex: 0 1 calc(25% - 4px);
+    min-width: 0;
     text-align: center;
 }
 
@@ -1615,6 +1621,9 @@ body::before {
     color: var(--text-primary);
     display: block;
     margin-bottom: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .ping-value {

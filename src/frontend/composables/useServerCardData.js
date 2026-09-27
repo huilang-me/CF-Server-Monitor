@@ -1,4 +1,4 @@
-import { computed } from 'vue'
+import { computed, inject } from 'vue'
 import { formatBytes, getFlagRegionCode, isServerOnline } from '../utils/api'
 import { getPublicAssetUrl } from '../utils/config'
 import { currentLang, useTranslation } from '../utils/i18n'
@@ -90,6 +90,7 @@ export const getUsageColor = (percent) => {
 
 export function useServerCardData(props) {
   const trans = useTranslation()
+  const appConfig = inject('appConfig', null)
 
   const currentTime = computed(() => {
     const ts = Number(props.server.current_timestamp)
@@ -418,15 +419,26 @@ export function useServerCardData(props) {
 
   const hasThreeNetDetails = computed(() => threeNetDetails.value.length > 0)
 
+  // 与详情页保持一致：三网读后台的 custom_X_name，自定义节点读 X_name
+  const pingNodeLabel = (key) => {
+    const isCustomNode = key.startsWith('node_')
+    const name = isCustomNode
+      ? (appConfig?.[`${key}_name`] || props.sysConfig?.[`${key}_name`])
+      : (props.sysConfig?.[`custom_${key}_name`] || appConfig?.[`custom_${key}_name`])
+    if (name) return String(name)
+    if (isCustomNode) return `Node ${key.slice('node_'.length)}`
+    return String(trans.value[`ping${key.charAt(0).toUpperCase()}${key.slice(1)}`] || key.toUpperCase())
+  }
+
   const pingList = computed(() => [
-    { label: 'CT', value: props.server.ping_ct },
-    { label: 'CU', value: props.server.ping_cu },
-    { label: 'CM', value: props.server.ping_cm },
-    { label: 'BGP', value: props.server.ping_bd },
-    { label: props.server.node_1_name || 'Node 1', value: props.server.ping_node_1 },
-    { label: props.server.node_2_name || 'Node 2', value: props.server.ping_node_2 },
-    { label: props.server.node_3_name || 'Node 3', value: props.server.ping_node_3 },
-    { label: props.server.node_4_name || 'Node 4', value: props.server.ping_node_4 }
+    { label: pingNodeLabel('ct'), value: props.server.ping_ct },
+    { label: pingNodeLabel('cu'), value: props.server.ping_cu },
+    { label: pingNodeLabel('cm'), value: props.server.ping_cm },
+    { label: pingNodeLabel('bd'), value: props.server.ping_bd },
+    { label: pingNodeLabel('node_1'), value: props.server.ping_node_1 },
+    { label: pingNodeLabel('node_2'), value: props.server.ping_node_2 },
+    { label: pingNodeLabel('node_3'), value: props.server.ping_node_3 },
+    { label: pingNodeLabel('node_4'), value: props.server.ping_node_4 }
   ].filter(ping => !isPingDisabled(ping.value)))
 
   const hasPingData = computed(() => pingList.value.length > 0)

@@ -40,13 +40,13 @@
   </div>
   <div v-else-if="hasPingData" :class="variant === 'ring' ? 'server-card-ping-row' : 'ping-panel'">
     <template v-if="variant === 'ring'">
-      <span class="server-card-ping-chip" v-for="p in pingList.filter(x => x.value !== 0).slice(0, 4)" :key="p.label">
+      <span class="server-card-ping-chip" v-for="p in pingList.filter(x => x.value !== 0)" :key="p.label">
         <span class="server-card-ping-label">{{ p.label }}</span>
         <span class="server-card-ping-val" :style="{ color: getPingColor(p.value) }">{{ isPingValid(p.value) ? p.value + 'ms' : timeoutText }}</span>
       </span>
     </template>
     <template v-else>
-      <div class="ping-item" v-for="p in pingList.filter(x => x.value !== 0).slice(0, 4)" :key="p.label">
+      <div class="ping-item" v-for="p in pingList.filter(x => x.value !== 0)" :key="p.label">
         <span class="ping-label">{{ p.label }}</span>
         <span class="ping-value" :style="{ color: getPingColor(p.value) }">{{ !isPingValid(p.value) ? timeoutText : p.value + 'ms' }}</span>
       </div>
