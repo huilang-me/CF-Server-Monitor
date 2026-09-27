@@ -26,12 +26,42 @@
         <button v-if="newServerGroup" @click="newServerGroup = ''" class="toolbar-select-clear" aria-label="Clear">✕</button>
       </div>
       <button @click="$emit('add-server')" class="btn btn-primary">+ {{ trans.addServer }}</button>
+
+      <div class="toolbar-filter">
+        <div class="toolbar-select-wrapper">
+          <select v-model="searchField" class="toolbar-select toolbar-select-compact" :aria-label="trans.searchFieldLabel">
+            <option value="all">{{ trans.searchFieldAll }}</option>
+            <option value="name">{{ trans.searchFieldName }}</option>
+            <option value="ip">{{ trans.searchFieldIp }}</option>
+          </select>
+        </div>
+        <input
+          type="text"
+          v-model="searchInput"
+          class="toolbar-input toolbar-search-input"
+          :placeholder="searchPlaceholder"
+          :aria-label="trans.search"
+          @keydown.enter.prevent="applySearch"
+        >
+        <button type="button" class="btn btn-blue" @click="applySearch">🔍 {{ trans.search }}</button>
+        <button
+          v-if="isFilterActive"
+          type="button"
+          class="btn toolbar-filter-clear"
+          :title="trans.clearSearch"
+          :aria-label="trans.clearSearch"
+          @click="clearSearch"
+        >✕</button>
+      </div>
     </div>
 
     <div class="batch-actions">
       <button @click="$emit('batch-edit')" class="btn btn-blue" :disabled="selectedServers.length === 0">✏️ {{ trans.batchEdit }}</button>
       <button @click="$emit('batch-delete')" class="btn btn-red">🗑 {{ trans.batchDelete }}</button>
-      <button @click="$emit('toggle-select-all')" class="btn">☐ {{ trans.toggleAll }}</button>
+      <button @click="$emit('toggle-select-all', visibleServerIds)" class="btn">☐ {{ trans.toggleAll }}</button>
+      <span v-if="selectedServers.length" class="batch-selected-count">
+        {{ selectedCountLabel }}
+      </span>
     </div>
 
     <div class="table-wrapper">
@@ -41,34 +71,57 @@
             <th class="table-center-cell col-width-35">
               <HelpTooltip :text="trans.dragSort" />
             </th>
-            <th class="col-width-30"><input type="checkbox" id="select-all" @change="$emit('select-all', $event)" class="checkbox-accent-green"></th>
-            <th>{{ trans.hostname.toUpperCase() }}</th>
-            <th>IP</th>
-            <th>{{ trans.group.toUpperCase() }}</th>
-            <th>{{ trans.tags.toUpperCase() }}</th>
-            <th>{{ trans.note.toUpperCase() }}</th>
-            <th>{{ trans.price.toUpperCase() }}</th>
-            <th>{{ trans.expirationDate.toUpperCase() }}</th>
-            <th>{{ trans.autoRenewal.toUpperCase() }}</th>
-            <th>{{ trans.traffic.toUpperCase() }}</th>
-            <th>{{ trans.agentVersion.toUpperCase() }}</th>
-            <th>{{ trans.status.toUpperCase() }}</th>
-            <th>{{ trans.actions.toUpperCase() }}</th>
+            <th class="col-width-30"><input type="checkbox" id="select-all" @change="$emit('select-all', $event, visibleServerIds)" class="checkbox-accent-green" :aria-label="trans.toggleAll"></th>
+            <th
+              v-for="column in columns"
+              :key="column.key"
+              :class="{
+                'th-sortable': column.sortable,
+                'th-sorted': column.sortable && isSortedBy(column.key)
+              }"
+              :aria-sort="column.sortable ? ariaSortFor(column.key) : null"
+            >
+              <div class="th-content">
+                <button
+                  v-if="column.sortable"
+                  type="button"
+                  class="th-sort-btn"
+                  :class="sortStateClass(column.key)"
+                  :aria-label="sortActionLabel(column)"
+                  :title="sortActionLabel(column)"
+                  @click="cycleSort(column.key)"
+                >
+                  <span class="th-label">{{ column.label }}</span>
+                  <span class="th-sort-arrow" aria-hidden="true">{{ sortArrow(column.key) }}</span>
+                </button>
+                <span v-else class="th-label">{{ column.label }}</span>
+              </div>
+            </th>
           </tr>
         </thead>
         <tbody>
-          <tr v-if="servers.length === 0">
-            <td colspan="14" class="empty-state"><span class="empty-icon">📦</span> {{ trans.noServers }}</td>
+          <tr v-if="sortedServers.length === 0">
+            <td colspan="14" class="empty-state">
+              <template v-if="isFilterActive">
+                <span class="empty-icon">🔍</span> {{ trans.searchNoResult }}
+                <button type="button" class="empty-action" @click="clearSearch">{{ trans.clearSearch }}</button>
+              </template>
+              <template v-else>
+                <span class="empty-icon">📦</span> {{ trans.noServers }}
+              </template>
+            </td>
           </tr>
           <tr
-            v-for="server in servers"
+            v-for="server in sortedServers"
             :key="server.id"
             class="server-row"
             :data-server-id="server.id"
           >
             <td
               class="drag-handle table-center-cell"
+              :class="{ 'drag-handle-locked': isDragLocked }"
               :aria-label="trans.dragSort"
+              :title="dragLockTitle"
               draggable="false"
               @pointerdown="handlePointerDown($event, server.id)"
               @pointermove="handlePointerMove"
@@ -179,6 +232,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { getFlagRegionCode, formatBytes } from '../../../utils/api'
 import { getPublicAssetUrl } from '../../../utils/config'
+import { DEFAULT_EXCHANGE_RATES, normalizeFinanceCurrency } from '../../../utils/finance'
 import { currentLang } from '../../../utils/i18n'
 import { detectBillingCycle, detectCurrencySymbol, getBillingCycleOption, isEnabledFlag, isFreePrice, normalizeCurrency, normalizePrice } from '../../../utils/server.js'
 import OsIcon from '../../../components/OsIcon.vue'
@@ -210,6 +264,267 @@ const emit = defineEmits([
 const POINTER_DRAG_THRESHOLD = 6
 const CUSTOM_SERVER_GROUP_VALUE = '__custom__'
 let pointerDragState = null
+
+const sortKey = ref('')
+const sortDir = ref('')
+
+const SEARCH_FIELDS = ['all', 'name', 'ip']
+
+const searchField = ref('all')
+const searchInput = ref('')
+const appliedQuery = ref('')
+const appliedField = ref('all')
+
+const isFilterActive = computed(() => appliedQuery.value !== '')
+
+const applySearch = () => {
+  appliedQuery.value = searchInput.value.trim()
+  appliedField.value = SEARCH_FIELDS.includes(searchField.value) ? searchField.value : 'all'
+}
+
+const clearSearch = () => {
+  searchInput.value = ''
+  appliedQuery.value = ''
+  searchField.value = 'all'
+  appliedField.value = 'all'
+}
+
+watch(searchField, () => {
+  if (appliedQuery.value || searchInput.value.trim()) applySearch()
+})
+
+const searchPlaceholder = computed(() => {
+  if (searchField.value === 'name') return '> ' + props.trans.serverName + '...'
+  if (searchField.value === 'ip') return '> IP...'
+  return '> ' + props.trans.searchNameOrIp + '...'
+})
+
+const getSearchHaystack = (server) => {
+  const field = appliedField.value
+  const texts = []
+  if (field === 'all' || field === 'name') texts.push(server.name)
+  if (field === 'all' || field === 'ip') {
+    for (const item of getServerIpRows(server)) texts.push(item.address)
+  }
+  return texts
+}
+
+const normalizeSearchText = (value) => String(value ?? '').toLowerCase()
+
+const filteredServers = computed(() => {
+  const list = Array.isArray(props.servers) ? props.servers : []
+  const query = normalizeSearchText(appliedQuery.value)
+  if (!query) return list
+  return list.filter(server =>
+    getSearchHaystack(server).some(text => normalizeSearchText(text).includes(query))
+  )
+})
+
+const visibleServerIds = computed(() => filteredServers.value.map(server => server.id))
+
+const selectedCountLabel = computed(() => {
+  const selected = Array.isArray(props.selectedServers) ? props.selectedServers : []
+  const total = selected.length
+  const visibleSelected = visibleServerIds.value.filter(id => selected.includes(id)).length
+  if (isFilterActive.value && visibleSelected !== total) {
+    return `${props.trans.selectedPrefix} ${total} ${props.trans.selectedUnit}（${props.trans.selectedVisible} ${visibleSelected}）`
+  }
+  return `${props.trans.selectedPrefix} ${total} ${props.trans.selectedUnit}`
+})
+
+const isDragLocked = computed(() => Boolean(sortKey.value) || isFilterActive.value)
+
+const dragLockTitle = computed(() => {
+  if (isFilterActive.value) return props.trans.sortDragDisabledByFilter
+  if (sortKey.value) return props.trans.sortDragDisabled
+  return props.trans.dragSort
+})
+
+const isSortedBy = (key) => sortKey.value === key
+
+const cycleSort = (key) => {
+  if (sortKey.value !== key) {
+    sortKey.value = key
+    sortDir.value = 'asc'
+    return
+  }
+  if (sortDir.value === 'asc') {
+    sortDir.value = 'desc'
+    return
+  }
+  sortKey.value = ''
+  sortDir.value = ''
+}
+
+const sortArrow = (key) => {
+  if (!isSortedBy(key)) return '▲'
+  return sortDir.value === 'asc' ? '▲' : '▼'
+}
+
+const sortStateClass = (key) => {
+  if (!isSortedBy(key)) return 'is-idle'
+  return sortDir.value === 'asc' ? 'is-asc' : 'is-desc'
+}
+
+const sortActionLabel = (column) => {
+  const label = column.label
+  if (!isSortedBy(column.key)) return `${label} ${props.trans.sortAscending}`
+  if (sortDir.value === 'asc') return `${label} ${props.trans.sortDescending}`
+  return `${label} ${props.trans.sortRestoreManual}`
+}
+
+const headerLabel = (value) => String(value ?? '').toUpperCase()
+
+const columns = computed(() => [
+  { key: 'name', label: headerLabel(props.trans.hostname), sortable: true },
+  { key: 'ip', label: headerLabel('IP'), sortable: true },
+  { key: 'server_group', label: headerLabel(props.trans.group), sortable: true },
+  { key: 'tags', label: headerLabel(props.trans.tags), sortable: false },
+  { key: 'note', label: headerLabel(props.trans.note), sortable: false },
+  { key: 'price', label: headerLabel(props.trans.price), sortable: true },
+  { key: 'expire_date', label: headerLabel(props.trans.expirationDate), sortable: true },
+  { key: 'auto_renewal', label: headerLabel(props.trans.autoRenewal), sortable: true },
+  { key: 'traffic_limit', label: headerLabel(props.trans.traffic), sortable: true },
+  { key: 'agent_version', label: headerLabel(props.trans.agentVersion), sortable: true },
+  { key: 'is_online', label: headerLabel(props.trans.status), sortable: true },
+  { key: 'actions', label: headerLabel(props.trans.actions), sortable: false }
+])
+
+const ariaSortFor = (key) => {
+  if (!isSortedBy(key)) return 'none'
+  return sortDir.value === 'asc' ? 'ascending' : 'descending'
+}
+
+const parseDateValue = (value) => {
+  const text = String(value || '').trim()
+  if (!text) return null
+  const timestamp = new Date(text).getTime()
+  return Number.isFinite(timestamp) ? timestamp : null
+}
+
+const parseVersionSegments = (value) => String(value || '')
+  .trim()
+  .replace(/^v/i, '')
+  .split(/[.\-+_]/)
+  .map(part => {
+    const num = Number.parseInt(part, 10)
+    return Number.isFinite(num) ? num : 0
+  })
+
+const priceInCny = (server) => {
+  const priceText = normalizePrice(server.price)
+  if (!priceText || isFreePrice(priceText)) return 0
+  const price = Number(priceText)
+  if (!Number.isFinite(price) || price <= 0) return 0
+
+  const code = normalizeFinanceCurrency(
+    normalizeCurrency(server.currency || detectCurrencySymbol(server.price)) ||
+    server.currency ||
+    detectCurrencySymbol(server.price)
+  )
+  if (code === 'CNY') return price
+  const rate = DEFAULT_EXCHANGE_RATES[code] || 0
+  return rate > 0 ? price / rate : price
+}
+
+const SORT_ACCESSORS = {
+  name: (server) => String(server.name || ''),
+  ip: (server) => getPublicIpAddress(server.ip_v4) || getPublicIpAddress(server.ip_v6) || null,
+  server_group: (server) => String(server.server_group || ''),
+  price: (server) => priceInCny(server),
+  expire_date: (server) => parseDateValue(server.expire_date),
+  auto_renewal: (server) => (isServerAutoRenewal(server) ? 1 : 0),
+  traffic_limit: (server) => {
+    const gb = Number.parseFloat(server.traffic_limit)
+    return Number.isFinite(gb) && gb > 0 ? gb : null
+  },
+  agent_version: (server) => normalizeVersion(server.agent_version) || null,
+  is_online: (server) => (server.is_online ? 1 : 0)
+}
+
+const SORT_TYPES = {
+  name: 'text',
+  ip: 'ip',
+  server_group: 'text',
+  price: 'number',
+  expire_date: 'number',
+  auto_renewal: 'number',
+  traffic_limit: 'number',
+  agent_version: 'version',
+  is_online: 'number'
+}
+
+const isMissingSortValue = (value) => value === null || value === undefined || value === ''
+
+const SORT_MISSING_POLICY = {
+  agent_version: 'lowest'
+}
+
+const isMissingPinnedLast = (key) => SORT_MISSING_POLICY[key] !== 'lowest'
+
+const compareIpValues = (a, b) => {
+  const partsA = String(a).split('.').map(Number)
+  const partsB = String(b).split('.').map(Number)
+  const isIpv4 = parts => parts.length === 4 && parts.every(Number.isFinite)
+  if (isIpv4(partsA) && isIpv4(partsB)) {
+    for (let i = 0; i < 4; i++) {
+      if (partsA[i] !== partsB[i]) return partsA[i] - partsB[i]
+    }
+    return 0
+  }
+  return String(a).localeCompare(String(b))
+}
+
+const compareVersionValues = (a, b) => {
+  const partsA = parseVersionSegments(a)
+  const partsB = parseVersionSegments(b)
+  const length = Math.max(partsA.length, partsB.length)
+  for (let i = 0; i < length; i++) {
+    const left = partsA[i] ?? 0
+    const right = partsB[i] ?? 0
+    if (left !== right) return left - right
+  }
+  return 0
+}
+
+const compareSortValues = (a, b, type) => {
+  if (type === 'text') {
+    const locale = currentLang.value === 'zh' ? 'zh-Hans-CN' : 'en'
+    return String(a).localeCompare(String(b), locale, { numeric: true, sensitivity: 'base' })
+  }
+  if (type === 'ip') return compareIpValues(a, b)
+  if (type === 'version') return compareVersionValues(a, b)
+  return Number(a) - Number(b)
+}
+
+const sortedServers = computed(() => {
+  const list = filteredServers.value
+  const key = sortKey.value
+  const type = SORT_TYPES[key]
+  if (!key || !type) return list
+
+  const accessor = SORT_ACCESSORS[key]
+  const direction = sortDir.value === 'desc' ? -1 : 1
+
+  return list
+    .map((server, index) => ({ server, index }))
+    .sort((left, right) => {
+      const valueA = accessor(left.server)
+      const valueB = accessor(right.server)
+      const missingA = isMissingSortValue(valueA)
+      const missingB = isMissingSortValue(valueB)
+
+      if (missingA && missingB) return left.index - right.index
+
+      if ((missingA || missingB) && isMissingPinnedLast(key)) {
+        return missingA ? 1 : -1
+      }
+
+      const result = compareSortValues(valueA, valueB, type)
+      return result !== 0 ? result * direction : left.index - right.index
+    })
+    .map(item => item.server)
+})
 
 const serverGroupOptions = computed(() => {
   const defaultLabel = props.trans.default || 'Default'
@@ -361,6 +676,7 @@ const startPointerDrag = (event) => {
 const handlePointerDown = (event, serverId) => {
   if (event.isPrimary === false) return
   if (event.pointerType === 'mouse' && event.button !== 0) return
+  if (isDragLocked.value) return
   const row = getServerRow(event.target)
   if (!row) return
   event.preventDefault()
