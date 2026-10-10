@@ -481,14 +481,7 @@ async function handleLoginAction({ request, env, sys, data }) {
     }
   }
 
-  const authHeader = 'Basic ' + btoa(username + ':' + password);
-  const mockRequest = {
-    headers: {
-      get: (key) => key === 'Authorization' ? authHeader : null
-    }
-  };
-
-  const credentialResult = await validateCredentials(mockRequest, env, sys);
+  const credentialResult = await validateCredentials(username, password, env, sys);
 
   if (!credentialResult.valid) {
     return createUnauthorizedResponse('invalidCredentials');
