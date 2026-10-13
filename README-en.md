@@ -70,7 +70,7 @@ Compared with traditional controller-style monitoring tools, CF-Server-Monitor i
 | Cross-platform Agent | Mainstream Linux, Alpine Linux, OpenWrt, Synology DSM, Feiniu fnOS, FreeBSD, macOS, Windows, plus Docker image deployment; Go Agent by default, Shell/PowerShell still available |
 | Realtime push | Durable Objects + WebSocket refresh the UI immediately after Agent reports |
 | Alerts | Offline alerts, recovery notices, expiration reminders, resource load rules |
-| Multi-language | Built-in Chinese and English frontend switch; Chinese and English documentation |
+| Multi-language | Built-in Chinese, English, and Latin American Spanish frontend switch; notifications in Chinese, English, or Spanish; Chinese and English documentation |
 | Multi-site | GitHub Pages static frontend and aggregation of multiple Worker APIs |
 | Widget | iOS Scriptable widget script for quick mobile status checks |
 | Security | API Secret, admin password, JWT, Turnstile, CORS, CSP allowlists |
@@ -303,6 +303,8 @@ The widget shows online status, CPU, memory, disk, monthly traffic, realtime upl
 ## Notifications and Alerts
 
 Configure notifications in Admin -> Global Settings -> Notifications. Notification delivery has three channel modes: built-in channels, SMTP email, and custom Webhook. When custom Webhook is selected, the backend sends only the Webhook request and does not call the built-in channel.
+
+**Notification Language** sets whether alert messages (event names and message text) are sent in Chinese, English, or Spanish. The default is Chinese. Fixed text inside custom templates and Webhook bodies is not translated.
 
 ### Built-in Channels
 

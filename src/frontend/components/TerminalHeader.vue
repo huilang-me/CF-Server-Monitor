@@ -20,6 +20,12 @@
           @click="setLang('zh')"
           aria-label="中文"
         >中</button>
+        <button 
+          class="lang-btn" 
+          :class="{ active: currentLang === 'es' }"
+          @click="setLang('es')"
+          aria-label="Español"
+        >ES</button>
       </div>
       <div class="theme-toggle-wrapper">
         <div class="theme-toggle">

@@ -3,53 +3,53 @@ export function isDisabledProbeMetric(value) {
 }
 
 export const BILLING_CYCLES = Object.freeze([
-  { value: 'month', months: 1, labelZh: '月', labelEn: 'Monthly', shortLabelZh: '月', shortLabelEn: 'M' },
-  { value: 'quarter', months: 3, labelZh: '季', labelEn: 'Quarterly', shortLabelZh: '季', shortLabelEn: 'Q' },
-  { value: 'half_year', months: 6, labelZh: '半年', labelEn: 'Half-yearly', shortLabelZh: '半年', shortLabelEn: 'HY' },
-  { value: 'year', months: 12, labelZh: '年', labelEn: 'Yearly', shortLabelZh: '年', shortLabelEn: 'Y' },
-  { value: 'two_years', months: 24, labelZh: '两年', labelEn: 'Two years', shortLabelZh: '2年', shortLabelEn: '2Y' },
-  { value: 'three_years', months: 36, labelZh: '三年', labelEn: 'Three years', shortLabelZh: '3年', shortLabelEn: '3Y' },
-  { value: 'four_years', months: 48, labelZh: '四年', labelEn: 'Four years', shortLabelZh: '4年', shortLabelEn: '4Y' },
-  { value: 'five_years', months: 60, labelZh: '五年', labelEn: 'Five years', shortLabelZh: '5年', shortLabelEn: '5Y' }
+  { value: 'month', months: 1, labelZh: '月', labelEn: 'Monthly', shortLabelZh: '月', shortLabelEn: 'M', labelEs: 'Mensual', shortLabelEs: 'mes' },
+  { value: 'quarter', months: 3, labelZh: '季', labelEn: 'Quarterly', shortLabelZh: '季', shortLabelEn: 'Q', labelEs: 'Trimestral', shortLabelEs: 'trim' },
+  { value: 'half_year', months: 6, labelZh: '半年', labelEn: 'Half-yearly', shortLabelZh: '半年', shortLabelEn: 'HY', labelEs: 'Semestral', shortLabelEs: 'sem' },
+  { value: 'year', months: 12, labelZh: '年', labelEn: 'Yearly', shortLabelZh: '年', shortLabelEn: 'Y', labelEs: 'Anual', shortLabelEs: 'año' },
+  { value: 'two_years', months: 24, labelZh: '两年', labelEn: 'Two years', shortLabelZh: '2年', shortLabelEn: '2Y', labelEs: 'Dos años', shortLabelEs: '2 años' },
+  { value: 'three_years', months: 36, labelZh: '三年', labelEn: 'Three years', shortLabelZh: '3年', shortLabelEn: '3Y', labelEs: 'Tres años', shortLabelEs: '3 años' },
+  { value: 'four_years', months: 48, labelZh: '四年', labelEn: 'Four years', shortLabelZh: '4年', shortLabelEn: '4Y', labelEs: 'Cuatro años', shortLabelEs: '4 años' },
+  { value: 'five_years', months: 60, labelZh: '五年', labelEn: 'Five years', shortLabelZh: '5年', shortLabelEn: '5Y', labelEs: 'Cinco años', shortLabelEs: '5 años' }
 ]);
 
 export const CURRENCY_OPTIONS = Object.freeze([
-  { symbol: '$', nameZh: '美元', nameEn: 'US Dollar' },
-  { symbol: '¥', nameZh: '人民币', nameEn: 'Chinese Yuan' },
-  { symbol: '€', nameZh: '欧元', nameEn: 'Euro' },
-  { symbol: '£', nameZh: '英镑', nameEn: 'British Pound' },
-  { symbol: '¥JPY', nameZh: '日元', nameEn: 'Japanese Yen' },
-  { symbol: 'HK$', nameZh: '港币', nameEn: 'Hong Kong Dollar' },
-  { symbol: 'A$', nameZh: '澳元', nameEn: 'Australian Dollar' },
-  { symbol: 'C$', nameZh: '加拿大元', nameEn: 'Canadian Dollar' },
-  { symbol: 'S$', nameZh: '新加坡元', nameEn: 'Singapore Dollar' },
-  { symbol: 'NZ$', nameZh: '新西兰元', nameEn: 'New Zealand Dollar' },
-  { symbol: '₣', nameZh: '瑞士法郎', nameEn: 'Swiss Franc' },
-  { symbol: '₩', nameZh: '韩元', nameEn: 'Korean Won' },
-  { symbol: '₹', nameZh: '印度卢比', nameEn: 'Indian Rupee' },
-  { symbol: '฿', nameZh: '泰铢', nameEn: 'Thai Baht' },
-  { symbol: '₫', nameZh: '越南盾', nameEn: 'Vietnamese Dong' },
-  { symbol: '₱', nameZh: '菲律宾比索', nameEn: 'Philippine Peso' },
-  { symbol: 'Rp', nameZh: '印尼盾', nameEn: 'Indonesian Rupiah' },
-  { symbol: 'RM', nameZh: '马来西亚林吉特', nameEn: 'Malaysian Ringgit' },
-  { symbol: '₺', nameZh: '土耳其里拉', nameEn: 'Turkish Lira' },
-  { symbol: '₪', nameZh: '以色列新谢克尔', nameEn: 'Israeli Shekel' },
-  { symbol: '৳', nameZh: '孟加拉塔卡', nameEn: 'Bangladeshi Taka' },
-  { symbol: '₨', nameZh: '巴基斯坦卢比', nameEn: 'Pakistani Rupee' },
-  { symbol: 'LKR', nameZh: '斯里兰卡卢比', nameEn: 'Sri Lankan Rupee' },
-  { symbol: '₮', nameZh: '蒙古图格里克', nameEn: 'Mongolian Tugrik' },
-  { symbol: '₽', nameZh: '卢布', nameEn: 'Russian Ruble' },
-  { symbol: 'R$', nameZh: '巴西雷亚尔', nameEn: 'Brazilian Real' },
-  { symbol: 'kr', nameZh: '克朗', nameEn: 'Krona (SEK/NOK/DKK)' },
-  { symbol: 'zł', nameZh: '波兰兹罗提', nameEn: 'Polish Zloty' },
-  { symbol: '₴', nameZh: '乌克兰格里夫纳', nameEn: 'Ukrainian Hryvnia' },
-  { symbol: '₸', nameZh: '哈萨克坦戈', nameEn: 'Kazakhstani Tenge' },
-  { symbol: 'R', nameZh: '南非兰特', nameEn: 'South African Rand' },
-  { symbol: '₦', nameZh: '尼日利亚奈拉', nameEn: 'Nigerian Naira' },
-  { symbol: 'EGP', nameZh: '埃及镑', nameEn: 'Egyptian Pound' },
-  { symbol: 'د.إ', nameZh: '阿联酋迪拉姆', nameEn: 'UAE Dirham' },
-  { symbol: '﷼', nameZh: '沙特里亚尔', nameEn: 'Saudi Riyal' },
-  { symbol: 'Q', nameZh: '危地马拉格查尔', nameEn: 'Guatemalan Quetzal' }
+  { symbol: '$', nameZh: '美元', nameEn: 'US Dollar', nameEs: 'Dólar estadounidense' },
+  { symbol: '¥', nameZh: '人民币', nameEn: 'Chinese Yuan', nameEs: 'Yuan chino' },
+  { symbol: '€', nameZh: '欧元', nameEn: 'Euro', nameEs: 'Euro' },
+  { symbol: '£', nameZh: '英镑', nameEn: 'British Pound', nameEs: 'Libra esterlina' },
+  { symbol: '¥JPY', nameZh: '日元', nameEn: 'Japanese Yen', nameEs: 'Yen japonés' },
+  { symbol: 'HK$', nameZh: '港币', nameEn: 'Hong Kong Dollar', nameEs: 'Dólar de Hong Kong' },
+  { symbol: 'A$', nameZh: '澳元', nameEn: 'Australian Dollar', nameEs: 'Dólar australiano' },
+  { symbol: 'C$', nameZh: '加拿大元', nameEn: 'Canadian Dollar', nameEs: 'Dólar canadiense' },
+  { symbol: 'S$', nameZh: '新加坡元', nameEn: 'Singapore Dollar', nameEs: 'Dólar de Singapur' },
+  { symbol: 'NZ$', nameZh: '新西兰元', nameEn: 'New Zealand Dollar', nameEs: 'Dólar neozelandés' },
+  { symbol: '₣', nameZh: '瑞士法郎', nameEn: 'Swiss Franc', nameEs: 'Franco suizo' },
+  { symbol: '₩', nameZh: '韩元', nameEn: 'Korean Won', nameEs: 'Won surcoreano' },
+  { symbol: '₹', nameZh: '印度卢比', nameEn: 'Indian Rupee', nameEs: 'Rupia india' },
+  { symbol: '฿', nameZh: '泰铢', nameEn: 'Thai Baht', nameEs: 'Baht tailandés' },
+  { symbol: '₫', nameZh: '越南盾', nameEn: 'Vietnamese Dong', nameEs: 'Dong vietnamita' },
+  { symbol: '₱', nameZh: '菲律宾比索', nameEn: 'Philippine Peso', nameEs: 'Peso filipino' },
+  { symbol: 'Rp', nameZh: '印尼盾', nameEn: 'Indonesian Rupiah', nameEs: 'Rupia indonesia' },
+  { symbol: 'RM', nameZh: '马来西亚林吉特', nameEn: 'Malaysian Ringgit', nameEs: 'Ringgit malayo' },
+  { symbol: '₺', nameZh: '土耳其里拉', nameEn: 'Turkish Lira', nameEs: 'Lira turca' },
+  { symbol: '₪', nameZh: '以色列新谢克尔', nameEn: 'Israeli Shekel', nameEs: 'Séquel israelí' },
+  { symbol: '৳', nameZh: '孟加拉塔卡', nameEn: 'Bangladeshi Taka', nameEs: 'Taka bangladesí' },
+  { symbol: '₨', nameZh: '巴基斯坦卢比', nameEn: 'Pakistani Rupee', nameEs: 'Rupia pakistaní' },
+  { symbol: 'LKR', nameZh: '斯里兰卡卢比', nameEn: 'Sri Lankan Rupee', nameEs: 'Rupia de Sri Lanka' },
+  { symbol: '₮', nameZh: '蒙古图格里克', nameEn: 'Mongolian Tugrik', nameEs: 'Tugrik mongol' },
+  { symbol: '₽', nameZh: '卢布', nameEn: 'Russian Ruble', nameEs: 'Rublo ruso' },
+  { symbol: 'R$', nameZh: '巴西雷亚尔', nameEn: 'Brazilian Real', nameEs: 'Real brasileño' },
+  { symbol: 'kr', nameZh: '克朗', nameEn: 'Krona (SEK/NOK/DKK)', nameEs: 'Corona (SEK/NOK/DKK)' },
+  { symbol: 'zł', nameZh: '波兰兹罗提', nameEn: 'Polish Zloty', nameEs: 'Esloti polaco' },
+  { symbol: '₴', nameZh: '乌克兰格里夫纳', nameEn: 'Ukrainian Hryvnia', nameEs: 'Grivna ucraniana' },
+  { symbol: '₸', nameZh: '哈萨克坦戈', nameEn: 'Kazakhstani Tenge', nameEs: 'Tenge kazajo' },
+  { symbol: 'R', nameZh: '南非兰特', nameEn: 'South African Rand', nameEs: 'Rand sudafricano' },
+  { symbol: '₦', nameZh: '尼日利亚奈拉', nameEn: 'Nigerian Naira', nameEs: 'Naira nigeriano' },
+  { symbol: 'EGP', nameZh: '埃及镑', nameEn: 'Egyptian Pound', nameEs: 'Libra egipcia' },
+  { symbol: 'د.إ', nameZh: '阿联酋迪拉姆', nameEn: 'UAE Dirham', nameEs: 'Dírham de los EAU' },
+  { symbol: '﷼', nameZh: '沙特里亚尔', nameEn: 'Saudi Riyal', nameEs: 'Riyal saudí' },
+  { symbol: 'Q', nameZh: '危地马拉格查尔', nameEn: 'Guatemalan Quetzal', nameEs: 'Quetzal guatemalteco' }
 ]);
 
 const CYCLE_ALIASES = new Map([
@@ -244,14 +244,22 @@ export function renewExpireDateIfNeeded(expireDate, billingCycle, autoRenewal, n
   return { expire_date: nextDate, renewed };
 }
 
+const OPTION_FIELD_LANGUAGE_SUFFIX = Object.freeze({ zh: 'Zh', en: 'En', es: 'Es' });
+
+export function getLocalizedOptionField(option, field, lang) {
+  return option?.[`${field}${OPTION_FIELD_LANGUAGE_SUFFIX[lang] || 'En'}`] ?? option?.[`${field}En`] ?? '';
+}
+
+const FREE_PRICE_LABELS = Object.freeze({ zh: '免费', en: 'Free', es: 'Gratis' });
+
 export function formatBillingPrice(server, lang = 'zh') {
   const price = normalizePrice(server?.price);
   if (!price) return '';
-  if (isFreePrice(price)) return lang === 'zh' ? '免费' : 'Free';
+  if (isFreePrice(price)) return FREE_PRICE_LABELS[lang] || FREE_PRICE_LABELS.en;
 
   const currency = normalizeCurrency(server?.currency || detectCurrencySymbol(server?.price));
   const cycle = getBillingCycleOption(detectBillingCycle(server?.price) || server?.billing_cycle);
-  const cycleLabel = lang === 'zh' ? cycle.shortLabelZh : cycle.shortLabelEn;
+  const cycleLabel = getLocalizedOptionField(cycle, 'shortLabel', lang);
 
   return `${currency}${price}/${cycleLabel}`;
 }

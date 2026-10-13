@@ -70,7 +70,7 @@ CF-Server-Monitor 是一个部署在 Cloudflare Workers 上的服务器监控系
 | 多系统 Agent | 主流 Linux、Alpine Linux、OpenWrt、群晖 DSM、飞牛 fnOS、FreeBSD、macOS、Windows，支持 Docker 镜像部署；默认 Go 版本，保留 Shell/PowerShell 版本 |
 | 实时推送      | Durable Objects + WebSocket，Agent 上报后前端即时刷新                                      |
 | 告警通知      | 离线告警、恢复通知、到期提醒、资源负载告警                                                            |
-| 多语言       | 前端内置中文和英文切换；文档提供中文与英文入口                                                          |
+| 多语言       | 前端内置中文、英文和西班牙语（拉美）切换；通知消息支持中文、英文和西班牙语；文档提供中文与英文入口              |
 | 多站点       | 支持 GitHub Pages 静态前台和多个 Worker API 聚合展示                                          |
 | 小组件       | 提供 iOS Scriptable 小组件脚本，适合移动端快速查看                                                |
 | 安全控制      | API Secret、管理员密码、JWT、Turnstile、CORS、CSP 白名单                                      |
@@ -301,6 +301,8 @@ npm run build:github-page
 ## 通知与告警
 
 在管理后台 -> 全局设置 -> 通知 中配置。通知分为“内置渠道”、“SMTP 邮件”和“自定义 Webhook”三种渠道；选择自定义 Webhook 后，后端只会发送 Webhook，不会再调用内置渠道。
+
+“通知语言”决定告警消息（事件名称和消息内容）使用中文、英文还是西班牙语，默认中文。自定义模板和 Webhook 内容中的固定文字不会被翻译。
 
 ### 内置渠道
 

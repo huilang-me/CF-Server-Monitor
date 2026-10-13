@@ -174,7 +174,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { getFlagRegionCode, formatBytes } from '../../../utils/api'
 import { getPublicAssetUrl } from '../../../utils/config'
 import { currentLang } from '../../../utils/i18n'
-import { detectBillingCycle, detectCurrencySymbol, getBillingCycleOption, isEnabledFlag, isFreePrice, normalizeCurrency, normalizePrice } from '../../../utils/server.js'
+import { detectBillingCycle, detectCurrencySymbol, getBillingCycleOption, getLocalizedOptionField, isEnabledFlag, isFreePrice, normalizeCurrency, normalizePrice } from '../../../utils/server.js'
 import OsIcon from '../../../components/OsIcon.vue'
 import HelpTooltip from '../../../components/HelpTooltip.vue'
 
@@ -457,7 +457,7 @@ const formatServerPrice = (server) => {
   if (isFreePrice(price)) return props.trans.free
   const currency = normalizeCurrency(server.currency || detectCurrencySymbol(server.price))
   const option = getBillingCycleOption(detectBillingCycle(server.price) || server.billing_cycle)
-  const cycleLabel = currentLang.value === 'zh' ? option.shortLabelZh : option.shortLabelEn
+  const cycleLabel = getLocalizedOptionField(option, 'shortLabel', currentLang.value)
   return `${currency}${trimDisplayPrice(price)}/${cycleLabel}`
 }
 const isServerAutoRenewal = (server) => isEnabledFlag(server.auto_renewal)

@@ -32,6 +32,7 @@ import {
   RESOURCE_ALERT_EVALUATE_SERVER_BATCH_SIZE,
   RESOURCE_ALERT_NOTIFICATION_SOFT_LIMIT
 } from '../utils/config.js';
+import { getNotificationMessages } from './notificationMessages.js';
 
 const RESOURCE_ALERT_STATE_ACTIVE = 'active';
 const RESOURCE_ALERT_STATE_RECOVERED = 'recovered';
@@ -68,14 +69,14 @@ function getZonedDateParts(timestamp = Date.now(), timezone = 'UTC') {
 
 function formatNotificationTime(timestamp = Date.now(), settings = {}) {
   const parts = getZonedDateParts(timestamp, settings?.notification_timezone);
-  if (!parts) return '无效时间';
+  if (!parts) return getNotificationMessages(settings).invalidTime;
   const pad = value => String(value).padStart(2, '0');
   return `${Number(parts.year)}/${Number(parts.month)}/${Number(parts.day)} ` +
     `${pad(parts.hour)}:${pad(parts.minute)}:${pad(parts.second)}`;
 }
 
 function formatLastReportTime(timestamp, settings = {}) {
-  if (!timestamp) return '无上报记录';
+  if (!timestamp) return getNotificationMessages(settings).noReport;
 
   return formatNotificationTime(timestamp, settings);
 }
@@ -122,32 +123,12 @@ function formatPercent(value) {
   return `${number.toFixed(number >= 10 ? 1 : 2)}%`;
 }
 
-function formatResourceMetric(metric) {
+function getResourceMetricLabel(metric, messages) {
   const metricLabels = {
     cpu: 'CPU',
     ram: 'RAM',
     disk: 'DISK',
-    netIn: '下行网速',
-    netOut: '上行网速',
-    netTotal: '总网速'
-  };
-  const label = metricLabels[metric.metric] || metric.metric;
-  const valueLabel = metric.mode === 'average' ? '平均' : '当前';
-  const value = metric.triggerValue ?? metric.current;
-  if (metric.metric === 'cpu' || metric.metric === 'ram' || metric.metric === 'disk') {
-    return `${label} ${valueLabel} ${formatPercent(value)} > ${formatPercent(metric.threshold)}`;
-  }
-  return `${label} ${valueLabel} ${formatMegabitsPerSecond(value)} > ${formatMegabitsPerSecond(metric.threshold)}`;
-}
-
-function getResourceMetricLabel(metric) {
-  const metricLabels = {
-    cpu: 'CPU',
-    ram: 'RAM',
-    disk: 'DISK',
-    netIn: '下行网速',
-    netOut: '上行网速',
-    netTotal: '总网速'
+    ...messages.metrics
   };
   return metricLabels[metric?.metric] || metric?.metric || '';
 }
@@ -157,16 +138,6 @@ function formatResourceMetricValue(metric, value) {
     return formatPercent(value);
   }
   return formatMegabitsPerSecond(value);
-}
-
-function formatRecoveredResourceMetric(metric) {
-  if (!metric || typeof metric !== 'object') return '';
-  const label = getResourceMetricLabel(metric);
-  const value = metric.current;
-  const valueText = formatResourceMetricValue(metric, value);
-  const thresholdText = formatResourceMetricValue(metric, metric.threshold);
-
-  return `${label} 当前 ${valueText} < ${thresholdText}`;
 }
 
 function parseResourceAlertState(row) {
@@ -258,10 +229,6 @@ function getResourceAlertRuleStateKey(rule, serverId) {
   return `${rule.id}:${serverId}`;
 }
 
-function getResourceAlertRuleName(rule) {
-  return String(rule?.name || '资源负载告警').trim() || '资源负载告警';
-}
-
 function getResourceAlertRuleServerIds(rule, servers) {
   const allServerIds = servers.map(server => String(server.id)).filter(Boolean);
   if (!Array.isArray(rule.servers) || rule.servers.length === 0) {
@@ -280,13 +247,13 @@ function getResourceAlertRuleServerIds(rule, servers) {
   return ids;
 }
 
-function formatConciseResourceMetric(metric, valueKey = 'triggerValue') {
-  const label = getResourceMetricLabel(metric);
+function formatConciseResourceMetric(metric, valueKey, messages) {
+  const label = getResourceMetricLabel(metric, messages);
   const value = metric?.[valueKey] ?? metric?.current;
   return `${label} ${formatResourceMetricValue(metric, value)}`;
 }
 
-function buildGroupedResourceAlertEntries(nodes, valueKey = 'triggerValue') {
+function buildGroupedResourceAlertEntries(nodes, valueKey, messages) {
   const groups = new Map();
 
   for (const item of Array.isArray(nodes) ? nodes : []) {
@@ -303,7 +270,7 @@ function buildGroupedResourceAlertEntries(nodes, valueKey = 'triggerValue') {
     }
 
     for (const metric of sourceMetrics) {
-      const text = formatConciseResourceMetric(metric, valueKey);
+      const text = formatConciseResourceMetric(metric, valueKey, messages);
       if (!text || group.seen.has(text)) continue;
       group.seen.add(text);
       group.metrics.push(text);
@@ -355,21 +322,22 @@ function appendResourceAlertNotificationChunks(payloads, entries, options) {
   flush();
 }
 
-export function buildResourceAlertNotificationPayloads(alertNodes, recoveredNodes) {
+export function buildResourceAlertNotificationPayloads(alertNodes, recoveredNodes, settings = {}) {
+  const messages = getNotificationMessages(settings);
   const payloads = [];
   appendResourceAlertNotificationChunks(
     payloads,
-    buildGroupedResourceAlertEntries(alertNodes, 'triggerValue'),
+    buildGroupedResourceAlertEntries(alertNodes, 'triggerValue', messages),
     {
-      event: '资源负载告警',
+      event: messages.events.resourceAlert,
       emoji: '❌'
     }
   );
   appendResourceAlertNotificationChunks(
     payloads,
-    buildGroupedResourceAlertEntries(recoveredNodes, 'current'),
+    buildGroupedResourceAlertEntries(recoveredNodes, 'current', messages),
     {
-      event: '资源负载恢复',
+      event: messages.events.resourceRecovered,
       emoji: '✅'
     }
   );
@@ -471,9 +439,9 @@ function stripMarkdown(value) {
     .trim();
 }
 
-function inferNotificationEvent(msg) {
+function inferNotificationEvent(msg, fallback) {
   const firstLine = String(msg || '').split('\n').find(line => line.trim());
-  return stripMarkdown(firstLine || '通知') || '通知';
+  return stripMarkdown(firstLine || fallback) || fallback;
 }
 
 function escapeJsonStringFragment(value) {
@@ -513,7 +481,7 @@ function buildNotificationContext(settings, msg, context = {}) {
   const count = Number.isFinite(Number(context.count)) && Number(context.count) > 0
     ? Number(context.count)
     : clients.length;
-  const event = context.event || inferNotificationEvent(msg);
+  const event = context.event || inferNotificationEvent(msg, getNotificationMessages(settings).events.notification);
   return {
     title: '💌 Cloudflare Server Monitor',
     event,
@@ -705,9 +673,16 @@ export async function evaluateTrafficAlert(env, server, metrics, hooks = {}) {
 
     // 先发后写
     const serverName = server.name || server.id;
-    const msg = `${serverName}  本月已用 ${(used / GB).toFixed(1)} GB / 限额 ${limit} GB（${percent.toFixed(1)}% ≥ ${effectivePct}%）`;
+    const messages = getNotificationMessages(settings);
+    const usage = messages.trafficUsed({
+      usedGb: (used / GB).toFixed(1),
+      limitGb: limit,
+      percent: percent.toFixed(1),
+      threshold: effectivePct
+    });
+    const msg = `${serverName}  ${usage}`;
     const err = await sendNotification(settings, msg, {
-      event: '月流量告警',
+      event: messages.events.trafficAlert,
       emoji: '📈',
       clients: [serverName],
       count: 1,
@@ -816,7 +791,7 @@ async function sendSmtpNotification(settings, context, formattedMsg) {
   try {
     // 动态导入：cloudflare-smtp 依赖 cloudflare:sockets，仅在运行时（Workers）加载
     const { sendMail } = await import('cloudflare-smtp');
-    const subject = `${context.emoji || ''} ${context.event || '通知'}`.trim();
+    const subject = `${context.emoji || ''} ${context.event || getNotificationMessages(settings).events.notification}`.trim();
     const text = String(formattedMsg || '').replace(/\*/g, '');
     await withSmtpRetry(() => sendMail(
       {
@@ -1082,13 +1057,14 @@ export async function checkOfflineNodes(db) {
       ).bind(JSON.stringify(alertState)).run();
     }
 
+    const messages = getNotificationMessages(siteSettings);
     if (offlineNodes.length > 0) {
       const nodeList = offlineNodes
-        .map(n => `${n.name}  最后上报: ${formatLastReportTime(n.lastReportTime, siteSettings)}`)
+        .map(n => `${n.name}  ${messages.lastReport(formatLastReportTime(n.lastReportTime, siteSettings))}`)
         .join('\n');
       const msg = nodeList;
       await sendNotification(siteSettings, msg, {
-        event: '节点离线告警',
+        event: messages.events.offline,
         emoji: '❌',
         clients: offlineNodes.map(n => n.name),
         count: offlineNodes.length,
@@ -1100,7 +1076,7 @@ export async function checkOfflineNodes(db) {
       const nodeList = recoveredNodes.map(n => n.name).join('\n');
       const msg = nodeList;
       await sendNotification(siteSettings, msg, {
-        event: '节点恢复通知',
+        event: messages.events.recovered,
         emoji: '✅',
         clients: recoveredNodes.map(n => n.name),
         count: recoveredNodes.length,
@@ -1282,7 +1258,7 @@ export async function checkResourceAlerts(env) {
       await saveResourceAlertState(db, configSignature, alertState, hadStoredState);
     }
 
-    const notificationPayloads = buildResourceAlertNotificationPayloads(alertNodes, recoveredNodes);
+    const notificationPayloads = buildResourceAlertNotificationPayloads(alertNodes, recoveredNodes, siteSettings);
     for (const payload of notificationPayloads) {
       const notificationError = await sendNotification(siteSettings, payload.msg, payload.context);
       if (notificationError) {
@@ -1343,16 +1319,17 @@ export async function checkExpiringServers(db, options = {}) {
       }
     }
 
+    const messages = getNotificationMessages(siteSettings);
     if (renewedServers.length > 0) {
       clearServersListCache();
 
       // 续费成功提醒：与「到期提醒」开关解耦，只要配置了通知渠道就发送
       if (hasNotificationTarget(siteSettings)) {
-        const renewalList = renewedServers.map(s => `${s.name}  新到期 ${s.expire_date}`).join('\n');
+        const renewalList = renewedServers.map(s => `${s.name}  ${messages.renewedUntil(s.expire_date)}`).join('\n');
         debug(`[Cron] 发送自动续费成功通知: ${renewalList}`);
         try {
           await sendNotification(siteSettings, renewalList, {
-            event: '服务器自动续费成功',
+            event: messages.events.renewed,
             emoji: '✅',
             clients: renewedServers.map(s => s.name),
             count: renewedServers.length,
@@ -1365,12 +1342,12 @@ export async function checkExpiringServers(db, options = {}) {
     }
 
     if (expiringServers.length > 0) {
-      const serverList = expiringServers.map(s => `${s.name}  剩余${s.days}天  ${s.expire_date}`).join('\n');
+      const serverList = expiringServers.map(s => `${s.name}  ${messages.daysLeft(s.days)}  ${s.expire_date}`).join('\n');
       const msg = serverList;
       debug(`[Cron] 发送到期提醒通知: ${msg}`);
       try {
         await sendNotification(siteSettings, msg, {
-          event: '服务器到期提醒',
+          event: messages.events.expiring,
           emoji: '⚠️',
           clients: expiringServers.map(s => s.name),
           count: expiringServers.length,

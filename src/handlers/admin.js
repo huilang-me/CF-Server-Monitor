@@ -1,13 +1,14 @@
 import { buildAuthCookie, buildClearAuthCookie, checkAuth, simpleAuthResponse, validateCredentials, generateToken } from '../middleware/auth.js';
 import { getLatestMetricsForAllServers } from '../database/schema.js';
 import { getAllServers, clearServersListCache } from '../utils/cache.js';
-import { clearAppearanceSettingsCache, isValidThemeOptions, isWssReportConfigured, isWssReportEnabled, normalizeBooleanSetting, normalizeDefaultLanguage, normalizeDisplayMode, normalizeExpireNotificationTime, normalizeExpireReminder, normalizeFrontendWsTimeoutMinutes, normalizeLongHistoryPoints, normalizeNotificationTemplate, normalizeNotificationTimezone, normalizeNotificationWebhookBody, normalizeNotificationWebhookFormat, normalizeNotificationWebhookHeaders, normalizeNotificationWebhookMethod, normalizePreferredTheme, normalizeResourceAlertRules, normalizeTgNotify, normalizeWssReportHours, saveSiteOptions, saveThemeOptions, SITE_FIELDS, APPEARANCE_FIELDS } from '../utils/settings.js';
+import { clearAppearanceSettingsCache, isValidThemeOptions, isWssReportConfigured, isWssReportEnabled, normalizeBooleanSetting, normalizeDefaultLanguage, normalizeDisplayMode, normalizeExpireNotificationTime, normalizeExpireReminder, normalizeFrontendWsTimeoutMinutes, normalizeLongHistoryPoints, normalizeNotificationLanguage, normalizeNotificationTemplate, normalizeNotificationTimezone, normalizeNotificationWebhookBody, normalizeNotificationWebhookFormat, normalizeNotificationWebhookHeaders, normalizeNotificationWebhookMethod, normalizePreferredTheme, normalizeResourceAlertRules, normalizeTgNotify, normalizeWssReportHours, saveSiteOptions, saveThemeOptions, SITE_FIELDS, APPEARANCE_FIELDS } from '../utils/settings.js';
 import { mergeMetricsIntoServer } from '../utils/metrics.js';
 import { normalizePctOrNull } from '../utils/traffic.js';
 import { verifyTurnstileToken, hashPassword } from '../utils/common.js';
 import { AppError, createSuccessResponse, createBadRequestResponse, createUnauthorizedResponse, createErrorResponse } from '../utils/errors.js';
 import { addServerColumns } from '../database/updateDatabase.js';
 import { clearResourceAlertState, isSmtpNotificationTarget, sendNotification } from '../services/notification.js';
+import { getNotificationMessages } from '../services/notificationMessages.js';
 import { getNextServerHistoryPartitionId, HISTORY_MAX_PARTITION_ID } from '../database/indexOptimization.js';
 import { isValidTrafficCorrection, normalizeConnectionMode, normalizePingMode, normalizeWssReportInterval, validateAgentConfigInput, validatePingNode, validateNetworkInterfaces } from '../utils/agentConfig.js';
 import { scheduleAgentConfigChanged, scheduleAgentReportModeChanged } from '../utils/agentConfigNotify.js';
@@ -687,6 +688,7 @@ async function handleSendTestNotificationAction({ data }) {
     notification_webhook_body,
     notification_template,
     notification_timezone,
+    notification_language,
     expire_notification_time
   } = data;
   const webhookEnabled = normalizeBooleanSetting(notification_webhook_enabled) === 'true';
@@ -700,7 +702,8 @@ async function handleSendTestNotificationAction({ data }) {
     return createBadRequestResponse('tgBotTokenRequired');
   }
   try {
-    const testMsg = '这是一条来自 CF Server Monitor 的测试消息。';
+    const notificationLanguage = normalizeNotificationLanguage(notification_language);
+    const messages = getNotificationMessages({ notification_language: notificationLanguage });
     const result = await sendNotification({
       tg_bot_token,
       tg_chat_id: tg_chat_id || '',
@@ -712,13 +715,14 @@ async function handleSendTestNotificationAction({ data }) {
       notification_webhook_body: normalizeNotificationWebhookBody(notification_webhook_body),
       notification_template: normalizeNotificationTemplate(notification_template),
       notification_timezone: normalizeNotificationTimezone(notification_timezone),
+      notification_language: notificationLanguage,
       expire_notification_time: normalizeExpireNotificationTime(expire_notification_time)
-    }, testMsg, {
-      event: '测试通知',
+    }, messages.testMessage, {
+      event: messages.events.test,
       emoji: '✅',
       clients: ['CF Server Monitor'],
       count: 1,
-      message: '这是一条来自 CF Server Monitor 的测试消息。'
+      message: messages.testMessage
     });
     if(result) {
       console.warn('Test notification failed:', result);
@@ -888,6 +892,8 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
             siteOptions[field] = normalizeBooleanSetting(settings[field]);
           } else if (field === 'notification_timezone') {
             siteOptions[field] = normalizeNotificationTimezone(settings[field]);
+          } else if (field === 'notification_language') {
+            siteOptions[field] = normalizeNotificationLanguage(settings[field]);
           } else if (field === 'expire_notification_time') {
             siteOptions[field] = normalizeExpireNotificationTime(settings[field]);
           } else if (field === 'notification_webhook_enabled') {

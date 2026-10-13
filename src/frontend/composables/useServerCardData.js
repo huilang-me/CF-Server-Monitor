@@ -298,7 +298,7 @@ export function useServerCardData(props) {
 
   const formatPingValue = (value) => isPingValid(value) ? `${Math.round(Number(value))}ms` : trans.value.timeout
   const formatLossValue = (value) => formatPercentValue(normalizeProbeMetricValue(value))
-  const noSampleText = computed(() => currentLang.value === 'zh' ? '无样本' : 'No samples')
+  const noSampleText = computed(() => trans.value.noSamples)
 
   const formatLatencyTimeText = (timestamp) => {
     const startTs = normalizeLatencyTimestamp(timestamp, 0)

@@ -819,7 +819,12 @@ const normalizePreferredThemeSetting = (value) => {
 
 const normalizeDefaultLanguageSetting = (value) => {
   const language = String(value || '').trim().toLowerCase()
-  return ['zh', 'en', 'auto'].includes(language) ? language : 'auto'
+  return ['zh', 'en', 'es', 'auto'].includes(language) ? language : 'auto'
+}
+
+const normalizeNotificationLanguageSetting = (value) => {
+  const language = String(value || '').trim().toLowerCase()
+  return ['zh', 'en', 'es'].includes(language) ? language : 'zh'
 }
 
 const formatThemeOptions = (value) => {
@@ -944,6 +949,7 @@ const settings = ref({
   tg_bot_token: '',
   tg_chat_id: '',
   notification_timezone: 'UTC',
+  notification_language: 'zh',
   expire_notification_time: '12',
   notification_webhook_enabled: false,
   notification_webhook_url: '',
@@ -1385,6 +1391,7 @@ const loadSettings = async () => {
         tg_bot_token: settingsData.tg_bot_token || '',
         tg_chat_id: settingsData.tg_chat_id || '',
         notification_timezone: normalizeNotificationTimezoneSetting(settingsData.notification_timezone),
+        notification_language: normalizeNotificationLanguageSetting(settingsData.notification_language),
         expire_notification_time: normalizeExpireNotificationTimeSetting(settingsData.expire_notification_time),
         notification_webhook_enabled: settingsData.notification_webhook_enabled === 'true' || settingsData.notification_webhook_enabled === true,
         notification_webhook_url: settingsData.notification_webhook_url || '',
@@ -1582,6 +1589,7 @@ const saveSettings = async () => {
       tg_bot_token: settings.value.tg_bot_token,
       tg_chat_id: settings.value.tg_chat_id,
       notification_timezone: normalizeNotificationTimezoneSetting(settings.value.notification_timezone),
+      notification_language: normalizeNotificationLanguageSetting(settings.value.notification_language),
       expire_notification_time: normalizeExpireNotificationTimeSetting(settings.value.expire_notification_time),
       notification_webhook_enabled: settings.value.notification_webhook_enabled ? 'true' : 'false',
       notification_webhook_url: settings.value.notification_webhook_url,
@@ -2473,6 +2481,7 @@ const sendTestNotification = async () => {
       notification_webhook_body: settings.value.notification_webhook_body,
       notification_template: settings.value.notification_template,
       notification_timezone: normalizeNotificationTimezoneSetting(settings.value.notification_timezone),
+      notification_language: normalizeNotificationLanguageSetting(settings.value.notification_language),
       expire_notification_time: normalizeExpireNotificationTimeSetting(settings.value.expire_notification_time)
     })
     if (!result.error) {

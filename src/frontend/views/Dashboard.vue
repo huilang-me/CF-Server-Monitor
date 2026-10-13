@@ -152,7 +152,7 @@
 
     <div id="view-card" class="view-panel" :class="{ active: isCardView, 'high-density': filteredServers.length > 12 }">
       <div v-if="groupedServers.length === 0" class="empty-state">
-        [!] {{ trans.noServer }}，请在 <a href="/admin#/admin" class="admin-link-color">{{ trans.backToAdmin }}</a> 中添加
+        [!] {{ trans.noServer }} <a href="/admin#/admin" class="admin-link-color">{{ trans.backToAdmin }}</a>{{ trans.noServerSuffix }}
       </div>
       <div v-else>
         <div v-for="group in groupedServers" :key="group.name" class="group-section">
@@ -542,7 +542,7 @@ const filterOptionEntries = computed(() => Object.entries(filterOptions.value).m
   flagCode: code !== 'all' && code !== 'unknown' ? getFlagRegionCode(code) : ''
 })))
 
-const filterMoreLabel = computed(() => currentLang.value === 'zh' ? '更多' : 'MORE')
+const filterMoreLabel = computed(() => trans.value.filterMore)
 const visibleFilterOptions = computed(() => filterOptionEntries.value.slice(0, filterVisibleCount.value))
 const overflowFilterOptions = computed(() => filterOptionEntries.value.slice(filterVisibleCount.value))
 const isOverflowFilterActive = computed(() => overflowFilterOptions.value.some(item => item.code === currentFilter.value))

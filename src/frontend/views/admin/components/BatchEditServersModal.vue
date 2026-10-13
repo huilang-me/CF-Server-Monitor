@@ -171,7 +171,7 @@
 import { computed } from 'vue'
 import BatchEditField from './BatchEditField.vue'
 import { currentLang } from '../../../utils/i18n.js'
-import { BILLING_CYCLES, CURRENCY_OPTIONS } from '../../../utils/server.js'
+import { BILLING_CYCLES, CURRENCY_OPTIONS, getLocalizedOptionField } from '../../../utils/server.js'
 
 const form = defineModel('form', { type: Object, required: true })
 const enabled = defineModel('enabled', { type: Object, required: true })
@@ -200,10 +200,8 @@ const currencySelectOptions = computed(() => {
   ]
 })
 
-const cycleLabel = (item) => currentLang.value === 'zh' ? item.labelZh : item.labelEn
-const currencyLabel = (item) => currentLang.value === 'zh'
-  ? `${item.symbol} ${item.nameZh}`
-  : `${item.symbol} ${item.nameEn}`
+const cycleLabel = (item) => getLocalizedOptionField(item, 'label', currentLang.value)
+const currencyLabel = (item) => `${item.symbol} ${getLocalizedOptionField(item, 'name', currentLang.value)}`
 
 const hasEnabledFields = computed(() => Object.values(enabled.value).some(Boolean))
 

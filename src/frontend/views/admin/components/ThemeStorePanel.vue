@@ -215,14 +215,8 @@ const parseThemeOptionsJson = () => {
 
 const isMikusThemeActive = computed(() => isMikusThemeEnabled(parseThemeOptionsJson()))
 const currentThemeLabel = computed(() => isMikusThemeActive.value ? 'Mikus' : (props.currentThemeUrl || props.trans.builtinTheme))
-const mikusThemeTags = computed(() => currentLang.value === 'zh'
-  ? ['内置', 'Mikus', '樱花']
-  : ['Built-in', 'Mikus', 'Sakura']
-)
-const mikusThemeDescription = computed(() => currentLang.value === 'zh'
-  ? '内置 Mikus 模式，启用后切回默认主题，并开启 Mikus 配色、加载页与樱花动效。'
-  : 'Built-in Mikus mode. Switches back to the default theme and enables Mikus colors, loading screens, and sakura effects.'
-)
+const mikusThemeTags = computed(() => [props.trans.mikusThemeTagBuiltin, 'Mikus', props.trans.mikusThemeTagSakura])
+const mikusThemeDescription = computed(() => props.trans.mikusThemeDescription)
 
 // Derive the appearance payload from the shared APPEARANCE_FIELDS constant so it
 // always stays in sync with the backend. The theme store re-sends appearance on
@@ -718,7 +712,7 @@ const getThemeDescription = (theme) => {
 
   const keys = currentLang.value === 'zh'
     ? ['zh-CN', 'en']
-    : ['en', 'zh-CN']
+    : [currentLang.value, 'en', 'zh-CN']
 
   for (const key of keys) {
     if (typeof description[key] === 'string' && description[key].trim()) {

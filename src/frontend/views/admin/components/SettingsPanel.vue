@@ -36,6 +36,7 @@
               <option value="auto">{{ trans.languageAuto }}</option>
               <option value="zh">{{ trans.languageChinese }}</option>
               <option value="en">{{ trans.languageEnglish }}</option>
+              <option value="es">{{ trans.languageSpanish }}</option>
             </select>
           </div>
         </div>
@@ -453,6 +454,18 @@
 
           <div class="form-group flex-1">
             <label class="form-label">
+              {{ trans.notificationLanguage }}
+              <HelpTooltip :text="trans.notificationLanguageTip" />
+            </label>
+            <select v-model="settings.notification_language" class="form-select">
+              <option value="zh">{{ trans.languageChinese }}</option>
+              <option value="en">{{ trans.languageEnglish }}</option>
+              <option value="es">{{ trans.languageSpanish }}</option>
+            </select>
+          </div>
+
+          <div class="form-group flex-1">
+            <label class="form-label">
               {{ trans.expireNotificationTime || 'Expiration Notification Time' }}
               <HelpTooltip :text="trans.expireNotificationTimeTip || 'Check expiration and send reminders daily at this hour in the notification timezone. Use 0-23.'" />
             </label>
@@ -791,7 +804,6 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import HelpTooltip from '../../../components/HelpTooltip.vue'
 import { FRONTEND_WS_TIMEOUT_MINUTES_MAX, HISTORY } from '../../../utils/constants.js'
-import { currentLang } from '../../../utils/i18n.js'
 import { PING_NODE_FIELDS, validatePingNode } from '../../../utils/pingNode.js'
 
 const props = defineProps({
@@ -1206,12 +1218,7 @@ const ensureResourceAlertRules = () => {
 const resourceAlertRules = computed(() => ensureResourceAlertRules())
 const resourceAlertExpanded = ref(false)
 const resourceAlertRuleNameInputs = new Map()
-const resourceAlertToggleText = computed(() => {
-  const isZh = currentLang.value === 'zh'
-  return resourceAlertExpanded.value
-    ? (isZh ? '收起' : 'Collapse')
-    : (isZh ? '展开' : 'Expand')
-})
+const resourceAlertToggleText = computed(() => resourceAlertExpanded.value ? props.trans.collapse : props.trans.expand)
 
 const toggleResourceAlertExpanded = () => {
   resourceAlertExpanded.value = !resourceAlertExpanded.value
