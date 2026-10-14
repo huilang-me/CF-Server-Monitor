@@ -670,6 +670,15 @@ export async function getLatestMetrics(db, serverId, server = null) {
   }
 }
 
+// 每批合并的服务器数量：通过 db.batch() 一次发送多条语句，减少 D1 往返次数
+const LATEST_QUERY_CHUNK_SIZE = 30;
+
+/**
+ * 获取所有服务器的最新完整指标行（供仪表盘/管理端合并展示）。
+ * 命中"完整指标"缓存时直接返回；未命中时每台服务器在主键 rowid 范围内取最新一行，
+ * 每批最多 LATEST_QUERY_CHUNK_SIZE 台，通过 db.batch() 合并成一次 D1 往返，
+ * 避免逐台 N 次查询与 N 次往返。单台 history 范围异常只跳过该台，与 getLatestMetrics 行为一致。
+ */
 export async function getLatestMetricsForAllServers(db) {
   const now = Date.now();
   const cacheInfo = getLatestMetricsCache();
@@ -677,21 +686,130 @@ export async function getLatestMetricsForAllServers(db) {
     return cacheInfo.cache;
   }
 
+  const result = new Map();
   try {
     const servers = await getAllServers(db);
+    if (servers.length === 0) {
+      setLatestMetricsCache(result);
+      return result;
+    }
 
-    const entries = await Promise.all(
-      servers.map(s =>
-        getLatestMetrics(db, s.id, s).then(metrics => [s.id, metrics])
-      )
-    );
+    // 先逐台计算 history rowid 范围：单台异常只跳过该台（与 getLatestMetrics 逐台失败一致）
+    const items = [];
+    for (const server of servers) {
+      try {
+        // 传入 server 对象时 getServerHistoryInfo 不会触发额外查询
+        const historyInfo = await getServerHistoryInfo(db, server.id, server);
+        if (!historyInfo.partitionId) continue;
+        const rangeStart = historyInfo.startTimestamp > 0 ? historyInfo.startTimestamp : null;
+        const { startId, endId } = getHistoryIdRange(historyInfo.partitionId, rangeStart);
+        items.push({ server, startId, endId });
+      } catch (err) {
+        debug(`Server ${server.id} history 范围计算失败，跳过: ${err.message}`);
+      }
+    }
 
-    const result = new Map(entries.filter(([, m]) => m !== null));
+    for (let offset = 0; offset < items.length; offset += LATEST_QUERY_CHUNK_SIZE) {
+      const chunk = items.slice(offset, offset + LATEST_QUERY_CHUNK_SIZE);
+      let batchResults;
+      try {
+        batchResults = await db.batch(chunk.map(item =>
+          db.prepare(
+            'SELECT * FROM metrics_history WHERE id >= ? AND id <= ? ORDER BY id DESC LIMIT 1'
+          ).bind(item.startId, item.endId)
+        ));
+      } catch (batchError) {
+        // 整批失败时回退逐台查询，保持"单台异常不影响其它台"的既有语义
+        debug(`批量获取最新指标失败，回退逐台查询: ${batchError.message}`);
+        for (const item of chunk) {
+          const metrics = await getLatestMetrics(db, item.server.id, item.server);
+          if (metrics) result.set(item.server.id, metrics);
+        }
+        continue;
+      }
+      for (let index = 0; index < chunk.length; index++) {
+        const rows = batchResults[index] && batchResults[index].results;
+        if (rows && rows.length > 0) {
+          result.set(chunk[index].server.id, normalizeProbeMetricRow(rows[0]));
+        }
+      }
+    }
+
     setLatestMetricsCache(result);
     return result;
   } catch (e) {
     console.error('获取所有服务器最新指标数据失败:', e);
-    const cacheInfo = getLatestMetricsCache();
-    return cacheInfo.cache || new Map();
+    const fallback = getLatestMetricsCache();
+    return fallback.cache || new Map();
+  }
+}
+
+// 从"完整指标"缓存中抽取每台服务器的最新上报时间戳（完整行是轻量结果的超集）
+function extractTimestampsFromMetricsCache(cache) {
+  const map = new Map();
+  if (!cache) return map;
+  for (const [id, metrics] of cache) {
+    if (metrics) map.set(id, metrics.timestamp);
+  }
+  return map;
+}
+
+/**
+ * 获取所有服务器的最新上报时间戳（只查 timestamp 一列）。
+ * 供离线检测等只需时间戳的场景使用，避免拉取整行 52 列带来的序列化 CPU 开销。
+ * 命中"完整指标"缓存时直接复用；未命中才轻量查询，且不写回共享缓存，避免用残缺行污染它。
+ * 每台服务器用 rowid 范围在主键索引上定位最新一行，每批最多 LATEST_QUERY_CHUNK_SIZE 台，
+ * 通过 db.batch() 合并成一次 D1 往返（注意：D1 的 compound SELECT 项数上限极低，不能用 UNION ALL）。
+ *
+ * @returns {Promise<Map|null>} 成功返回 Map<serverId, timestamp>（可能为空 Map）；
+ *   查询失败且无可回退缓存时返回 null，调用方应跳过本次检测，避免误判为全部离线。
+ */
+export async function getLatestTimestampsForAllServers(db) {
+  const now = Date.now();
+  const cacheInfo = getLatestMetricsCache();
+  if (cacheInfo.cache && now - cacheInfo.time < cacheInfo.ttl) {
+    return extractTimestampsFromMetricsCache(cacheInfo.cache);
+  }
+
+  const collected = new Map();
+  try {
+    const servers = await getAllServers(db);
+    if (servers.length === 0) return collected;
+
+    const items = [];
+    for (const server of servers) {
+      try {
+        // 传入 server 对象时 getServerHistoryInfo 不会触发额外查询
+        const historyInfo = await getServerHistoryInfo(db, server.id, server);
+        if (!historyInfo.partitionId) continue; // 无效分区，跳过（与 getLatestMetrics 行为一致）
+        const rangeStart = historyInfo.startTimestamp > 0 ? historyInfo.startTimestamp : null;
+        const { startId, endId } = getHistoryIdRange(historyInfo.partitionId, rangeStart);
+        items.push({ serverId: server.id, startId, endId });
+      } catch (err) {
+        // 单台服务器 history 范围异常不影响其它服务器（与 getLatestMetrics 逐台失败一致）
+        debug(`Server ${server.id} history 范围计算失败，跳过: ${err.message}`);
+      }
+    }
+
+    for (let offset = 0; offset < items.length; offset += LATEST_QUERY_CHUNK_SIZE) {
+      const chunk = items.slice(offset, offset + LATEST_QUERY_CHUNK_SIZE);
+      const batchResults = await db.batch(chunk.map(item =>
+        db.prepare(
+          'SELECT timestamp FROM metrics_history WHERE id >= ? AND id <= ? ORDER BY id DESC LIMIT 1'
+        ).bind(item.startId, item.endId)
+      ));
+      for (let index = 0; index < chunk.length; index++) {
+        const rows = batchResults[index] && batchResults[index].results;
+        if (rows && rows.length > 0) {
+          collected.set(chunk[index].serverId, rows[0].timestamp);
+        }
+      }
+    }
+    return collected;
+  } catch (e) {
+    console.error('获取所有服务器最新时间戳失败:', e);
+    // 查询失败时回退到（可能已过期的）完整缓存；无缓存则返回 null 让调用方跳过本次检测，
+    // 避免把查询失败误判为全部服务器离线而误发告警
+    return cacheInfo.cache ? extractTimestampsFromMetricsCache(cacheInfo.cache) : null;
   }
 }

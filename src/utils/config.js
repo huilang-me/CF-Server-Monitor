@@ -1,5 +1,5 @@
 // 当前 Worker 版本：/api/config 返回给前端与主题，用于页脚和升级提示。
-export const CURRENT_VERSION = '2.8.6 Stable';
+export const CURRENT_VERSION = '2.8.7 Beta1';
 
 // 站点设置默认值与缓存策略。
 export const DEFAULT_SITE_TITLE = 'Cloudflare Server Monitor';

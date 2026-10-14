@@ -482,7 +482,7 @@ export default {
         await checkOfflineNodes(env.DB);
         debug('[Cron] 离线节点检测完成');
         debug('[Cron] 开始执行资源负载告警检测');
-        await checkResourceAlerts(env);
+        await checkResourceAlerts(env, { minute });
         debug('[Cron] 资源负载告警检测完成');
       }
     } else if (cron === '0 * * * *') {

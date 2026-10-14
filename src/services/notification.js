@@ -1,4 +1,4 @@
-import { getLatestMetricsForAllServers } from '../database/schema.js';
+import { getLatestTimestampsForAllServers } from '../database/schema.js';
 import { clearServersListCache, getAllServers } from '../utils/cache.js';
 import {
   DEFAULT_NOTIFICATION_TEMPLATE,
@@ -38,6 +38,9 @@ const RESOURCE_ALERT_STATE_ACTIVE = 'active';
 const RESOURCE_ALERT_STATE_RECOVERED = 'recovered';
 const RESOURCE_ALERT_STATE_KEY = 'resource_alert_state';
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+// 记录本 isolate 是否已确认资源告警状态为空，避免每分钟重复执行一次 DELETE
+let resourceAlertStateKnownEmpty = false;
 
 function getZonedDateParts(timestamp = Date.now(), timezone = 'UTC') {
   const date = new Date(timestamp);
@@ -168,6 +171,7 @@ export async function clearResourceAlertState(db) {
   const result = await db.prepare(
     `DELETE FROM settings WHERE key = ?`
   ).bind(RESOURCE_ALERT_STATE_KEY).run();
+  resourceAlertStateKnownEmpty = true;
   return getD1Changes(result) > 0;
 }
 
@@ -176,6 +180,7 @@ async function saveResourceAlertState(db, configSignature, alertState, hadStored
     await db.prepare(
       `INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`
     ).bind(RESOURCE_ALERT_STATE_KEY, JSON.stringify({ signature: configSignature, servers: alertState })).run();
+    resourceAlertStateKnownEmpty = false;
     return;
   }
 
@@ -1008,8 +1013,13 @@ export async function checkOfflineNodes(db) {
   try {
     const allServers = await getAllServers(db);
     
-    const latestMetricsMap = await getLatestMetricsForAllServers(db);
-    
+    const latestTimestampsMap = await getLatestTimestampsForAllServers(db);
+    if (!latestTimestampsMap) {
+      // 获取失败时跳过本次检测，避免把所有服务器误判为离线
+      debug('[Cron] 获取最新上报时间戳失败，跳过本次离线检测');
+      return;
+    }
+
     let alertState = {};
     const stateRes = await db.prepare(
       "SELECT value FROM settings WHERE key = 'alert_state'"
@@ -1031,18 +1041,18 @@ export async function checkOfflineNodes(db) {
     for (const s of allServers) {
       if (s.offline_notify_disabled === '1') continue;
 
-      const latestMetrics = latestMetricsMap.get(s.id);
-      
+      const hasLatestReport = latestTimestampsMap.has(s.id);
+      const lastReportTime = latestTimestampsMap.get(s.id);
+
       let isOffline = true;
-      if (latestMetrics) {
-        const diff = now - latestMetrics.timestamp;
-        isOffline = diff > offlineThreshold;
+      if (hasLatestReport) {
+        isOffline = now - lastReportTime > offlineThreshold;
       }
 
       if (isOffline && !alertState[s.id]) {
         offlineNodes.push({
           name: s.name,
-          lastReportTime: latestMetrics?.timestamp
+          lastReportTime
         });
         alertState[s.id] = true;
       } else if (!isOffline && alertState[s.id]) {
@@ -1088,17 +1098,22 @@ export async function checkOfflineNodes(db) {
   }
 }
 
-export async function checkResourceAlerts(env) {
+export async function checkResourceAlerts(env, options = {}) {
   if (!env?.DB || !env?.METRICS_BROADCASTER) return;
 
   const db = env.DB;
-  const siteSettings = await loadSiteSettings(db, { forceRefresh: true });
+  const minute = Number.isFinite(options?.minute) ? options.minute : new Date().getUTCMinutes();
+  // 每 2 分钟强制刷新一次设置，其余分钟复用缓存（TTL 120s），降低每分钟的 CPU 开销
+  const forceRefresh = minute % 2 === 0;
+  const siteSettings = await loadSiteSettings(db, { forceRefresh });
   if (!hasNotificationTarget(siteSettings)) return;
 
   const resourceConfig = getResourceAlertConfig(siteSettings);
 
   if (!resourceConfig.enabled || !resourceConfig.hasRules) {
-    await clearResourceAlertState(db);
+    if (!resourceAlertStateKnownEmpty) {
+      await clearResourceAlertState(db);
+    }
     return;
   }
 
