@@ -279,9 +279,9 @@ export async function handleServersAPI(request, env, sys) {
       show_expire: sys.show_expire === 'true',
       show_tf: sys.show_tf === 'true',
       show_three_net_details: sys.show_three_net_details === 'true',
-      custom_ct_name: sys.custom_ct_name || '电信',
-      custom_cu_name: sys.custom_cu_name || '联通',
-      custom_cm_name: sys.custom_cm_name || '移动',
+      custom_ct_name: sys.custom_ct_name || 'ISP 1',
+      custom_cu_name: sys.custom_cu_name || 'ISP 2',
+      custom_cm_name: sys.custom_cm_name || 'ISP 3',
       custom_bd_name: sys.custom_bd_name || 'BGP',
       display_mode: sys.display_mode || 'bar',
       latency_window: {

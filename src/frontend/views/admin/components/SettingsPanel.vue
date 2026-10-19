@@ -34,8 +34,9 @@
             <label class="form-label">{{ trans.defaultLanguage }}</label>
             <select v-model="settings.default_language" class="form-select">
               <option value="auto">{{ trans.languageAuto }}</option>
-              <option value="zh">{{ trans.languageChinese }}</option>
+              <option value="id">{{ trans.languageIndonesian }}</option>
               <option value="en">{{ trans.languageEnglish }}</option>
+              <option value="zh">{{ trans.languageChinese }}</option>
               <option value="es">{{ trans.languageSpanish }}</option>
             </select>
           </div>
@@ -458,8 +459,9 @@
               <HelpTooltip :text="trans.notificationLanguageTip" />
             </label>
             <select v-model="settings.notification_language" class="form-select">
-              <option value="zh">{{ trans.languageChinese }}</option>
+              <option value="id">{{ trans.languageIndonesian }}</option>
               <option value="en">{{ trans.languageEnglish }}</option>
+              <option value="zh">{{ trans.languageChinese }}</option>
               <option value="es">{{ trans.languageSpanish }}</option>
             </select>
           </div>

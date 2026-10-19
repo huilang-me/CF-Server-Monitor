@@ -10,6 +10,12 @@
       <div class="lang-toggle">
         <button 
           class="lang-btn" 
+          :class="{ active: currentLang === 'id' }"
+          @click="setLang('id')"
+          aria-label="Bahasa Indonesia"
+        >ID</button>
+        <button 
+          class="lang-btn" 
           :class="{ active: currentLang === 'en' }"
           @click="setLang('en')"
           aria-label="English"
@@ -73,7 +79,7 @@ defineProps({
 })
 
 const { currentTheme, setTheme } = useTheme()
-const currentLang = ref('en')
+const currentLang = ref('id')
 const route = useRoute()
 const isAdminPage = ref(route.path === '/admin')
 const adminHref = computed(() => hasConfiguredApiBase() ? '/#/admin' : '/admin#/admin')

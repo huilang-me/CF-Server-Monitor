@@ -20,6 +20,15 @@ test('resource alert payloads keep Chinese text when no language is configured',
   assert.equal(payload.msg, 'web-1  下行网速 40.0 Mbps');
 });
 
+test('resource alert payloads are rendered in Indonesian', () => {
+  const [alert, recovered] = buildResourceAlertNotificationPayloads(netInAlert, netInAlert, { notification_language: 'id' });
+  assert.equal(alert.context.event, 'Peringatan Beban Sumber Daya');
+  assert.equal(alert.context.emoji, '❌');
+  assert.equal(alert.msg, 'web-1  Kecepatan Download 40.0 Mbps');
+  assert.equal(recovered.context.event, 'Beban Sumber Daya Normal');
+  assert.equal(recovered.context.emoji, '✅');
+});
+
 test('resource alert payloads are rendered in Spanish', () => {
   const [alert, recovered] = buildResourceAlertNotificationPayloads(netInAlert, netInAlert, { notification_language: 'es' });
   assert.equal(alert.context.event, 'Alerta de carga de recursos');

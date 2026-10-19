@@ -17,7 +17,7 @@ export const LONG_HISTORY_POINT_OPTIONS = [60, 120, 180, 240];
 export const DEFAULT_LONG_HISTORY_POINTS = 120;
 export const FRONTEND_WS_TIMEOUT_MINUTES_MAX = 1440;
 export const DEFAULT_NOTIFICATION_TIMEZONE = 'UTC';
-export const NOTIFICATION_LANGUAGES = ['zh', 'en', 'es'];
+export const NOTIFICATION_LANGUAGES = ['id', 'en', 'zh', 'es'];
 export const DEFAULT_NOTIFICATION_LANGUAGE = 'zh';
 export const DEFAULT_EXPIRE_NOTIFICATION_TIME = '12';
 export const ALL_WSS_REPORT_HOURS = Object.freeze(Array.from({ length: 24 }, (_, hour) => hour));
@@ -71,7 +71,7 @@ const defaults = {
   csp_api: '',
   display_mode: 'ring',
   preferred_theme: 'auto',
-  default_language: 'auto',
+  default_language: 'id',
   theme_options: {},
   is_public: 'true',
   show_price: 'true',
@@ -110,9 +110,9 @@ const defaults = {
   node_2: '',
   node_3: '',
   node_4: '',
-  custom_ct_name: '电信',
-  custom_cu_name: '联通',
-  custom_cm_name: '移动',
+  custom_ct_name: 'ISP 1',
+  custom_cu_name: 'ISP 2',
+  custom_cm_name: 'ISP 3',
   custom_bd_name: 'BGP',
   node_1_name: 'Node 1',
   node_2_name: 'Node 2',
@@ -472,10 +472,10 @@ export function normalizePreferredTheme(value, fallback = 'auto') {
   return fallback === 'dark' || fallback === 'light' ? fallback : 'auto';
 }
 
-export function normalizeDefaultLanguage(value, fallback = 'auto') {
+export function normalizeDefaultLanguage(value, fallback = 'id') {
   const language = String(value || '').trim().toLowerCase();
-  if (language === 'zh' || language === 'en' || language === 'es' || language === 'auto') return language;
-  return fallback === 'zh' || fallback === 'en' || fallback === 'es' ? fallback : 'auto';
+  if (['id', 'en', 'zh', 'es', 'auto'].includes(language)) return language;
+  return ['id', 'en', 'zh', 'es'].includes(fallback) ? fallback : 'id';
 }
 
 export function normalizeNotificationLanguage(value) {

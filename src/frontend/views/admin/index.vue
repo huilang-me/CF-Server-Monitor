@@ -819,12 +819,12 @@ const normalizePreferredThemeSetting = (value) => {
 
 const normalizeDefaultLanguageSetting = (value) => {
   const language = String(value || '').trim().toLowerCase()
-  return ['zh', 'en', 'es', 'auto'].includes(language) ? language : 'auto'
+  return ['id', 'en', 'zh', 'es', 'auto'].includes(language) ? language : 'id'
 }
 
 const normalizeNotificationLanguageSetting = (value) => {
   const language = String(value || '').trim().toLowerCase()
-  return ['zh', 'en', 'es'].includes(language) ? language : 'zh'
+  return ['id', 'en', 'zh', 'es'].includes(language) ? language : 'id'
 }
 
 const formatThemeOptions = (value) => {
@@ -931,7 +931,7 @@ const settings = ref({
   custom_script: '',
   display_mode: 'bar',
   preferred_theme: 'auto',
-  default_language: 'auto',
+  default_language: 'id',
   theme_options: '{}',
   is_public: false,
   show_price: true,
@@ -948,8 +948,8 @@ const settings = ref({
   traffic_alert_threshold: 0,
   tg_bot_token: '',
   tg_chat_id: '',
-  notification_timezone: 'UTC',
-  notification_language: 'zh',
+  notification_timezone: 'Asia/Jakarta',
+  notification_language: 'id',
   expire_notification_time: '12',
   notification_webhook_enabled: false,
   notification_webhook_url: '',
@@ -973,9 +973,9 @@ const settings = ref({
   custom_cu: '',
   custom_cm: '',
   custom_bd: '',
-  custom_ct_name: '电信',
-  custom_cu_name: '联通',
-  custom_cm_name: '移动',
+  custom_ct_name: 'ISP 1',
+  custom_cu_name: 'ISP 2',
+  custom_cm_name: 'ISP 3',
   custom_bd_name: 'BGP',
   theme_url: '',
   csp_static: '',
@@ -1416,9 +1416,9 @@ const loadSettings = async () => {
         custom_cm: settingsData.custom_cm || '',
         custom_bd: settingsData.custom_bd || '',
         node_1: settingsData.node_1 || '', node_2: settingsData.node_2 || '', node_3: settingsData.node_3 || '', node_4: settingsData.node_4 || '',
-        custom_ct_name: settingsData.custom_ct_name || '电信',
-        custom_cu_name: settingsData.custom_cu_name || '联通',
-        custom_cm_name: settingsData.custom_cm_name || '移动',
+        custom_ct_name: settingsData.custom_ct_name || 'ISP 1',
+        custom_cu_name: settingsData.custom_cu_name || 'ISP 2',
+        custom_cm_name: settingsData.custom_cm_name || 'ISP 3',
         custom_bd_name: settingsData.custom_bd_name || 'BGP',
         node_1_name: settingsData.node_1_name || 'Node 1', node_2_name: settingsData.node_2_name || 'Node 2', node_3_name: settingsData.node_3_name || 'Node 3', node_4_name: settingsData.node_4_name || 'Node 4',
         theme_url: settingsData.theme_url || '',
