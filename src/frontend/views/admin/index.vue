@@ -819,12 +819,12 @@ const normalizePreferredThemeSetting = (value) => {
 
 const normalizeDefaultLanguageSetting = (value) => {
   const language = String(value || '').trim().toLowerCase()
-  return ['id', 'en', 'zh', 'es', 'auto'].includes(language) ? language : 'id'
+  return ['zh', 'en', 'es', 'id', 'auto'].includes(language) ? language : 'auto'
 }
 
 const normalizeNotificationLanguageSetting = (value) => {
   const language = String(value || '').trim().toLowerCase()
-  return ['id', 'en', 'zh', 'es'].includes(language) ? language : 'id'
+  return ['zh', 'en', 'es', 'id'].includes(language) ? language : 'zh'
 }
 
 const formatThemeOptions = (value) => {
@@ -931,7 +931,7 @@ const settings = ref({
   custom_script: '',
   display_mode: 'bar',
   preferred_theme: 'auto',
-  default_language: 'id',
+  default_language: 'auto',
   theme_options: '{}',
   is_public: false,
   show_price: true,
@@ -948,8 +948,8 @@ const settings = ref({
   traffic_alert_threshold: 0,
   tg_bot_token: '',
   tg_chat_id: '',
-  notification_timezone: 'Asia/Jakarta',
-  notification_language: 'id',
+  notification_timezone: 'UTC',
+  notification_language: 'zh',
   expire_notification_time: '12',
   notification_webhook_enabled: false,
   notification_webhook_url: '',

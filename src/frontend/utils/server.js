@@ -3,14 +3,14 @@ export function isDisabledProbeMetric(value) {
 }
 
 export const BILLING_CYCLES = Object.freeze([
-  { value: 'month', months: 1, labelId: 'Bulanan', shortLabelId: 'Bln', labelZh: '月', labelEn: 'Monthly', shortLabelZh: '月', shortLabelEn: 'M', labelEs: 'Mensual', shortLabelEs: 'mes' },
-  { value: 'quarter', months: 3, labelId: 'Kuartalan', shortLabelId: 'Krtl', labelZh: '季', labelEn: 'Quarterly', shortLabelZh: '季', shortLabelEn: 'Q', labelEs: 'Trimestral', shortLabelEs: 'trim' },
-  { value: 'half_year', months: 6, labelId: 'Semesteran', shortLabelId: 'Smstr', labelZh: '半年', labelEn: 'Half-yearly', shortLabelZh: '半年', shortLabelEn: 'HY', labelEs: 'Semestral', shortLabelEs: 'sem' },
-  { value: 'year', months: 12, labelId: 'Tahunan', shortLabelId: 'Thn', labelZh: '年', labelEn: 'Yearly', shortLabelZh: '年', shortLabelEn: 'Y', labelEs: 'Anual', shortLabelEs: 'año' },
-  { value: 'two_years', months: 24, labelId: 'Dua Tahun', shortLabelId: '2Thn', labelZh: '两年', labelEn: 'Two years', shortLabelZh: '2年', shortLabelEn: '2Y', labelEs: 'Dos años', shortLabelEs: '2 años' },
-  { value: 'three_years', months: 36, labelId: 'Tiga Tahun', shortLabelId: '3Thn', labelZh: '三年', labelEn: 'Three years', shortLabelZh: '3年', shortLabelEn: '3Y', labelEs: 'Tres años', shortLabelEs: '3 años' },
-  { value: 'four_years', months: 48, labelId: 'Empat Tahun', shortLabelId: '4Thn', labelZh: '四年', labelEn: 'Four years', shortLabelZh: '4年', shortLabelEn: '4Y', labelEs: 'Cuatro años', shortLabelEs: '4 años' },
-  { value: 'five_years', months: 60, labelId: 'Lima Tahun', shortLabelId: '5Thn', labelZh: '五年', labelEn: 'Five years', shortLabelZh: '5年', shortLabelEn: '5Y', labelEs: 'Cinco años', shortLabelEs: '5 años' }
+  { value: 'month', months: 1, labelZh: '月', labelEn: 'Monthly', shortLabelZh: '月', shortLabelEn: 'M', labelEs: 'Mensual', shortLabelEs: 'mes', labelId: 'Bulanan', shortLabelId: 'Bln' },
+  { value: 'quarter', months: 3, labelZh: '季', labelEn: 'Quarterly', shortLabelZh: '季', shortLabelEn: 'Q', labelEs: 'Trimestral', shortLabelEs: 'trim', labelId: 'Kuartalan', shortLabelId: 'Krtl' },
+  { value: 'half_year', months: 6, labelZh: '半年', labelEn: 'Half-yearly', shortLabelZh: '半年', shortLabelEn: 'HY', labelEs: 'Semestral', shortLabelEs: 'sem', labelId: 'Semesteran', shortLabelId: 'Smstr' },
+  { value: 'year', months: 12, labelZh: '年', labelEn: 'Yearly', shortLabelZh: '年', shortLabelEn: 'Y', labelEs: 'Anual', shortLabelEs: 'año', labelId: 'Tahunan', shortLabelId: 'Thn' },
+  { value: 'two_years', months: 24, labelZh: '两年', labelEn: 'Two years', shortLabelZh: '2年', shortLabelEn: '2Y', labelEs: 'Dos años', shortLabelEs: '2 años', labelId: 'Dua Tahun', shortLabelId: '2Thn' },
+  { value: 'three_years', months: 36, labelZh: '三年', labelEn: 'Three years', shortLabelZh: '3年', shortLabelEn: '3Y', labelEs: 'Tres años', shortLabelEs: '3 años', labelId: 'Tiga Tahun', shortLabelId: '3Thn' },
+  { value: 'four_years', months: 48, labelZh: '四年', labelEn: 'Four years', shortLabelZh: '4年', shortLabelEn: '4Y', labelEs: 'Cuatro años', shortLabelEs: '4 años', labelId: 'Empat Tahun', shortLabelId: '4Thn' },
+  { value: 'five_years', months: 60, labelZh: '五年', labelEn: 'Five years', shortLabelZh: '5年', shortLabelEn: '5Y', labelEs: 'Cinco años', shortLabelEs: '5 años', labelId: 'Lima Tahun', shortLabelId: '5Thn' }
 ]);
 
 export const CURRENCY_OPTIONS = Object.freeze([
@@ -244,15 +244,15 @@ export function renewExpireDateIfNeeded(expireDate, billingCycle, autoRenewal, n
   return { expire_date: nextDate, renewed };
 }
 
-const OPTION_FIELD_LANGUAGE_SUFFIX = Object.freeze({ id: 'Id', zh: 'Zh', en: 'En', es: 'Es' });
+const OPTION_FIELD_LANGUAGE_SUFFIX = Object.freeze({ zh: 'Zh', en: 'En', es: 'Es', id: 'Id' });
 
 export function getLocalizedOptionField(option, field, lang) {
-  return option?.[`${field}${OPTION_FIELD_LANGUAGE_SUFFIX[lang] || 'Id'}`] ?? option?.[`${field}Id`] ?? option?.[`${field}En`] ?? '';
+  return option?.[`${field}${OPTION_FIELD_LANGUAGE_SUFFIX[lang] || 'En'}`] ?? option?.[`${field}En`] ?? '';
 }
 
-const FREE_PRICE_LABELS = Object.freeze({ id: 'Gratis', en: 'Free', zh: '免费', es: 'Gratis' });
+const FREE_PRICE_LABELS = Object.freeze({ zh: '免费', en: 'Free', es: 'Gratis', id: 'Gratis' });
 
-export function formatBillingPrice(server, lang = 'id') {
+export function formatBillingPrice(server, lang = 'zh') {
   const price = normalizePrice(server?.price);
   if (!price) return '';
   if (isFreePrice(price)) return FREE_PRICE_LABELS[lang] || FREE_PRICE_LABELS.en;

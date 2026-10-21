@@ -17,7 +17,7 @@ export const LONG_HISTORY_POINT_OPTIONS = [60, 120, 180, 240];
 export const DEFAULT_LONG_HISTORY_POINTS = 120;
 export const FRONTEND_WS_TIMEOUT_MINUTES_MAX = 1440;
 export const DEFAULT_NOTIFICATION_TIMEZONE = 'UTC';
-export const NOTIFICATION_LANGUAGES = ['id', 'en', 'zh', 'es'];
+export const NOTIFICATION_LANGUAGES = ['zh', 'en', 'es', 'id'];
 export const DEFAULT_NOTIFICATION_LANGUAGE = 'zh';
 export const DEFAULT_EXPIRE_NOTIFICATION_TIME = '12';
 export const ALL_WSS_REPORT_HOURS = Object.freeze(Array.from({ length: 24 }, (_, hour) => hour));
@@ -71,7 +71,7 @@ const defaults = {
   csp_api: '',
   display_mode: 'ring',
   preferred_theme: 'auto',
-  default_language: 'id',
+  default_language: 'auto',
   theme_options: {},
   is_public: 'true',
   show_price: 'true',
@@ -472,10 +472,10 @@ export function normalizePreferredTheme(value, fallback = 'auto') {
   return fallback === 'dark' || fallback === 'light' ? fallback : 'auto';
 }
 
-export function normalizeDefaultLanguage(value, fallback = 'id') {
+export function normalizeDefaultLanguage(value, fallback = 'auto') {
   const language = String(value || '').trim().toLowerCase();
-  if (['id', 'en', 'zh', 'es', 'auto'].includes(language)) return language;
-  return ['id', 'en', 'zh', 'es'].includes(fallback) ? fallback : 'id';
+  if (['zh', 'en', 'es', 'id', 'auto'].includes(language)) return language;
+  return ['zh', 'en', 'es', 'id'].includes(fallback) ? fallback : 'auto';
 }
 
 export function normalizeNotificationLanguage(value) {

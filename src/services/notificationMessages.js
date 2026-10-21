@@ -1,28 +1,6 @@
 import { normalizeNotificationLanguage } from '../utils/settings.js';
 
 const NOTIFICATION_MESSAGES = {
-  id: {
-    events: {
-      notification: 'Notifikasi',
-      offline: 'Peringatan Node Offline',
-      recovered: 'Node Kembali Online',
-      resourceAlert: 'Peringatan Beban Sumber Daya',
-      resourceRecovered: 'Beban Sumber Daya Normal',
-      trafficAlert: 'Peringatan Trafik Bulanan',
-      expiring: 'Pengingat Masa Aktif Server',
-      renewed: 'Server Otomatis Diperpanjang',
-      test: 'Notifikasi Uji Coba'
-    },
-    metrics: { netIn: 'Kecepatan Download', netOut: 'Kecepatan Upload', netTotal: 'Total Kecepatan' },
-    invalidTime: 'Waktu tidak valid',
-    noReport: 'Tidak ada laporan',
-    lastReport: time => `Laporan terakhir: ${time}`,
-    renewedUntil: date => `Masa aktif baru ${date}`,
-    daysLeft: days => `Sisa ${days} hari`,
-    trafficUsed: ({ usedGb, limitGb, percent, threshold }) =>
-      `Trafik bulan ini terpakai ${usedGb} GB / Kuota ${limitGb} GB (${percent}% ≥ ${threshold}%)`,
-    testMessage: 'Ini adalah pesan uji coba dari CF Server Monitor.'
-  },
   zh: {
     events: {
       notification: '通知',
@@ -88,6 +66,28 @@ const NOTIFICATION_MESSAGES = {
     trafficUsed: ({ usedGb, limitGb, percent, threshold }) =>
       `Usados ${usedGb} GB de ${limitGb} GB este mes (${percent}% ≥ ${threshold}%)`,
     testMessage: 'Este es un mensaje de prueba de CF Server Monitor.'
+  },
+  id: {
+    events: {
+      notification: 'Notifikasi',
+      offline: 'Peringatan Node Offline',
+      recovered: 'Node Kembali Online',
+      resourceAlert: 'Peringatan Beban Sumber Daya',
+      resourceRecovered: 'Beban Sumber Daya Normal',
+      trafficAlert: 'Peringatan Trafik Bulanan',
+      expiring: 'Pengingat Masa Aktif Server',
+      renewed: 'Server Otomatis Diperpanjang',
+      test: 'Notifikasi Uji Coba'
+    },
+    metrics: { netIn: 'Kecepatan Download', netOut: 'Kecepatan Upload', netTotal: 'Total Kecepatan' },
+    invalidTime: 'Waktu tidak valid',
+    noReport: 'Tidak ada laporan',
+    lastReport: time => `Laporan terakhir: ${time}`,
+    renewedUntil: date => `Masa aktif baru ${date}`,
+    daysLeft: days => `Sisa ${days} hari`,
+    trafficUsed: ({ usedGb, limitGb, percent, threshold }) =>
+      `Trafik bulan ini terpakai ${usedGb} GB / Kuota ${limitGb} GB (${percent}% ≥ ${threshold}%)`,
+    testMessage: 'Ini adalah pesan uji coba dari CF Server Monitor.'
   }
 };
 
