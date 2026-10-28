@@ -1010,8 +1010,11 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
         if (!isValidUUID(orders[i])) {
           return createBadRequestResponse('invalidSortId');
         }
-        await env.DB.prepare('UPDATE servers SET sort_order = ? WHERE id = ?').bind(i, orders[i]).run();
       }
+
+      await env.DB.batch(orders.map((id, i) =>
+        env.DB.prepare('UPDATE servers SET sort_order = ? WHERE id = ?').bind(i, id)
+      ));
       
       clearServersListCache();
       

@@ -444,46 +444,35 @@ export async function getDashboardLatencyHistory(db, servers, options = {}) {
     `SELECT name FROM sqlite_master WHERE type='table' AND name='metrics_history_old'`
   ).first();
 
-  const fetchServerLatency = async server => {
+  const queryStart = cutoff;
+  const intervalMs = Math.max(10_000, Math.ceil((queryEnd - queryStart) / points));
+  const firstRangeEnd = Math.min(queryEnd, queryStart + intervalMs);
+  const items = [];
+
+  for (const server of serversToFetch) {
     const serverId = String(server?.id || '').trim();
-    if (!serverId) return;
+    if (!serverId) continue;
 
     try {
       const historyInfo = await getServerHistoryInfo(db, serverId, server);
-      if (!historyInfo.partitionId) {
+      if (!historyInfo.partitionId || queryStart >= queryEnd) {
         result.set(serverId, { ping: [], loss: [] });
-        return;
+        continue;
       }
 
-      const queryStart = cutoff;
-      if (queryStart >= queryEnd) {
-        result.set(serverId, { ping: [], loss: [] });
-        return;
-      }
-
-      const intervalMs = Math.max(10_000, Math.ceil((queryEnd - queryStart) / points));
       const idPrefix = getHistoryIdRange(historyInfo.partitionId).startId;
-      const querySparseHistory = async queryColumns => {
-        const sparseQuery = buildSparseHistoryQuery({
-          columns: queryColumns,
-          queryStart,
-          queryEnd,
-          firstRangeEnd: Math.min(queryEnd, queryStart + intervalMs),
-          intervalMs,
-          idPrefix,
-          oldTableExists,
-          tableBoundary: thisSunday.getTime(),
-          sampleOrder: 'DESC'
-        });
-        return db.prepare(sparseQuery.sql).bind(...sparseQuery.bindValues).all();
-      };
-
-      const rawResult = await querySparseHistory(columns);
-      const window = normalizeDashboardLatencyWindow(rawResult.results, { queryStart, intervalMs, points });
-      result.set(serverId, window);
-      if (useCache) {
-        dashboardLatencyHistoryCache.set(serverId, { cachedAt: now, window });
-      }
+      const sparseQuery = buildSparseHistoryQuery({
+        columns,
+        queryStart,
+        queryEnd,
+        firstRangeEnd,
+        intervalMs,
+        idPrefix,
+        oldTableExists,
+        tableBoundary: thisSunday.getTime(),
+        sampleOrder: 'DESC'
+      });
+      items.push({ serverId, sparseQuery });
     } catch (e) {
       debug('[DashboardLatency] query failed:', serverId, e?.message || e);
       const empty = { ping: [], loss: [] };
@@ -492,14 +481,46 @@ export async function getDashboardLatencyHistory(db, servers, options = {}) {
         dashboardLatencyHistoryCache.set(serverId, { cachedAt: now, window: empty });
       }
     }
-  };
+  }
 
-  for (let offset = 0; offset < serversToFetch.length; offset += DASHBOARD_LATENCY_WINDOW_QUERY_CONCURRENCY) {
-    await Promise.all(
-      serversToFetch
-        .slice(offset, offset + DASHBOARD_LATENCY_WINDOW_QUERY_CONCURRENCY)
-        .map(fetchServerLatency)
-    );
+  for (let offset = 0; offset < items.length; offset += DASHBOARD_LATENCY_WINDOW_QUERY_CONCURRENCY) {
+    const chunk = items.slice(offset, offset + DASHBOARD_LATENCY_WINDOW_QUERY_CONCURRENCY);
+    let batchResults;
+    try {
+      batchResults = await db.batch(chunk.map(item =>
+        db.prepare(item.sparseQuery.sql).bind(...item.sparseQuery.bindValues)
+      ));
+    } catch (batchError) {
+      debug('[DashboardLatency] batch query failed, falling back to per-server query:', batchError?.message || batchError);
+      await Promise.all(chunk.map(async item => {
+        try {
+          const rawResult = await db.prepare(item.sparseQuery.sql).bind(...item.sparseQuery.bindValues).all();
+          const window = normalizeDashboardLatencyWindow(rawResult.results, { queryStart, intervalMs, points });
+          result.set(item.serverId, window);
+          if (useCache) {
+            dashboardLatencyHistoryCache.set(item.serverId, { cachedAt: now, window });
+          }
+        } catch (e) {
+          debug('[DashboardLatency] query failed:', item.serverId, e?.message || e);
+          const empty = { ping: [], loss: [] };
+          result.set(item.serverId, empty);
+          if (useCache) {
+            dashboardLatencyHistoryCache.set(item.serverId, { cachedAt: now, window: empty });
+          }
+        }
+      }));
+      continue;
+    }
+
+    for (let index = 0; index < chunk.length; index++) {
+      const item = chunk[index];
+      const rows = batchResults[index] && batchResults[index].results;
+      const window = normalizeDashboardLatencyWindow(rows, { queryStart, intervalMs, points });
+      result.set(item.serverId, window);
+      if (useCache) {
+        dashboardLatencyHistoryCache.set(item.serverId, { cachedAt: now, window });
+      }
+    }
   }
 
   return result;

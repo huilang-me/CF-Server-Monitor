@@ -6,7 +6,8 @@ import { getDashboardLatencyHistory } from '../src/database/schema.js';
 import { buildHistoryId } from '../src/database/indexOptimization.js';
 import {
   DASHBOARD_LATENCY_WINDOW_HOURS,
-  DASHBOARD_LATENCY_WINDOW_POINTS
+  DASHBOARD_LATENCY_WINDOW_POINTS,
+  DASHBOARD_LATENCY_WINDOW_QUERY_CONCURRENCY
 } from '../src/utils/config.js';
 
 function createMiniflare() {
@@ -190,6 +191,103 @@ test('dashboard latency history cache is reused for five minutes per server', as
       now: start + 6 * 60_000
     });
     assert.equal(refreshed.get('server-cache').ping.at(-1).ct, 90);
+  } finally {
+    await miniflare.dispose();
+  }
+});
+
+test('dashboard latency history batches more than 20 servers and preserves per-server order', async () => {
+  const miniflare = createMiniflare();
+
+  try {
+    const db = await miniflare.getD1Database('DB');
+    await createHistoryTable(db);
+
+    const start = Date.UTC(2026, 6, 29, 2, 0, 0);
+    const servers = [];
+    const rows = [];
+    for (let index = 1; index <= 25; index++) {
+      servers.push({
+        id: `batch-server-${index}`,
+        history_partition_id: index,
+        timestamp: start
+      });
+      rows.push(latencyRow(index, start, 10 + index));
+    }
+
+    await db.prepare(`
+      INSERT INTO metrics_history (
+        id, timestamp,
+        ping_ct, ping_cu, ping_cm, ping_bd,
+        loss_ct, loss_cu, loss_cm, loss_bd
+      )
+      VALUES ${rows.join(',')}
+    `).run();
+
+    let batchCalls = 0;
+    const wrappedDb = {
+      prepare: sql => db.prepare(sql),
+      batch: async statements => {
+        batchCalls++;
+        return db.batch(statements);
+      }
+    };
+
+    const history = await getDashboardLatencyHistory(wrappedDb, servers, {
+      now: start + 60_000,
+      cache: false
+    });
+
+    assert.equal(batchCalls, Math.ceil(servers.length / DASHBOARD_LATENCY_WINDOW_QUERY_CONCURRENCY));
+    assert.equal(history.size, 25);
+    for (let index = 1; index <= 25; index++) {
+      const window = history.get(`batch-server-${index}`);
+      assert.ok(window, `window for batch-server-${index}`);
+      assert.equal(window.ping.at(-1).ct, 10 + index);
+    }
+  } finally {
+    await miniflare.dispose();
+  }
+});
+
+test('dashboard latency history falls back to per-server queries when batch fails', async () => {
+  const miniflare = createMiniflare();
+
+  try {
+    const db = await miniflare.getD1Database('DB');
+    await createHistoryTable(db);
+
+    const start = Date.UTC(2026, 6, 29, 3, 0, 0);
+    await db.prepare(`
+      INSERT INTO metrics_history (
+        id, timestamp,
+        ping_ct, ping_cu, ping_cm, ping_bd,
+        loss_ct, loss_cu, loss_cm, loss_bd
+      )
+      VALUES ${latencyRow(1, start, 42)}
+    `).run();
+
+    let batchThrew = false;
+    const wrappedDb = {
+      prepare: sql => db.prepare(sql),
+      batch: async () => {
+        batchThrew = true;
+        throw new Error('batch boom');
+      }
+    };
+
+    const history = await getDashboardLatencyHistory(wrappedDb, [{
+      id: 'fallback-server-1',
+      history_partition_id: 1,
+      timestamp: start
+    }], {
+      now: start + 60_000,
+      cache: false
+    });
+
+    assert.equal(batchThrew, true);
+    assert.equal(history.size, 1);
+    assert.equal(history.get('fallback-server-1').ping.at(-1).ct, 42);
   } finally {
     await miniflare.dispose();
   }
