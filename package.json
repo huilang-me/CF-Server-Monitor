@@ -29,6 +29,7 @@
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.0",
     "fs-extra": "^11.3.5",
+    "miniflare": "^5.20260801.1-alpha",
     "vite": "^6.0.0",
     "vite-plugin-mkcert": "^2.1.0",
     "wrangler": "^4.0.0"

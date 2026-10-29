@@ -7,7 +7,7 @@ import { buildHistoryId } from '../src/database/indexOptimization.js';
 import {
   DASHBOARD_LATENCY_WINDOW_HOURS,
   DASHBOARD_LATENCY_WINDOW_POINTS,
-  DASHBOARD_LATENCY_WINDOW_QUERY_CONCURRENCY
+  DASHBOARD_LATENCY_WINDOW_BATCH_SIZE
 } from '../src/utils/config.js';
 
 function createMiniflare() {
@@ -238,7 +238,7 @@ test('dashboard latency history batches more than 20 servers and preserves per-s
       cache: false
     });
 
-    assert.equal(batchCalls, Math.ceil(servers.length / DASHBOARD_LATENCY_WINDOW_QUERY_CONCURRENCY));
+    assert.equal(batchCalls, Math.ceil(servers.length / DASHBOARD_LATENCY_WINDOW_BATCH_SIZE));
     assert.equal(history.size, 25);
     for (let index = 1; index <= 25; index++) {
       const window = history.get(`batch-server-${index}`);
@@ -288,6 +288,90 @@ test('dashboard latency history falls back to per-server queries when batch fail
     assert.equal(batchThrew, true);
     assert.equal(history.size, 1);
     assert.equal(history.get('fallback-server-1').ping.at(-1).ct, 42);
+  } finally {
+    await miniflare.dispose();
+  }
+});
+
+test('dashboard latency history isolates a malformed batch entry to its own server', async () => {
+  const miniflare = createMiniflare();
+
+  try {
+    const db = await miniflare.getD1Database('DB');
+    await createHistoryTable(db);
+
+    const start = Date.UTC(2026, 6, 29, 4, 0, 0);
+    await db.prepare(`
+      INSERT INTO metrics_history (
+        id, timestamp,
+        ping_ct, ping_cu, ping_cm, ping_bd,
+        loss_ct, loss_cu, loss_cm, loss_bd
+      )
+      VALUES ${latencyRow(1, start, 42)}, ${latencyRow(2, start, 99)}
+    `).run();
+
+    // 模拟 D1 返回的批次结果缺项：第一台正常，第二台拿不到结果
+    const wrappedDb = {
+      prepare: sql => db.prepare(sql),
+      batch: async statements => {
+        const real = await db.batch(statements);
+        return [real[0]];
+      }
+    };
+
+    const history = await getDashboardLatencyHistory(wrappedDb, [
+      { id: 'isolated-server-1', history_partition_id: 1, timestamp: start },
+      { id: 'isolated-server-2', history_partition_id: 2, timestamp: start }
+    ], {
+      now: start + 60_000,
+      cache: false
+    });
+
+    assert.equal(history.size, 2);
+    assert.equal(history.get('isolated-server-1').ping.at(-1).ct, 42);
+    assert.deepEqual(history.get('isolated-server-2'), { ping: [], loss: [] });
+  } finally {
+    await miniflare.dispose();
+  }
+});
+
+test('dashboard latency history falls back to per-server queries when batch returns a non-array', async () => {
+  const miniflare = createMiniflare();
+
+  try {
+    const db = await miniflare.getD1Database('DB');
+    await createHistoryTable(db);
+
+    const start = Date.UTC(2026, 6, 29, 5, 0, 0);
+    await db.prepare(`
+      INSERT INTO metrics_history (
+        id, timestamp,
+        ping_ct, ping_cu, ping_cm, ping_bd,
+        loss_ct, loss_cu, loss_cm, loss_bd
+      )
+      VALUES ${latencyRow(1, start, 42)}
+    `).run();
+
+    let batchCalled = false;
+    const wrappedDb = {
+      prepare: sql => db.prepare(sql),
+      batch: async () => {
+        batchCalled = true;
+        return undefined;
+      }
+    };
+
+    const history = await getDashboardLatencyHistory(wrappedDb, [{
+      id: 'non-array-server-1',
+      history_partition_id: 1,
+      timestamp: start
+    }], {
+      now: start + 60_000,
+      cache: false
+    });
+
+    assert.equal(batchCalled, true);
+    assert.equal(history.get('non-array-server-1').ping.at(-1).ct, 42);
   } finally {
     await miniflare.dispose();
   }

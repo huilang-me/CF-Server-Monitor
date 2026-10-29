@@ -16,7 +16,7 @@ import {
   DASHBOARD_LATENCY_WINDOW_CACHE_TTL_MS,
   DASHBOARD_LATENCY_WINDOW_HOURS,
   DASHBOARD_LATENCY_WINDOW_POINTS,
-  DASHBOARD_LATENCY_WINDOW_QUERY_CONCURRENCY
+  DASHBOARD_LATENCY_WINDOW_BATCH_SIZE
 } from '../utils/config.js';
 
 let dbInitialized = false;
@@ -449,13 +449,38 @@ export async function getDashboardLatencyHistory(db, servers, options = {}) {
   const firstRangeEnd = Math.min(queryEnd, queryStart + intervalMs);
   const items = [];
 
+  // 窗口由 now/points 决定，与服务器无关：无效窗口直接给所有服务器返回空数据
+  if (queryStart >= queryEnd) {
+    for (const server of serversToFetch) {
+      const serverId = String(server?.id || '').trim();
+      if (serverId) result.set(serverId, { ping: [], loss: [] });
+    }
+    return result;
+  }
+
+  // 结果落盘只有这两个出口：窗口 + 缓存，避免同样的样板散落在四条路径上
+  const applyWindow = (serverId, rows) => {
+    const window = normalizeDashboardLatencyWindow(rows, { queryStart, intervalMs, points });
+    result.set(serverId, window);
+    if (useCache) {
+      dashboardLatencyHistoryCache.set(serverId, { cachedAt: now, window });
+    }
+  };
+  const applyEmpty = serverId => {
+    const empty = { ping: [], loss: [] };
+    result.set(serverId, empty);
+    if (useCache) {
+      dashboardLatencyHistoryCache.set(serverId, { cachedAt: now, window: empty });
+    }
+  };
+
   for (const server of serversToFetch) {
     const serverId = String(server?.id || '').trim();
     if (!serverId) continue;
 
     try {
       const historyInfo = await getServerHistoryInfo(db, serverId, server);
-      if (!historyInfo.partitionId || queryStart >= queryEnd) {
+      if (!historyInfo.partitionId) {
         result.set(serverId, { ping: [], loss: [] });
         continue;
       }
@@ -475,50 +500,47 @@ export async function getDashboardLatencyHistory(db, servers, options = {}) {
       items.push({ serverId, sparseQuery });
     } catch (e) {
       debug('[DashboardLatency] query failed:', serverId, e?.message || e);
-      const empty = { ping: [], loss: [] };
-      result.set(serverId, empty);
-      if (useCache) {
-        dashboardLatencyHistoryCache.set(serverId, { cachedAt: now, window: empty });
-      }
+      applyEmpty(serverId);
     }
   }
 
-  for (let offset = 0; offset < items.length; offset += DASHBOARD_LATENCY_WINDOW_QUERY_CONCURRENCY) {
-    const chunk = items.slice(offset, offset + DASHBOARD_LATENCY_WINDOW_QUERY_CONCURRENCY);
+  for (let offset = 0; offset < items.length; offset += DASHBOARD_LATENCY_WINDOW_BATCH_SIZE) {
+    const chunk = items.slice(offset, offset + DASHBOARD_LATENCY_WINDOW_BATCH_SIZE);
     let batchResults;
     try {
       batchResults = await db.batch(chunk.map(item =>
         db.prepare(item.sparseQuery.sql).bind(...item.sparseQuery.bindValues)
       ));
+      if (!Array.isArray(batchResults)) {
+        throw new TypeError('db.batch() returned a non-array result');
+      }
     } catch (batchError) {
       debug('[DashboardLatency] batch query failed, falling back to per-server query:', batchError?.message || batchError);
       await Promise.all(chunk.map(async item => {
         try {
           const rawResult = await db.prepare(item.sparseQuery.sql).bind(...item.sparseQuery.bindValues).all();
-          const window = normalizeDashboardLatencyWindow(rawResult.results, { queryStart, intervalMs, points });
-          result.set(item.serverId, window);
-          if (useCache) {
-            dashboardLatencyHistoryCache.set(item.serverId, { cachedAt: now, window });
-          }
+          applyWindow(item.serverId, rawResult.results);
         } catch (e) {
           debug('[DashboardLatency] query failed:', item.serverId, e?.message || e);
-          const empty = { ping: [], loss: [] };
-          result.set(item.serverId, empty);
-          if (useCache) {
-            dashboardLatencyHistoryCache.set(item.serverId, { cachedAt: now, window: empty });
-          }
+          applyEmpty(item.serverId);
         }
       }));
       continue;
     }
 
     for (let index = 0; index < chunk.length; index++) {
-      const item = chunk[index];
-      const rows = batchResults[index] && batchResults[index].results;
-      const window = normalizeDashboardLatencyWindow(rows, { queryStart, intervalMs, points });
-      result.set(item.serverId, window);
-      if (useCache) {
-        dashboardLatencyHistoryCache.set(item.serverId, { cachedAt: now, window });
+      const { serverId } = chunk[index];
+      // 单台后处理异常只降级这一台，不能穿透到 /api/servers 让整页失败
+      try {
+        const rows = batchResults[index]?.results;
+        if (!Array.isArray(rows)) {
+          applyEmpty(serverId);
+          continue;
+        }
+        applyWindow(serverId, rows);
+      } catch (e) {
+        debug('[DashboardLatency] apply batch result failed:', serverId, e?.message || e);
+        applyEmpty(serverId);
       }
     }
   }
