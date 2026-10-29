@@ -1,4 +1,4 @@
-import { getNextServerHistoryPartitionId } from '../database/indexOptimization.js';
+import { insertServerWithPartition } from '../database/indexOptimization.js';
 import { clearServersListCache } from './cache.js';
 import { normalizeBooleanSetting } from './settings.js';
 
@@ -58,16 +58,8 @@ async function findServerIdByName(db, name) {
 
 async function createServerRow(db, name) {
   const id = crypto.randomUUID();
-  const row = await db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_order FROM servers').first();
-  const sortOrder = (Number(row?.max_order) || 0) + 1;
-  const historyPartitionId = await getNextServerHistoryPartitionId(db);
-
-  await db.prepare(`
-    INSERT INTO servers
-    (id, name, server_group, region, "interface", sort_order, history_partition_id, timestamp)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).bind(id, name, 'Default', '', '', sortOrder, historyPartitionId, Date.now()).run();
-
+  // 分区号在 INSERT 内原子分配，不再依赖 servers 列表缓存，多台机器同时自动发现也不会撞号。
+  await insertServerWithPartition(db, { id, name });
   return id;
 }
 
@@ -99,8 +91,6 @@ export async function discoverServer(env, options = {}) {
 
   let createdId = '';
   try {
-    // 先清列表缓存，保证分区 ID 分配读到最新的 servers 快照。
-    clearServersListCache();
     createdId = await createServerRow(db, name);
   } catch (e) {
     console.warn('[AutoDiscovery] create failed', { name, error: e?.message || e });

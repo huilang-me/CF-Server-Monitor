@@ -9,7 +9,7 @@ import { AppError, createSuccessResponse, createBadRequestResponse, createUnauth
 import { addServerColumns } from '../database/updateDatabase.js';
 import { clearResourceAlertState, isSmtpNotificationTarget, sendNotification } from '../services/notification.js';
 import { getNotificationMessages } from '../services/notificationMessages.js';
-import { getNextServerHistoryPartitionId, HISTORY_MAX_PARTITION_ID } from '../database/indexOptimization.js';
+import { HISTORY_PARTITION_PICK_SQL, insertServerWithPartition } from '../database/indexOptimization.js';
 import { isValidTrafficCorrection, normalizeConnectionMode, normalizePingMode, normalizeWssReportInterval, validateAgentConfigInput, validatePingNode, validateNetworkInterfaces } from '../utils/agentConfig.js';
 import { scheduleAgentConfigChanged, scheduleAgentReportModeChanged } from '../utils/agentConfigNotify.js';
 import { detectBillingCycle, detectCurrencySymbol, normalizeBillingCycle, normalizeCurrency, normalizePrice, renewExpireDateIfNeeded } from '../utils/serverBilling.js';
@@ -18,6 +18,24 @@ import { THEME_PREVIEW_AUTH_TTL_SECONDS } from '../utils/config.js';
 const PING_NODE_FIELDS = ['custom_ct', 'custom_cu', 'custom_cm', 'custom_bd', 'node_1', 'node_2', 'node_3', 'node_4'];
 const THEME_PREVIEW_AUTH_COOKIE = 'cfsm_theme_preview_auth';
 const DURABLE_OBJECTS_WEBSOCKET_MESSAGE_BILLING_RATIO = 20;
+
+// 导入服务器：分区号在同一条 INSERT 内分配，优先沿用文件里的 history_partition_id（若空闲），
+// 否则取最小空闲值。与新增共用同一套表达式，避免与并发新增撞号。
+const IMPORT_SERVER_SQL = `
+  WITH pref(p) AS (SELECT ?),
+  next AS (
+    SELECT ${HISTORY_PARTITION_PICK_SQL} AS pid
+    FROM pref
+  )
+  INSERT INTO servers (id, name, server_group, region, tags, note, price, billing_cycle, auto_renewal,
+    currency, expire_date,
+    traffic_limit, traffic_calc_type, "interface", reset_day, collect_interval, report_interval, wss_report_interval, connection_mode, ping_mode,
+    auto_update, custom_ct, custom_cu, custom_cm, custom_bd, node_1, node_2, node_3, node_4, rx_correction, tx_correction,
+    offline_notify_disabled, is_hidden, sort_order, history_partition_id, timestamp, traffic_alert_percent)
+  SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, pid, ?, ?
+  FROM next
+  WHERE pid IS NOT NULL
+`;
 
 function toUsageNumber(value) {
   const number = Number(value);
@@ -975,16 +993,14 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       const region = normalizeServerRegion(data.region);
 
       try {
-        const { max_order } = await env.DB.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_order FROM servers').first();
-        const sortOrder = (max_order || 0) + 1;
-
-        const historyPartitionId = await getNextServerHistoryPartitionId(env.DB);
-
-        await env.DB.prepare(`
-          INSERT INTO servers
-          (id, name, server_group, region, "interface", sort_order, history_partition_id, timestamp)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).bind(id, name, group, region, networkInterfaces.value, sortOrder, historyPartitionId, Date.now()).run();
+        // 分区号与 sort_order 在同一条 INSERT 内分配，避免并发建号算出同一个分区号。
+        await insertServerWithPartition(env.DB, {
+          id,
+          name,
+          group,
+          region,
+          iface: networkInterfaces.value
+        });
       } catch (e) {
         return handleServerMutationError(env.DB, e, 'serverAddFailed');
       }
@@ -1194,11 +1210,6 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       const existingServers = await env.DB.prepare('SELECT id FROM servers').all();
       const existingIds = new Set((existingServers.results || []).map(s => s.id));
 
-      const existingPartitionIds = await env.DB.prepare('SELECT history_partition_id FROM servers').all();
-      const usedPartitionIds = new Set(
-        (existingPartitionIds.results || []).map(s => s.history_partition_id).filter(id => id > 0)
-      );
-
       let imported = 0;
       let skipped = 0;
       const skippedIds = [];
@@ -1216,23 +1227,6 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
           continue;
         }
 
-        let partitionId = Number(server.history_partition_id) || 0;
-        if (partitionId <= 0 || partitionId > HISTORY_MAX_PARTITION_ID || usedPartitionIds.has(partitionId)) {
-          partitionId = 0;
-          for (let id = 1; id <= HISTORY_MAX_PARTITION_ID; id++) {
-            if (!usedPartitionIds.has(id)) {
-              partitionId = id;
-              break;
-            }
-          }
-          if (partitionId === 0) {
-            skipped++;
-            skippedIds.push(server.id);
-            continue;
-          }
-        }
-
-        usedPartitionIds.add(partitionId);
         existingIds.add(server.id);
 
         const billingData = normalizeServerBillingData(server);
@@ -1244,14 +1238,8 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
         }
 
         try {
-          await env.DB.prepare(`
-            INSERT INTO servers (id, name, server_group, region, tags, note, price, billing_cycle, auto_renewal,
-              currency, expire_date,
-              traffic_limit, traffic_calc_type, "interface", reset_day, collect_interval, report_interval, wss_report_interval, connection_mode, ping_mode,
-              auto_update, custom_ct, custom_cu, custom_cm, custom_bd, node_1, node_2, node_3, node_4, rx_correction, tx_correction,
-              offline_notify_disabled, is_hidden, sort_order, history_partition_id, timestamp, traffic_alert_percent)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `).bind(
+          const result = await env.DB.prepare(IMPORT_SERVER_SQL).bind(
+            Number(server.history_partition_id) || 0,
             server.id,
             server.name || '',
             server.server_group || 'Default',
@@ -1284,10 +1272,16 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
             normalizeBooleanFlag(server.offline_notify_disabled),
             normalizeBooleanFlag(server.is_hidden),
             server.sort_order ?? 0,
-            partitionId,
             server.timestamp || Date.now(),
             normalizePctOrNull(server.traffic_alert_percent)
           ).run();
+          // 分区号被并发占用或 900 个已用满时 SELECT 不返回行，按跳过处理。
+          // 只在明确的 0 行写入时跳过，缺少 meta 不能当成失败。
+          if (result?.meta?.changes === 0) {
+            skipped++;
+            skippedIds.push(server.id);
+            continue;
+          }
           imported++;
         } catch (e) {
           skipped++;
