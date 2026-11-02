@@ -10,7 +10,7 @@ A lightweight multi-server monitoring dashboard built on Cloudflare Workers, D1,
   <a href="README-en.md">English</a>
 </p>
 
-[![Workers](https://img.shields.io/badge/Workers-2.8.7%20Beta5-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
+[![Workers](https://img.shields.io/badge/Workers-2.8.7%20Beta6-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
 [![GitHub Stars](https://img.shields.io/github/stars/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/forks)
 [![License](https://img.shields.io/badge/License-MIT-16a34a?style=flat-square)](#license)
@@ -99,7 +99,7 @@ Core flow:
 
 Recent changes:
 
-- `2.8.7`: Optimized scheduled task logic to reduce CPU usage and avoid exceeding free-tier limits. `/update` now enforces a 512KB body limit and returns 413 beyond it; Agent WSS connections for deleted servers are closed within 2 minutes; WSS reports now validate frame size and authenticated sessions survive transient D1 errors; batched samples keep only the latest 300. Added a server-side auto-discovery mechanism to automatically bind the server ID. Add custom User-Agent.
+- `2.8.7`: Optimized scheduled task logic to reduce CPU usage and avoid exceeding free-tier limits. `/update` now enforces a 512KB body limit and returns 413 beyond it; Agent WSS connections for deleted servers are closed within 2 minutes; WSS reports now validate frame size and authenticated sessions survive transient D1 errors; batched samples keep only the latest 300. Added a server-side auto-discovery mechanism to automatically bind the server ID. Add custom User-Agent.Import and export include settings options.
 - `2.8.6`: WSS frontend subscription with 250ms batch reporting, added SMTP notification channel, added monthly traffic threshold alert, removed legacy database compatibility, added Docker installation method.
 - `2.8.5`: Added custom Ping node names, ICMP mode, optimized WSS response logic, API interface optimization, and optimized frontend. Also added 4 default Ping nodes.
 - `2.8.4`: Added Agent WSS reporting and active hours. Agents use POST outside selected hours to reduce Do duration, and this requires Agent `v1.0.10+`. Also added account Do usage display with optimized Do broadcast requests when no frontend subscription exists to reduce idle quota consumption, added custom Webhook channel in notification settings, and added frontend WSS timeout configuration.

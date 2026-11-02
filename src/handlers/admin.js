@@ -1,7 +1,7 @@
 import { buildAuthCookie, buildClearAuthCookie, checkAuth, simpleAuthResponse, validateCredentials, generateToken } from '../middleware/auth.js';
 import { getLatestMetricsForAllServers } from '../database/schema.js';
 import { getAllServers, clearServersListCache } from '../utils/cache.js';
-import { clearAppearanceSettingsCache, isValidThemeOptions, isWssReportConfigured, isWssReportEnabled, normalizeBooleanSetting, normalizeDefaultLanguage, normalizeDisplayMode, normalizeExpireNotificationTime, normalizeExpireReminder, normalizeFrontendWsTimeoutMinutes, normalizeLongHistoryPoints, normalizeNotificationLanguage, normalizeNotificationTemplate, normalizeNotificationTimezone, normalizeNotificationWebhookBody, normalizeNotificationWebhookFormat, normalizeNotificationWebhookHeaders, normalizeNotificationWebhookMethod, normalizePreferredTheme, normalizeResourceAlertRules, normalizeTgNotify, normalizeWssReportHours, saveSiteOptions, saveThemeOptions, validateUserAgent, SITE_FIELDS, APPEARANCE_FIELDS } from '../utils/settings.js';
+import { clearAppearanceSettingsCache, isValidThemeOptions, isWssReportConfigured, isWssReportEnabled, normalizeBooleanSetting, normalizeDefaultLanguage, normalizeDisplayMode, normalizeExpireNotificationTime, normalizeExpireReminder, normalizeFrontendWsTimeoutMinutes, normalizeLongHistoryPoints, normalizeNotificationLanguage, normalizeNotificationTemplate, normalizeNotificationTimezone, normalizeNotificationWebhookBody, normalizeNotificationWebhookFormat, normalizeNotificationWebhookHeaders, normalizeNotificationWebhookMethod, normalizePreferredTheme, normalizeResourceAlertRules, normalizeTgNotify, normalizeWssReportHours, saveSiteOptions, saveAppearanceOptions, saveThemeOptions, validateUserAgent, SITE_FIELDS, APPEARANCE_FIELDS, IMPORTABLE_SITE_FIELDS, IMPORTABLE_APPEARANCE_FIELDS, loadSiteSettings, loadAppearanceOptions } from '../utils/settings.js';
 import { mergeMetricsIntoServer } from '../utils/metrics.js';
 import { normalizePctOrNull } from '../utils/traffic.js';
 import { verifyTurnstileToken, hashPassword } from '../utils/common.js';
@@ -767,6 +767,83 @@ const AUTHENTICATED_ADMIN_ACTION_HANDLERS = {
   send_test_notification: handleSendTestNotificationAction
 };
 
+// 导出时只取与部署无关的站点/外观字段，避免把凭据和环境绑定配置写进备份文件。
+function pickExportableSettings(siteSettings = {}, appearanceSettings = {}) {
+  const site = {};
+  for (const field of IMPORTABLE_SITE_FIELDS) {
+    if (siteSettings[field] !== undefined) site[field] = siteSettings[field];
+  }
+  const appearance = {};
+  for (const field of IMPORTABLE_APPEARANCE_FIELDS) {
+    if (appearanceSettings[field] !== undefined) appearance[field] = appearanceSettings[field];
+  }
+  return { site, appearance };
+}
+
+function pickImportableFields(source, allowedFields) {
+  const picked = {};
+  const ignoredFields = [];
+  if (!source || typeof source !== 'object' || Array.isArray(source)) {
+    return { picked, ignoredFields };
+  }
+  for (const [field, value] of Object.entries(source)) {
+    if (allowedFields.includes(field)) picked[field] = value;
+    else ignoredFields.push(field);
+  }
+  return { picked, ignoredFields };
+}
+
+// 导入设置时只写白名单字段，并按现有保存流程做归一化，避免旧备份把新站点的凭据、
+// Turnstile、UA、告警规则等环境相关配置一起覆盖掉。
+async function applyImportedSettings({ env, sys, settings }) {
+  const siteSource = settings && typeof settings === 'object' ? settings.site : null;
+  const appearanceSource = settings && typeof settings === 'object' ? settings.appearance : null;
+  const site = pickImportableFields(siteSource, IMPORTABLE_SITE_FIELDS);
+  const appearance = pickImportableFields(appearanceSource, IMPORTABLE_APPEARANCE_FIELDS);
+
+  // 主题配置必须是对象，否则整份外观设置会写坏，直接丢弃该字段。
+  if (appearance.picked.theme_options !== undefined && !isValidThemeOptions(appearance.picked.theme_options)) {
+    delete appearance.picked.theme_options;
+    appearance.ignoredFields.push('theme_options');
+  }
+
+  // 主题地址必须是合法的 GitHub tree 地址，非法值直接丢弃，避免写进库里再被前端忽略。
+  if ('theme_url' in site.picked) {
+    const normalizedThemeUrl = normalizeThemeUrl(site.picked.theme_url);
+    if (normalizedThemeUrl === null) {
+      delete site.picked.theme_url;
+      site.ignoredFields.push('theme_url');
+    } else {
+      site.picked.theme_url = normalizedThemeUrl;
+    }
+  }
+
+  const siteFields = Object.keys(site.picked);
+  const appearanceFields = Object.keys(appearance.picked);
+  const ignoredFields = [...new Set([...site.ignoredFields, ...appearance.ignoredFields])];
+
+  if (siteFields.length === 0 && appearanceFields.length === 0) {
+    return { imported: false, site: 0, appearance: 0, ignoredFields };
+  }
+
+  if (siteFields.length > 0) {
+    await saveSiteOptions(env.DB, site.picked);
+  }
+  if (appearanceFields.length > 0) {
+    await saveAppearanceOptions(env.DB, appearance.picked);
+  }
+  if (sys) {
+    Object.assign(sys, appearance.picked, site.picked);
+  }
+
+  return {
+    imported: true,
+    site: siteFields.length,
+    appearance: appearanceFields.length,
+    ignoredFields
+  };
+}
+
 export async function handleAdminAPI(request, env, sys, loadFullSettings = null, ctx = null) {
   try {
     const data = await request.json();
@@ -1183,38 +1260,58 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
     
     else if (data.action === 'export_servers') {
       try {
+        // 顺序读取：settings 走缓存，真正的 D1 查询只有一次，没必要并发打同一连接。
         const servers = await env.DB.prepare('SELECT * FROM servers ORDER BY sort_order ASC').all();
+        const siteSettings = await loadSiteSettings(env.DB);
+        const appearanceSettings = await loadAppearanceOptions(env.DB);
         return createSuccessResponse({
           success: true,
           servers: servers.results || [],
+          settings: pickExportableSettings(siteSettings, appearanceSettings),
           message: 'serversExported'
         });
       } catch (e) {
+        console.error('[export_servers] 导出失败:', e);
         return createBadRequestResponse('serversExportFailed');
       }
     }
     else if (data.action === 'import_servers') {
-      const { servers: importData } = data;
-      if (!importData || !Array.isArray(importData) || importData.length === 0) {
+      const { servers: importData, settings: importSettings } = data;
+      const hasServers = Array.isArray(importData) && importData.length > 0;
+      const hasSettings = Boolean(importSettings) && typeof importSettings === 'object' && !Array.isArray(importSettings);
+      // 允许只导入设置（服务器全部重复时也仍然写入设置）
+      if (!hasServers && !hasSettings) {
         return createBadRequestResponse('noServersToImport');
       }
 
       // 导入前先补列：INSERT 显式写入 traffic_alert_percent，缺列会导致每条导入全部跳过
       // 且不自动补列，与单个新增/编辑的行为不一致。此处先确保列存在（非致命，失败仍继续导入）。
-      try {
-        await addServerColumns(env.DB);
-      } catch (e) {
-        console.error('[import_servers] 导入前补列失败:', e);
+      // 只导入设置时完全不碰服务器表。
+      if (hasServers) {
+        try {
+          await addServerColumns(env.DB);
+        } catch (e) {
+          console.error('[import_servers] 导入前补列失败:', e);
+        }
       }
 
-      const existingServers = await env.DB.prepare('SELECT id FROM servers').all();
+      const existingServers = hasServers
+        ? await env.DB.prepare('SELECT id FROM servers').all()
+        : { results: [] };
       const existingIds = new Set((existingServers.results || []).map(s => s.id));
 
       let imported = 0;
       let skipped = 0;
       const skippedIds = [];
 
-      for (const server of importData) {
+      for (const server of hasServers ? importData : []) {
+        // 手改过的备份里可能出现 null / 字符串，先挡掉，避免 server.id 直接抛到外层变成 500
+        if (!server || typeof server !== 'object' || Array.isArray(server)) {
+          skipped++;
+          skippedIds.push('(invalid)');
+          continue;
+        }
+
         if (!server.id || !isValidUUID(server.id)) {
           skipped++;
           skippedIds.push(server.id || '(invalid)');
@@ -1284,19 +1381,41 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
           }
           imported++;
         } catch (e) {
+          console.error('[import_servers] 导入失败:', server.id, e);
           skipped++;
           skippedIds.push(server.id);
         }
       }
 
-      clearServersListCache();
+      if (hasServers) {
+        clearServersListCache();
+      }
+
+      const settingsResult = await applyImportedSettings({ env, sys, settings: importSettings });
+      // 上报开关/时段被覆盖后通知探针切换模式，与保存设置的行为保持一致。
+      // 这里用原始输入判断，必须先确认 site 是对象：字符串用 in 会直接抛 TypeError。
+      const importedSite = importSettings?.site;
+      const reportModeChanged = Boolean(
+        importedSite &&
+        typeof importedSite === 'object' &&
+        !Array.isArray(importedSite) &&
+        ('wss_report_enabled' in importedSite || 'wss_report_hours' in importedSite)
+      );
+      if (settingsResult.imported && reportModeChanged) {
+        scheduleAgentReportModeChanged(env, ctx);
+      }
+
+      let message = 'noServersImported';
+      if (imported > 0) message = 'serversImported';
+      else if (settingsResult.imported) message = 'settingsImported';
 
       return createSuccessResponse({
         success: true,
         imported,
         skipped,
         skippedIds,
-        message: imported > 0 ? 'serversImported' : 'noServersImported'
+        settings: settingsResult,
+        message
       });
     }
     

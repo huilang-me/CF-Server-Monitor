@@ -5,15 +5,13 @@
 
       <div class="settings-grid">
         <div class="form-group">
-          <label class="form-label">{{ trans.upgradeDatabase }}</label>
-          <p class="text-muted mb-2">{{ trans.upgradeDesc }}</p>
           <button @click="$emit('open-db-modal', 'upgrade')" class="btn btn-primary btn-lg" :disabled="dbLoading">⬆️ {{ trans.upgradeDatabase }}</button>
+          <p class="text-muted text-sm mt-2">{{ trans.upgradeDesc }}</p>
         </div>
 
         <div class="form-group">
-          <label class="form-label danger-label">⚠️ {{ trans.clearHistory }}</label>
-          <p class="text-muted mb-2">{{ trans.clearHistoryDesc }}</p>
           <button @click="$emit('open-db-modal', 'clearHistory')" class="btn btn-red btn-lg" :disabled="dbLoading">🗑️ {{ trans.clearHistory }}</button>
+          <p class="text-muted text-sm mt-2">{{ trans.clearHistoryDesc }}</p>
         </div>
       </div>
     </div>
@@ -23,16 +21,15 @@
 
       <div class="settings-grid">
         <div class="form-group">
-          <label class="form-label">{{ trans.exportServers }}</label>
-          <p class="text-muted mb-2">{{ trans.exportServersDesc }}</p>
           <button @click="handleExport" class="btn btn-primary btn-lg" :disabled="dbLoading || exporting">
             {{ exporting ? trans.exporting : '📤 ' + trans.exportServers }}
           </button>
+          <p v-if="exportNotice" class="text-sm mt-2" :style="{ color: exportNotice.success ? 'var(--accent-green)' : 'var(--accent-red)' }">
+            {{ exportNotice.success ? '✅' : '❌' }} {{ exportNotice.text }}
+          </p>
         </div>
 
         <div class="form-group">
-          <label class="form-label">{{ trans.importServers }}</label>
-          <p class="text-muted mb-2">{{ trans.importServersDesc }}</p>
           <input
             ref="fileInput"
             type="file"
@@ -45,6 +42,8 @@
           </button>
         </div>
       </div>
+
+      <p class="text-muted text-sm mt-2">{{ trans.importSettingsNote }}</p>
 
       <div v-if="importResult" class="mt-3">
         <div :class="importResult.success ? 'warning-box' : 'danger-box'" class="mb-2">
@@ -69,6 +68,7 @@
 <script setup>
 import { ref } from 'vue'
 import { adminApi } from '../../../utils/api'
+import { parseServerBackup } from '../../../utils/backup'
 
 const props = defineProps({
   trans: { type: Object, required: true },
@@ -83,25 +83,46 @@ const fileInput = ref(null)
 const exporting = ref(false)
 const importing = ref(false)
 const importResult = ref(null)
+const exportNotice = ref(null)
+
+const emptyResult = () => ({ success: false, imported: 0, skipped: 0, skippedIds: [] })
 
 const handleExport = async () => {
   exporting.value = true
   importResult.value = null
+  exportNotice.value = null
   try {
     const result = await adminApi({ action: 'export_servers' }, props.selectedApiIndex)
-    if (!result.error && result.data && result.data.servers) {
-      const blob = new Blob([JSON.stringify(result.data.servers, null, 2)], { type: 'application/json' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `servers-backup-${new Date().toISOString().slice(0, 10)}.json`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
+    if (result.error || !result.data || !Array.isArray(result.data.servers)) {
+      // 后端返回的是错误码，能翻译就翻译，不能就用通用失败文案
+      exportNotice.value = {
+        success: false,
+        text: props.trans[result.error] || props.trans.serversExportFailed
+      }
+      return
     }
+
+    // 服务器 + 站点/外观设置打成一个文件；环境相关字段由后端过滤，不会写进备份。
+    const payload = {
+      format: 'cfsm-backup',
+      version: 1,
+      exported_at: new Date().toISOString(),
+      servers: result.data.servers,
+      settings: result.data.settings || null
+    }
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `cfsm-backup-${new Date().toISOString().slice(0, 10)}.json`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    exportNotice.value = { success: true, text: props.trans.serversExported }
   } catch (e) {
     console.error('Export failed:', e)
+    exportNotice.value = { success: false, text: props.trans.serversExportFailed }
   } finally {
     exporting.value = false
   }
@@ -116,14 +137,15 @@ const handleFileSelect = async (event) => {
 
   try {
     const text = await file.text()
-    const servers = JSON.parse(text)
+    // 旧版纯服务器数组与新备份 { servers, settings } 都支持
+    const { servers, settings } = parseServerBackup(text)
 
-    if (!Array.isArray(servers)) {
-      importResult.value = { success: false, imported: 0, skipped: 0, skippedIds: [] }
+    if (servers.length === 0 && !settings) {
+      importResult.value = emptyResult()
       return
     }
 
-    const result = await adminApi({ action: 'import_servers', servers }, props.selectedApiIndex)
+    const result = await adminApi({ action: 'import_servers', servers, settings }, props.selectedApiIndex)
     if (!result.error && result.data) {
       importResult.value = {
         success: result.data.success,
@@ -131,15 +153,15 @@ const handleFileSelect = async (event) => {
         skipped: result.data.skipped || 0,
         skippedIds: result.data.skippedIds || []
       }
-      if (result.data.imported > 0) {
+      if (result.data.imported > 0 || result.data.settings?.imported) {
         window.location.reload()
       }
     } else {
-      importResult.value = { success: false, imported: 0, skipped: 0, skippedIds: [] }
+      importResult.value = emptyResult()
     }
   } catch (e) {
     console.error('Import failed:', e)
-    importResult.value = { success: false, imported: 0, skipped: 0, skippedIds: [] }
+    importResult.value = emptyResult()
   } finally {
     importing.value = false
     if (fileInput.value) {
