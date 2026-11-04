@@ -254,11 +254,14 @@ loginctl enable-linger 用户名
 后台复制安装命令的目标系统支持选择 Docker，会生成如下容器命令（服务器 ID、Secret、Worker 地址已按当前服务器自动填充，镜像标签默认 `latest`，可在 Agent 版本栏自定义）：
 
 ```bash
-docker run -d --name cf-probe --restart=unless-stopped --network=host \
+docker run -d --name cf-probe --restart=unless-stopped --network=host --pid=host --cap-drop=ALL --cap-add=NET_RAW \
   -v cf-probe-data:/data \
+  -v /etc/os-release:/etc/os-release:ro \
   -e SERVER_ID=<服务器ID> -e SECRET='<API_SECRET>' -e WORKER_URL=https://<你的后台地址>/update \
   ghcr.io/huilang-me/cfsm-agent:latest
 ```
+
+群晖 DSM 需要额外挂载版本文件，否则面板只能显示镜像内的系统名：在命令中追加 `-v /etc/defaults/VERSION:/etc/defaults/VERSION:ro`。
 
 采集间隔、上报间隔、Ping 节点、网卡、流量重置日、上下行校正等运行参数由 Agent 按 `SERVER_ID` 从后台动态拉取，无需在命令中重复指定；更换镜像标签即回退/升级到指定版本。卸载容器：
 

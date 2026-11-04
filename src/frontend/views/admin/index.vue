@@ -1939,8 +1939,9 @@ const getCustomInstallCommand = () => {
     const ua = installUserAgent()
     const uaEnv = ua ? ` -e UA=${quotePosixShellArg(ua)}` : ''
     return [
-      'docker run -d --name cf-probe --restart=unless-stopped --network=host \\',
+      'docker run -d --name cf-probe --restart=unless-stopped --network=host --pid=host --cap-drop=ALL --cap-add=NET_RAW \\',
       '  -v cf-probe-data:/data \\',
+      '  -v /etc/os-release:/etc/os-release:ro \\',
       `  -e SERVER_ID=${quotePosixShellArg(copyServerId.value)} -e SECRET=${quotePosixShellArg(apiSecret.value)} -e WORKER_URL=${quotePosixShellArg(`${HOST}/update`)}${uaEnv} \\`,
       `  ${image}`
     ].join('\n')

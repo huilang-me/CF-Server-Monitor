@@ -256,11 +256,14 @@ When uninstalling, select the user that originally installed the Agent. For Open
 The admin copy-install dialog lets you choose Docker as the target system, generating a container command like the one below (server ID, secret, and Worker URL are filled in automatically for the current server; the image tag defaults to `latest` and can be customized in the Agent version field):
 
 ```bash
-docker run -d --name cf-probe --restart=unless-stopped --network=host \
+docker run -d --name cf-probe --restart=unless-stopped --network=host --pid=host --cap-drop=ALL --cap-add=NET_RAW \
   -v cf-probe-data:/data \
+  -v /etc/os-release:/etc/os-release:ro \
   -e SERVER_ID=<server-id> -e SECRET='<API_SECRET>' -e WORKER_URL=https://<your-worker>/update \
   ghcr.io/huilang-me/cfsm-agent:latest
 ```
+
+On Synology DSM, mount the version file as well, otherwise the panel can only show the image's OS name: add `-v /etc/defaults/VERSION:/etc/defaults/VERSION:ro` to the command.
 
 Collect interval, report interval, ping nodes, network interface, traffic reset day, and upload/download correction are pulled dynamically by the Agent from the admin panel via `SERVER_ID`, so they do not need to be repeated in the command; changing the image tag upgrades or rolls back to that version. To remove the container:
 
