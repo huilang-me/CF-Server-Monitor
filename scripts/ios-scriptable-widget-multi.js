@@ -48,9 +48,10 @@ function normalizeServerId(value) {
 
 // 返回要显示的服务器列表（id 或名字），空数组 = 全部
 function wantedServers() {
-  const source = widgetParameter || (CONFIG.servers || []).join(",");
-  if (/^all$/i.test(source.trim())) return [];
-  return source.split(/[,，\s]+/).map(normalizeServerId).filter(Boolean);
+  const list = Array.isArray(CONFIG.servers) ? CONFIG.servers : [CONFIG.servers || ""];
+  const source = String(widgetParameter || list.join(",")).trim();
+  if (/^all$/i.test(source)) return [];
+  return [...new Set(source.split(/[,，\s]+/).map(normalizeServerId).filter(Boolean))];
 }
 
 function getFlagRegionCode(region) {
@@ -189,10 +190,23 @@ function trafficPercent(server) {
   return percent(trafficUsedBytes(server), limit);
 }
 
+// 站点关了流量额度开关就不画 TRF（SYS 还没拿到时按开启处理）
+function showTraffic() {
+  return SYS.show_tf !== false;
+}
+
 function hhmm(date) {
   const d = date ? new Date(date) : new Date();
   const p = (n) => (n < 10 ? "0" : "") + n;
   return `${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+// 缓存时间：不是今天的带上月/日，跨天时才看得出数据有多旧
+function cacheTime(ts) {
+  const d = new Date(ts);
+  const now = new Date();
+  const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+  return sameDay ? hhmm(ts) : `${d.getMonth() + 1}/${d.getDate()} ${hhmm(ts)}`;
 }
 
 async function fetchJSON(path) {
@@ -229,10 +243,18 @@ async function fetchServers(wanted) {
 }
 
 // 上次成功的数据存在本机缓存里，网络出错时先显示旧数据
+// 缓存名带上站点指纹，换 baseURL 后不会读到上一个站点的旧数据
+function siteTag() {
+  let h = 0;
+  const s = CONFIG.baseURL || "";
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
+
 function cachePath(wanted) {
   const fm = FileManager.local();
   const key = (wanted.join("_") || "all").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 80) || "custom";
-  return { fm, path: fm.joinPath(fm.cacheDirectory(), `cfsm-widget-${key}.json`) };
+  return { fm, path: fm.joinPath(fm.cacheDirectory(), `cfsm-widget-${siteTag()}-${key}.json`) };
 }
 
 function saveCache(wanted, result) {
@@ -268,15 +290,20 @@ async function loadServers() {
   const servers = result.servers;
   SYS = result.sysConfig || {};
 
-  await Promise.all(servers.map(async (server) => {
+  // 只给会显示出来的那几台拉国旗（列表视图最多 maxRows 台），同一个地区只请求一次
+  const shown = servers.length === 1 ? 1 : Math.max(1, Number((CONFIG.maxRows || {})[family]) || 3);
+  const codes = [...new Set(servers.slice(0, shown).map((s) => getFlagRegionCode(s.region)).filter(Boolean))];
+  const flagMap = new Map();
+  await Promise.all(codes.map(async (code) => flagMap.set(code, await fetchFlagImage(code))));
+  servers.forEach((server) => {
     server._flagRegionCode = getFlagRegionCode(server.region);
-    server._flagImage = await fetchFlagImage(server.region);
-  }));
+    server._flagImage = flagMap.get(server._flagRegionCode) || null;
+  });
+
   const online = servers.filter(isOnline).length;
   return {
     servers,
     stats: { total: servers.length, online, offline: servers.length - online },
-    single: wanted.length === 1,
     staleAt
   };
 }
@@ -461,17 +488,27 @@ function carriers(server) {
     .filter(({ key }) => server[`ping_${key}`] !== false || (server.ping || []).some((p) => typeof p[key] === "number"));
 }
 
-// 按时间排好的 [{ ping, loss }]；ping 为 null 表示这一轮超时
+// 按时间排好的 [{ ping, loss }]
+// 后端会把窗口里每个时间桶都填满（includeEmpty）：没采样时 ping 是 null，
+// 有采样但全超时时 ping 也是 null 而 loss 有值。所以只有 loss 也有值才算超时，
+// 两者都是 null 只是"这一轮没数据"（探针重启 / 服务器新加 / 窗口中间断档）。
 function latencySeries(server, key) {
-  const loss = new Map((server.loss || []).map((p) => [p.ts, p[key]]));
+  const lossMap = new Map((server.loss || []).map((p) => [p.ts, p[key]]));
+  const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
   const series = (server.ping || [])
     .filter((p) => p[key] !== false && p[key] !== undefined)
     .sort((a, b) => a.ts - b.ts)
-    .map((p) => ({ ping: p[key], loss: Number(loss.get(p.ts)) || 0 }));
-  if (!series.length && typeof server[`ping_${key}`] === "number") {
-    series.push({ ping: server[`ping_${key}`], loss: Number(server[`loss_${key}`]) || 0 });
+    .map((p) => ({ ping: num(p[key]), loss: num(lossMap.get(p.ts)) }));
+  if (!series.length && server[`ping_${key}`] !== false) {
+    const ping = num(server[`ping_${key}`]);
+    const loss = num(server[`loss_${key}`]);
+    if (ping !== null || loss !== null) series.push({ ping, loss });
   }
   return series;
+}
+
+function isTimeout(sample) {
+  return !!sample && typeof sample.ping !== "number" && typeof sample.loss === "number";
 }
 
 function latencyColor(ms) {
@@ -492,7 +529,8 @@ function latencyScale(server, list) {
   return { lo, hi: Math.max(p90 * 1.15, lo + 20) };
 }
 
-// 每根柱子是一次采样（最新的在右）：高度 = 延迟，颜色 = 线路；顶部红色 = 丢包比例；整根暗红 = 超时
+// 每根柱子是一次采样（最新的在右）：高度 = 延迟，颜色 = 线路；顶部红色 = 丢包比例；
+// 整根暗红 = 超时；只留底部一条轨道 = 这一轮没数据
 function latencyChart(series, width, height, scale, color) {
   const slots = Math.max(8, Number((SYS.latency_window || {}).points) || 20);
   const dc = new DrawContext();
@@ -510,6 +548,7 @@ function latencyChart(series, width, height, scale, color) {
     dc.fillRect(new Rect(x, height - 1.5, barW, 1.5));
     if (!sample) continue;
     if (typeof sample.ping !== "number") {
+      if (!isTimeout(sample)) continue;
       dc.setFillColor(new Color("#f85149", 0.45));
       dc.fillRect(new Rect(x, 0, barW, height));
       continue;
@@ -545,33 +584,39 @@ const CARD_FONT = {
 
 // 每条线路一行：名字 | 当前延迟 | 柱状图 | 当前丢包
 function addLatencyRows(parent, server, width, rowH, gap) {
+  // 站点关了三网延迟开关就不画，跟网页端保持一致
+  if (SYS.show_three_net_details === false) return;
   const list = carriers(server);
   if (!list.length) {
     addText(parent, "未配置三网延迟", CARD_FONT.text, COL.dim2, 1);
     return;
   }
   const scale = latencyScale(server, list);
-  const nameW = 26;
-  const valW = 40;
-  const lossW = 30;
-  const chartW = Math.max(40, width - nameW - valW - lossW - 12);
+  // 窄屏（320pt）时右侧只剩一百来点，缩一缩固定列宽，别把柱状图挤成负数
+  const compact = width < 150;
+  const nameW = compact ? 22 : 26;
+  const valW = compact ? 34 : 40;
+  const lossW = compact ? 26 : 30;
+  const chartW = Math.max(24, width - nameW - valW - lossW - 12);
   list.forEach((c, i) => {
     if (i > 0) parent.addSpacer(gap);
     const series = latencySeries(server, c.key);
-    const last = series[series.length - 1] || {};
+    // 右侧显示最近一次有数据的采样：窗口最后一格可能还没上报，别因此把延迟显示成 "-"
+    const last = series.slice().reverse().find((s) => typeof s.ping === "number" || typeof s.loss === "number");
+    const hasPing = !!last && typeof last.ping === "number";
+    const timeout = isTimeout(last);
     const row = parent.addStack();
     row.centerAlignContent();
     row.size = new Size(width, rowH);
     addFixedText(row, c.name, nameW, CARD_FONT.label, c.color);
     row.addSpacer(4);
-    const ping = typeof last.ping === "number" ? `${Math.round(last.ping)}ms` : series.length ? "超时" : "-";
-    addFixedText(row, ping, valW, CARD_FONT.text, typeof last.ping === "number" ? latencyColor(last.ping) : COL.red, true);
+    addFixedText(row, hasPing ? `${Math.round(last.ping)}ms` : timeout ? "超时" : "-", valW, CARD_FONT.text, hasPing ? latencyColor(last.ping) : timeout ? COL.red : COL.dim2, true);
     row.addSpacer(4);
     const img = row.addImage(latencyChart(series, chartW, rowH, scale, c.color));
     img.imageSize = new Size(chartW, rowH);
     row.addSpacer(4);
-    const loss = Math.round(Number(last.loss) || 0);
-    addFixedText(row, `${loss}%`, lossW, CARD_FONT.text, loss > 0 ? COL.red : COL.dim2, true);
+    const loss = last && typeof last.loss === "number" ? Math.round(last.loss) : null;
+    addFixedText(row, loss === null ? "-" : `${loss}%`, lossW, CARD_FONT.text, loss > 0 ? COL.red : COL.dim2, true);
   });
 }
 
@@ -590,7 +635,7 @@ function addMiniBar(parent, label, value, width, rowH) {
 // 卡片底部：本月流量 · 额度 · 运行天数，右边到期。尽量短，保证一行放得下
 function cardFooter(server) {
   const parts = [`本月 ↓${shortBytes(server.net_rx_monthly)} ↑${shortBytes(server.net_tx_monthly)}`];
-  if (server.traffic_limit) parts.push(`额度 ${Math.round(trafficPercent(server))}%`);
+  if (showTraffic() && server.traffic_limit) parts.push(`额度 ${Math.round(trafficPercent(server))}%`);
   const boot = normalizeTimestamp(server.boot_time);
   if (boot > 0) {
     const days = Math.floor((Date.now() - boot) / 86400000);
@@ -621,7 +666,8 @@ function addServerCard(widget, server, innerW, roomy) {
   addText(head, "●", Font.systemFont(8), online ? COL.green : COL.dim2, 1);
   head.addSpacer(5);
   if (addFlag(head, server, 18, 13)) head.addSpacer(6);
-  addText(head, serverName(server), CARD_FONT.name, online ? COL.fg : COL.dim, 1);
+  const cardName = addText(head, serverName(server), CARD_FONT.name, online ? COL.fg : COL.dim, 1);
+  cardName.minimumScaleFactor = 0.7;
   head.addSpacer();
   addText(head, online ? speedText(server) : offlineText(server), CARD_FONT.text, online ? COL.dim : COL.red, 1);
   if (server._missing) return;
@@ -694,7 +740,7 @@ function addSmallServer(widget, server) {
   addBar(widget, "RAM", ram, 70, 7);
   widget.addSpacer(5);
   addBar(widget, "DSK", disk, 70, 7);
-  if (server.traffic_limit) {
+  if (showTraffic() && server.traffic_limit) {
     widget.addSpacer(5);
     addBar(widget, "TRF", trafficPercent(server), 70, 7);
   }
@@ -707,15 +753,6 @@ function addSmallServer(widget, server) {
   net.minimumScaleFactor = 0.7;
   const up = uptimeText(server);
   if (online && up) addText(widget, `运行 ${up}`, Font.systemFont(9), COL.dim2, 1);
-}
-
-function addNetLine(parent, label, value, color) {
-  const row = parent.addStack();
-  row.centerAlignContent();
-  addText(row, label, Font.semiboldSystemFont(10), COL.dim, 1);
-  row.addSpacer();
-  const speed = addText(row, `${formatBytes(value)}/s`, Font.systemFont(11), color, 1);
-  speed.minimumScaleFactor = 0.7;
 }
 
 function addSingleHeader(widget, server, large, footer) {
@@ -752,15 +789,17 @@ function addMediumServer(widget, server, footer) {
   widget.addSpacer(10);
   const metrics = widget.addStack();
   metrics.layoutHorizontally();
-  addMetricColumn(metrics, "CPU", Number(server.cpu) || 0, 80);
+  // 按实际可用宽度分配，320pt 屏上写死 80 会顶出去
+  const colW = Math.floor((widgetWidth() - 40) / 3);
+  addMetricColumn(metrics, "CPU", Number(server.cpu) || 0, colW);
   metrics.addSpacer();
-  addMetricColumn(metrics, "RAM", percent(server.ram_used, server.ram_total), 80);
+  addMetricColumn(metrics, "RAM", percent(server.ram_used, server.ram_total), colW);
   metrics.addSpacer();
-  addMetricColumn(metrics, "DISK", percent(server.disk_used, server.disk_total), 80);
+  addMetricColumn(metrics, "DISK", percent(server.disk_used, server.disk_total), colW);
 
   widget.addSpacer(8);
-  if (server.traffic_limit) {
-    addBar(widget, "TRF", trafficPercent(server), 222, 6);
+  if (showTraffic() && server.traffic_limit) {
+    addBar(widget, "TRF", trafficPercent(server), Math.max(60, widgetWidth() - 100), 6);
   } else {
     addText(widget, `本月 ↓${formatBytes(server.net_rx_monthly)}  ↑${formatBytes(server.net_tx_monthly)}`, Font.systemFont(9), COL.dim, 1);
   }
@@ -798,7 +837,7 @@ function addLargeServer(widget, server, footer) {
   }
   widget.addSpacer(gap);
   addDetailBar(widget, "DISK", percent(server.disk_used, server.disk_total), `${formatMB(server.disk_used)} / ${formatMB(server.disk_total)}`, barW, true);
-  if (server.traffic_limit) {
+  if (showTraffic() && server.traffic_limit) {
     widget.addSpacer(gap);
     addDetailBar(widget, "TRF", trafficPercent(server), `${formatBytes(trafficUsedBytes(server))} / ${formatBytes(trafficLimitBytes(server.traffic_limit))}`, barW, true);
   }
@@ -903,7 +942,7 @@ function buildWidget(data) {
 
   if (!data.servers.length) return errWidget("No matching servers");
 
-  const footer = data.staleAt ? `⚠ 缓存 ${hhmm(data.staleAt)}` : `更新 ${hhmm()}`;
+  const footer = data.staleAt ? `⚠ 缓存 ${cacheTime(data.staleAt)}` : `更新 ${hhmm()}`;
   if (data.servers.length === 1) addSingleServer(widget, data.servers[0], footer);
   else addServerList(widget, data, footer);
   return widget;

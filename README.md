@@ -323,6 +323,8 @@ npm run build:github-page
 
 小组件会显示在线状态、CPU、内存、磁盘、月流量、实时上下行速率和更新时间。iOS 会按系统策略决定实际刷新频率。
 
+需要一次看多台时用 [scripts/ios-scriptable-widget-multi.js](scripts/ios-scriptable-widget-multi.js)：用法相同，Parameter 留空显示面板上所有公开服务器，填 `server-a,server-b` 只显示这几台，只填一台时显示详细视图（带三网延迟柱状图）。它请求的是 `/api/servers`（全站列表），服务器较多时会比单机版产生更多 D1 查询。
+
 ## 通知与告警
 
 在管理后台 -> 全局设置 -> 通知 中配置。通知分为“内置渠道”、“SMTP 邮件”和“自定义 Webhook”三种渠道；选择自定义 Webhook 后，后端只会发送 Webhook，不会再调用内置渠道。
