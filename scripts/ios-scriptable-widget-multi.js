@@ -479,19 +479,17 @@ function latencyColor(ms) {
 }
 
 // 一台服务器所有线路共用一个纵轴，方便横向比较。纵轴从最低延迟的 40% 开始，
-// 否则延迟都差不多时每根柱子一样高，看不出波动
+// 否则延迟都差不多时每根柱子一样高，看不出波动；顶端取 90 分位，偶尔一次尖峰顶满，不会把其他柱子压扁
 function latencyScale(server, list) {
-  let min = Infinity;
-  let max = 0;
+  const values = [];
   for (const c of list) {
-    for (const p of latencySeries(server, c.key)) {
-      if (typeof p.ping !== "number") continue;
-      min = Math.min(min, p.ping);
-      max = Math.max(max, p.ping);
-    }
+    for (const p of latencySeries(server, c.key)) if (typeof p.ping === "number") values.push(p.ping);
   }
-  if (!max) return { lo: 0, hi: 100 };
-  return { lo: Math.floor(min * 0.4), hi: Math.max(max * 1.08, min * 0.4 + 20) };
+  if (!values.length) return { lo: 0, hi: 100 };
+  values.sort((a, b) => a - b);
+  const lo = Math.floor(values[0] * 0.4);
+  const p90 = values[Math.floor((values.length - 1) * 0.9)];
+  return { lo, hi: Math.max(p90 * 1.15, lo + 20) };
 }
 
 // 每根柱子是一次采样（最新的在右）：高度 = 延迟，颜色 = 线路；顶部红色 = 丢包比例；整根暗红 = 超时
