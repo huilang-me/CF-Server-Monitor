@@ -3,8 +3,8 @@
 // 用法：粘贴进 Scriptable，改 CONFIG.baseURL；小组件 Parameter 填服务器 id（也支持 id:xxx）
 
 const CONFIG = {
-  baseURL: "https://monitor.m1ss.xyz", //必填
-  serverId: "" //必填，也可以在 widgetParameter 中指定
+  baseURL: "example.com", //必填，服务器监控面板网址
+  serverId: "ad7f3449-9681-4988-a6fc-64ccb80d5c75" //必填，也可以在 widgetParameter 中指定
 };
 
 CONFIG.baseURL = String(CONFIG.baseURL || "").replace(/\/+$/, "");
@@ -126,7 +126,7 @@ function validPingValue(v) {
 }
 
 function pingHex(v) {
-  if (!validPingValue(v)) return "#6e7681";
+  if (!validPingValue(v)) return "#f85149";
   if (v < PING_WARN) return "#3fb950";
   if (v < PING_BAD) return "#d29922";
   return "#f85149";
@@ -137,8 +137,17 @@ function pingColor(v) {
 }
 
 function formatPing(v) {
-  if (!validPingValue(v)) return "--";
+  if (!validPingValue(v)) return "time out";
   return `${Math.round(v)}ms`;
+}
+
+// 历史序列里最后一个有效值，用于决定趋势柱颜色（当前超时不让历史柱跟着变红）
+function lastValidPing(series) {
+  if (!Array.isArray(series)) return null;
+  for (let i = series.length - 1; i >= 0; i--) {
+    if (validPingValue(series[i])) return series[i];
+  }
+  return null;
 }
 
 function hhmm() {
@@ -201,8 +210,9 @@ async function loadData() {
 
   const nodes = [];
   NODES.forEach((node) => {
-    const parsed = parsePing(server[`ping_${node.key}`]);
-    if (!parsed.disabled) nodes.push({ key: node.key, label: node.label, value: parsed.value });
+    const raw = server[`ping_${node.key}`];
+    const parsed = parsePing(raw);
+    if (!parsed.disabled) nodes.push({ key: node.key, label: node.label, value: parsed.value, missing: raw === undefined });
   });
 
   let history = { ct: [], cu: [], cm: [], bd: [] };
@@ -210,9 +220,10 @@ async function loadData() {
     const item = await fetchListServer(id);
     if (item) {
       history = extractHistory(item);
-      // /api/server 没取到值时，用列表里的当前值兜底
+      // 仅当单点接口完全没返回该字段时，才用列表里的当前值兜底；
+      // 0 / null 是明确的超时，不能被旧值覆盖
       nodes.forEach((node) => {
-        if (validPingValue(node.value)) return;
+        if (!node.missing || validPingValue(node.value)) return;
         const fallback = parsePing(item[`ping_${node.key}`]);
         if (validPingValue(fallback.value)) node.value = fallback.value;
       });
@@ -352,7 +363,7 @@ function addPingRow(parent, node, series, opts) {
 
   if (opts.sparkW) {
     row.addSpacer(6);
-    const img = sparkImg(series, opts.sparkW, opts.sparkH, pingHex(node.value));
+    const img = sparkImg(series, opts.sparkW, opts.sparkH, pingHex(lastValidPing(series)));
     if (img) {
       const el = row.addImage(img);
       el.imageSize = new Size(opts.sparkW, opts.sparkH);
