@@ -8,11 +8,16 @@
 //   server-a                    只显示一台（服务器 id 或面板里的名字都行）→ 详细视图 / one server (id or name) → detail view
 //   server-a,server-b,server-c  显示多台（逗号或空格分隔）→ 列表视图 / several servers → list view
 //   id:xxxx                     兼容原脚本的写法 / same syntax as the original script
+//   page:2（或 p2、2、第2页）     智能叠放用：只显示第几页；不填页码 = 第 1 页 / Smart Stack: show page N (default page 1)
+// 服务器总是自动分页，台数平均分（3 台 = 2+1，5 台 = 2+2+1），加了机器不用改设置；页码超出时提示"这一页没有机器"
+// Servers are always paged and balanced (3 → 2+1, 5 → 2+2+1); an out-of-range page shows a hint
+//   小、中尺寸：每页 1 台 / small, medium: 1 per page
+//   大尺寸：每页 2 台（两张中尺寸样式的卡片）；只剩 1 台时是单台详细视图 / large: 2 per page as two medium-style cards, 1 → detail view
+// 小组件尺寸按机型查表（WIDGET_SIZES），iPhone Air 是实机量的 / widget sizes come from a per-device table
 
 const CONFIG = {
   baseURL: "https://www.example.com", //必填
   servers: [], //可选，填 id 或名字，例如 ["server-a", "server-b"]；留空 = 全部
-  maxRows: { small: 3, medium: 3, large: 3 }, //列表视图每种尺寸最多显示几台，多的显示"还有 N 台"
   refreshMinutes: 5 //iOS 会自己限流，实际刷新间隔通常更长
 };
 
@@ -46,10 +51,16 @@ function normalizeServerId(value) {
   return raw;
 }
 
-// 返回要显示的服务器列表（id 或名字），空数组 = 全部
+// Parameter 是页码（page:2、page：2、p2、2、第2页）时返回页码，否则返回 0
+function pageParam() {
+  const matched = widgetParameter.match(/^(?:page|p|第)?\s*[:：]?\s*(\d+)\s*页?$/i);
+  return matched ? Math.max(1, Number(matched[1])) : 0;
+}
+
+// 返回要显示的服务器列表（id 或名字），空数组 = 全部；Parameter 是页码时，范围用 CONFIG.servers
 function wantedServers() {
   const list = Array.isArray(CONFIG.servers) ? CONFIG.servers : [CONFIG.servers || ""];
-  const source = String(widgetParameter || list.join(",")).trim();
+  const source = String((pageParam() ? "" : widgetParameter) || list.join(",")).trim();
   if (/^all$/i.test(source)) return [];
   return [...new Set(source.split(/[,，\s]+/).map(normalizeServerId).filter(Boolean))];
 }
@@ -115,15 +126,16 @@ function formatBytes(bytes) {
   return `${v} ${units[i]}`;
 }
 
-// 面板里内存和磁盘的单位是 MB
-function formatMB(mb) {
-  return formatBytes((Number(mb) || 0) * 1024 * 1024);
-}
 
-// 列表里空间小，用紧凑写法：1.2G、345K
+// 空间小，用紧凑写法：1.2G、345K
 function shortBytes(bytes) {
   const text = formatBytes(bytes).replace(/^(\d{3,})\.\d/, "$1");
   return text.replace(/\.0 /, " ").replace(/ ([KMGT])?B$/, (m, u) => u || "B");
+}
+
+// 面板里内存和磁盘的单位是 MB
+function shortMB(mb) {
+  return shortBytes((Number(mb) || 0) * 1024 * 1024);
 }
 
 function formatDuration(ms) {
@@ -152,16 +164,6 @@ function expiryColor(days) {
   return days <= 7 ? COL.red : days <= 30 ? COL.amber : COL.dim;
 }
 
-function pingParts(server) {
-  const parts = [];
-  for (const [key, label] of [["ct", "电"], ["cu", "联"], ["cm", "移"], ["bd", "百"]]) {
-    const ping = Number(server[`ping_${key}`]);
-    if (server[`ping_${key}`] === false || !Number.isFinite(ping) || ping <= 0) continue;
-    const loss = Number(server[`loss_${key}`]) || 0;
-    parts.push(`${label}${Math.round(ping)}${loss > 0 ? `(${Math.round(loss)}%)` : ""}`);
-  }
-  return parts;
-}
 
 function trafficUsedBytes(server) {
   const rx = Number(server.net_rx_monthly) || 0;
@@ -287,12 +289,23 @@ async function loadServers() {
     result = cached;
     staleAt = cached.savedAt;
   }
-  const servers = result.servers;
+  const all = result.servers || [];
   SYS = result.sysConfig || {};
 
-  // 只给会显示出来的那几台拉国旗（列表视图最多 maxRows 台），同一个地区只请求一次
-  const shown = servers.length === 1 ? 1 : Math.max(1, Number((CONFIG.maxRows || {})[family]) || 3);
-  const codes = [...new Set(servers.slice(0, shown).map((s) => getFlagRegionCode(s.region)).filter(Boolean))];
+  // 分页：页数 = ceil(总数 / 每页上限)，再把台数平均分到各页；没填页码就是第 1 页
+  const page = pageParam() || 1;
+  // 每页台数跟排版绑定：大尺寸 2 台，小、中尺寸 1 台
+  const pageSize = family === "large" ? 2 : 1;
+  const count = Math.max(1, Math.ceil(all.length / pageSize));
+  // 前 (总数 % 页数) 页各多放一台，例如 5 台 = 2+2+1
+  const base = Math.floor(all.length / count);
+  const extra = all.length % count;
+  const start = (page - 1) * base + Math.min(page - 1, extra);
+  const servers = page > count ? [] : all.slice(start, start + base + (page <= extra ? 1 : 0));
+  const pageInfo = { index: page, count };
+
+  // 只给这一页的几台拉国旗，同一个地区只请求一次
+  const codes = [...new Set(servers.map((s) => getFlagRegionCode(s.region)).filter(Boolean))];
   const flagMap = new Map();
   await Promise.all(codes.map(async (code) => flagMap.set(code, await fetchFlagImage(code))));
   servers.forEach((server) => {
@@ -300,10 +313,12 @@ async function loadServers() {
     server._flagImage = flagMap.get(server._flagRegionCode) || null;
   });
 
-  const online = servers.filter(isOnline).length;
+  // 在线统计按全部服务器算，分页时也能看出别的页有没有掉线的
+  const online = all.filter(isOnline).length;
   return {
     servers,
-    stats: { total: servers.length, online, offline: servers.length - online },
+    stats: { total: all.length, online, offline: all.length - online },
+    pageInfo,
     staleAt
   };
 }
@@ -319,29 +334,6 @@ function baseWidget() {
   return w;
 }
 
-function barImg(value, width, height, color) {
-  const p = clampPercent(value);
-  const dc = new DrawContext();
-  dc.size = new Size(width, height);
-  dc.opaque = false;
-  dc.respectScreenScale = true;
-
-  const bg = new Path();
-  bg.addRoundedRect(new Rect(0, 0, width, height), height / 2, height / 2);
-  dc.addPath(bg);
-  dc.setFillColor(COL.track);
-  dc.fillPath();
-
-  const fw = Math.max(height, (width * p) / 100);
-  const fg = new Path();
-  fg.addRoundedRect(new Rect(0, 0, fw, height), height / 2, height / 2);
-  dc.addPath(fg);
-  dc.setFillColor(color);
-  dc.fillPath();
-
-  return dc.getImage();
-}
-
 function addText(parent, text, font, color, lineLimit) {
   const t = parent.addText(String(text));
   t.font = font;
@@ -350,66 +342,153 @@ function addText(parent, text, font, color, lineLimit) {
   return t;
 }
 
-function addBar(parent, label, value, width, height) {
-  const row = parent.addStack();
-  row.centerAlignContent();
-  const labelBox = row.addStack();
-  labelBox.size = new Size(34, 12);
-  addText(labelBox, label, Font.semiboldSystemFont(9), COL.dim, 1);
-  row.addSpacer(5);
-  const img = row.addImage(barImg(value, width, height, usageColor(value)));
-  img.imageSize = new Size(width, height);
-  row.addSpacer(5);
-  const val = addText(row, `${Math.round(clampPercent(value))}%`, Font.systemFont(9), COL.dim, 1);
-  val.minimumScaleFactor = 0.7;
+// ---------- 尺寸 ----------
+
+// iOS 小组件尺寸（pt）：[屏宽, 屏高, 小/中尺寸的高, 中/大尺寸的宽, 大尺寸的高]
+// 来自 Apple 设计规范；iPhone Air（420×912）规范里没有，是 2026-11 从实机截图量的
+const WIDGET_SIZES = [
+  [440, 956, 170, 364, 382],
+  [430, 932, 170, 364, 382],
+  [428, 926, 170, 364, 382],
+  [420, 912, 172, 366, 381],
+  [414, 896, 169, 360, 379],
+  [414, 736, 159, 348, 357],
+  [402, 874, 162, 345, 364],
+  [393, 852, 158, 338, 354],
+  [390, 844, 158, 338, 354],
+  [375, 812, 155, 329, 345],
+  [375, 667, 148, 321, 324],
+  [360, 780, 155, 329, 345],
+  [320, 568, 141, 292, 311]
+];
+
+// 当前尺寸的小组件宽高；表里没有的机型取屏宽最接近的一档，再按屏宽比例缩放
+function widgetSize() {
+  const s = Device.screenSize();
+  const sw = Math.min(s.width, s.height);
+  const sh = Math.max(s.width, s.height);
+  let row = WIDGET_SIZES.find((r) => Math.abs(r[0] - sw) <= 1 && Math.abs(r[1] - sh) <= 1);
+  let k = 1;
+  if (!row) {
+    row = WIDGET_SIZES.reduce((a, b) => (Math.abs(b[0] - sw) < Math.abs(a[0] - sw) ? b : a));
+    k = sw / row[0];
+  }
+  const [, , smallH, wideW, largeH] = row.map((v) => Math.floor(v * k));
+  if (family === "small") return { w: smallH, h: smallH };
+  if (family === "large") return { w: wideW, h: largeH };
+  return { w: wideW, h: smallH };
 }
 
-// 详细视图用：标签 + 进度条 + 右侧说明（例如 1.7 GB / 3.8 GB）
-function addDetailBar(parent, label, value, detail, width, big) {
-  const row = parent.addStack();
-  row.centerAlignContent();
-  const labelBox = row.addStack();
-  labelBox.size = new Size(big ? 38 : 34, big ? 14 : 12);
-  addText(labelBox, label, Font.semiboldSystemFont(big ? 11 : 9), COL.dim, 1);
-  row.addSpacer(4);
-  const h = big ? 9 : 7;
-  const img = row.addImage(barImg(value, width, h, usageColor(value)));
-  img.imageSize = new Size(width, h);
-  row.addSpacer(6);
-  const pct = addText(row, `${Math.round(clampPercent(value))}%`, Font.semiboldSystemFont(big ? 12 : 10), COL.fg, 1);
-  pct.minimumScaleFactor = 0.7;
-  row.addSpacer();
-  const d = addText(row, detail, Font.systemFont(big ? 10 : 9), COL.dim, 1);
-  d.minimumScaleFactor = 0.6;
+// ---------- 基础部件 ----------
+
+const FONT = {
+  name: Font.semiboldSystemFont(13),
+  label: Font.semiboldSystemFont(10),
+  text: Font.systemFont(10),
+  small: Font.systemFont(9)
+};
+
+// 固定宽度的单行文字，放不下时先缩小字号，别截成"…"
+function addFixedText(parent, text, width, font, color, right) {
+  const box = parent.addStack();
+  box.size = new Size(width, 0);
+  if (right) box.addSpacer();
+  const t = addText(box, text, font, color, 1);
+  t.minimumScaleFactor = 0.7;
+  if (!right) box.addSpacer();
+  return t;
 }
 
-function addMetricColumn(parent, label, value, width) {
+// 固定大小的竖排容器
+function fixedColumn(parent, width, height) {
   const col = parent.addStack();
   col.layoutVertically();
-  col.spacing = 3;
-  const top = col.addStack();
-  top.size = new Size(width, 0);
-  top.centerAlignContent();
-  addText(top, label, Font.semiboldSystemFont(9), COL.dim, 1);
-  top.addSpacer();
-  addText(top, `${Math.round(clampPercent(value))}%`, Font.systemFont(9), COL.dim2, 1);
-  const img = col.addImage(barImg(value, width, 6, usageColor(value)));
-  img.imageSize = new Size(width, 6);
+  col.size = new Size(width, height);
+  return col;
 }
 
-// 键值对一行：左右各一组
-function addKV(parent, pairs, big) {
+// 一行：左边文字撑开，右边文字靠右
+function addSplitRow(parent, width, height, left, right) {
   const row = parent.addStack();
   row.centerAlignContent();
-  pairs.forEach(([key, value, color], i) => {
-    if (i > 0) row.addSpacer();
-    const cell = row.addStack();
-    cell.centerAlignContent();
-    addText(cell, key, Font.semiboldSystemFont(big ? 10 : 9), COL.dim2, 1);
-    cell.addSpacer(4);
-    const v = addText(cell, value || "-", Font.systemFont(big ? 12 : 10), color || COL.fg, 1);
-    v.minimumScaleFactor = 0.6;
-  });
+  row.size = new Size(width, height);
+  if (left) addText(row, left.text, left.font || FONT.small, left.color || COL.dim2, 1).minimumScaleFactor = 0.7;
+  row.addSpacer();
+  if (right) addText(row, right.text, right.font || FONT.small, right.color || COL.dim2, 1).minimumScaleFactor = 0.7;
+  return row;
+}
+
+// 圆环：灰色轨道 + 按百分比的彩色弧线，中间写百分比。
+// Scriptable 没有画弧的 API，用很多短线段拼出来，两头各补一个圆点当圆角
+function ringImg(value, size, lineW) {
+  const p = clampPercent(value);
+  const dc = new DrawContext();
+  dc.size = new Size(size, size);
+  dc.opaque = false;
+  dc.respectScreenScale = true;
+  const c = size / 2;
+  const r = c - lineW / 2 - 0.5;
+  const arc = (from, to) => {
+    const path = new Path();
+    const steps = Math.max(2, Math.ceil(Math.abs(to - from) / 0.05));
+    const pts = [];
+    for (let i = 0; i <= steps; i++) {
+      const a = from + ((to - from) * i) / steps;
+      pts.push(new Point(c + r * Math.cos(a), c + r * Math.sin(a)));
+    }
+    path.addLines(pts);
+    return path;
+  };
+  const start = -Math.PI / 2;
+  dc.setLineWidth(lineW);
+  dc.addPath(arc(start, start + Math.PI * 2));
+  dc.setStrokeColor(COL.track);
+  dc.strokePath();
+
+  const color = usageColor(p);
+  const end = start + Math.PI * 2 * Math.max(0.015, p / 100);
+  dc.addPath(arc(start, end));
+  dc.setStrokeColor(color);
+  dc.strokePath();
+  dc.setFillColor(color);
+  for (const a of [start, end]) {
+    dc.fillEllipse(new Rect(c + r * Math.cos(a) - lineW / 2, c + r * Math.sin(a) - lineW / 2, lineW, lineW));
+  }
+
+  const fontSize = size >= 50 ? 14 : 11;
+  dc.setFont(Font.semiboldSystemFont(fontSize));
+  dc.setTextColor(COL.fg);
+  dc.setTextAlignedCenter();
+  dc.drawTextInRect(`${Math.round(p)}%`, new Rect(0, c - fontSize * 0.62, size, fontSize * 1.3));
+  return dc.getImage();
+}
+
+// 圆环 + 下面的标签（可选再加一行说明，例如 0.6 / 1.9 GB）
+function addRing(parent, label, value, size, colW, sub) {
+  const col = parent.addStack();
+  col.layoutVertically();
+  col.size = new Size(colW, 0);
+  // 每一行都给定宽度，两边弹性间距才会把内容居中
+  const centered = () => {
+    const row = col.addStack();
+    row.size = new Size(colW, 0);
+    row.addSpacer();
+    return row;
+  };
+  const top = centered();
+  const img = top.addImage(ringImg(value, size, size >= 50 ? 6 : 4.5));
+  img.imageSize = new Size(size, size);
+  top.addSpacer();
+  col.addSpacer(3);
+  const lab = centered();
+  addText(lab, label, FONT.label, COL.dim, 1);
+  lab.addSpacer();
+  if (sub) {
+    col.addSpacer(1);
+    const s = centered();
+    addText(s, sub, FONT.small, COL.dim2, 1).minimumScaleFactor = 0.6;
+    s.addSpacer();
+  }
 }
 
 function serverName(server) {
@@ -440,46 +519,49 @@ function offlineText(server) {
   return ago ? `离线 ${ago}` : "离线";
 }
 
-function speedText(server) {
-  return `↓${shortBytes(server.net_in_speed)}/s ↑${shortBytes(server.net_out_speed)}/s`;
+function expiryText(server) {
+  const days = daysLeft(server);
+  if (days === null) return null;
+  return { text: days >= 0 ? `剩 ${days} 天` : "已到期", color: expiryColor(days) };
 }
 
-function addServerRow(widget, server) {
+function loadText(server) {
+  return server.load_avg ? String(server.load_avg).split(/\s+/)[0] : "";
+}
+
+// 名字行：● 国旗 名字 …… 右边（到期天数 / online / 离线）
+function addHeader(parent, server, width, big, right) {
   const online = isOnline(server);
-  const cpu = Number(server.cpu) || 0;
-  const ram = percent(server.ram_used, server.ram_total);
-  const disk = percent(server.disk_used, server.disk_total);
-
-  const head = widget.addStack();
+  const head = parent.addStack();
   head.centerAlignContent();
-  addText(head, "●", Font.systemFont(9), online ? COL.green : COL.dim2, 1);
-  head.addSpacer(5);
-  if (addFlag(head, server, 18, 13)) head.addSpacer(5);
-  const name = addText(head, serverName(server), Font.semiboldSystemFont(12), online ? COL.fg : COL.dim, 1);
-  name.minimumScaleFactor = 0.75;
+  head.size = new Size(width, big ? 22 : 17);
+  addText(head, "●", Font.systemFont(big ? 11 : 9), online ? COL.green : COL.dim2, 1);
+  head.addSpacer(big ? 6 : 5);
+  if (addFlag(head, server, big ? 22 : 18, big ? 16 : 13)) head.addSpacer(big ? 7 : 6);
+  const name = addText(head, serverName(server), big ? Font.boldSystemFont(17) : FONT.name, online ? COL.fg : COL.dim, 1);
+  name.minimumScaleFactor = 0.65;
   head.addSpacer();
-  const st = addText(head, online ? speedText(server) : offlineText(server), Font.systemFont(9), online ? COL.dim : COL.red, 1);
-  st.minimumScaleFactor = 0.7;
+  if (!online) {
+    addText(head, offlineText(server), FONT.label, COL.red, 1);
+  } else if (right) {
+    addText(head, right.text, right.font || FONT.text, right.color || COL.dim, 1);
+  }
+}
 
-  if (server._missing) return;
-
-  widget.addSpacer(4);
-  const metrics = widget.addStack();
-  metrics.layoutHorizontally();
-  addMetricColumn(metrics, "CPU", cpu, 80);
-  metrics.addSpacer();
-  addMetricColumn(metrics, "RAM", ram, 80);
-  metrics.addSpacer();
-  addMetricColumn(metrics, "DISK", disk, 80);
+// 网速：↓下载 ↑上传，居中
+function addSpeed(parent, server, width, font) {
+  const online = isOnline(server);
+  const row = parent.addStack();
+  row.centerAlignContent();
+  row.size = new Size(width, 13);
+  row.addSpacer();
+  addText(row, `↓${shortBytes(server.net_in_speed)}/s`, font, online ? COL.cyan : COL.dim2, 1).minimumScaleFactor = 0.7;
+  row.addSpacer(6);
+  addText(row, `↑${shortBytes(server.net_out_speed)}/s`, font, online ? COL.blue : COL.dim2, 1).minimumScaleFactor = 0.7;
+  row.addSpacer();
 }
 
 // ---------- 三网延迟 / 丢包柱状图 ----------
-
-// 小组件实际宽度：iOS 大、中尺寸约为屏幕宽度的 0.86（6.1 寸约 338，6.9 寸约 378）
-function widgetWidth() {
-  const size = Device.screenSize();
-  return Math.round(Math.min(size.width, size.height) * 0.86);
-}
 
 function carriers(server) {
   const list = [["ct", "电信"], ["cu", "联通"], ["cm", "移动"], ["bd", "BGP"]];
@@ -513,6 +595,23 @@ function isTimeout(sample) {
 
 function latencyColor(ms) {
   return ms < 100 ? COL.green : ms < 200 ? COL.amber : COL.red;
+}
+
+// 最近一次有数据的采样：窗口最后一格可能还没上报，别因此把延迟显示成 "-"
+function lastSample(series) {
+  return series.slice().reverse().find((s) => typeof s.ping === "number" || typeof s.loss === "number");
+}
+
+function pingText(sample) {
+  if (sample && typeof sample.ping === "number") {
+    return sample.ping >= 1000 ? `${(sample.ping / 1000).toFixed(1)}s` : `${Math.round(sample.ping)}ms`;
+  }
+  return isTimeout(sample) ? "超时" : "-";
+}
+
+function pingColor(sample) {
+  if (sample && typeof sample.ping === "number") return latencyColor(sample.ping);
+  return isTimeout(sample) ? COL.red : COL.dim2;
 }
 
 // 一台服务器所有线路共用一个纵轴，方便横向比较。纵轴从最低延迟的 40% 开始，
@@ -565,386 +664,235 @@ function latencyChart(series, width, height, scale, color) {
   return dc.getImage();
 }
 
-// 固定宽度的单行文字。不用 minimumScaleFactor：空间紧时 iOS 会把字各缩各的，字号就不统一了
-function addFixedText(parent, text, width, font, color, right) {
-  const box = parent.addStack();
-  box.size = new Size(width, 0);
-  if (right) box.addSpacer();
-  const t = addText(box, text, font, color, 1);
-  if (!right) box.addSpacer();
-  return t;
-}
-
-// 卡片里统一用两种字号：名字 13，其余全部 10
-const CARD_FONT = {
-  name: Font.semiboldSystemFont(13),
-  label: Font.semiboldSystemFont(10),
-  text: Font.systemFont(10)
-};
-
 // 每条线路一行：名字 | 当前延迟 | 柱状图 | 当前丢包
 function addLatencyRows(parent, server, width, rowH, gap) {
   // 站点关了三网延迟开关就不画，跟网页端保持一致
   if (SYS.show_three_net_details === false) return;
   const list = carriers(server);
   if (!list.length) {
-    addText(parent, "未配置三网延迟", CARD_FONT.text, COL.dim2, 1);
+    addText(parent, "未配置三网延迟", FONT.text, COL.dim2, 1);
     return;
   }
   const scale = latencyScale(server, list);
-  // 窄屏（320pt）时右侧只剩一百来点，缩一缩固定列宽，别把柱状图挤成负数
-  const compact = width < 150;
-  const nameW = compact ? 22 : 26;
-  const valW = compact ? 34 : 40;
-  const lossW = compact ? 26 : 30;
+  const nameW = 26;
+  const valW = 40;
+  const lossW = 28;
   const chartW = Math.max(24, width - nameW - valW - lossW - 12);
   list.forEach((c, i) => {
     if (i > 0) parent.addSpacer(gap);
     const series = latencySeries(server, c.key);
-    // 右侧显示最近一次有数据的采样：窗口最后一格可能还没上报，别因此把延迟显示成 "-"
-    const last = series.slice().reverse().find((s) => typeof s.ping === "number" || typeof s.loss === "number");
-    const hasPing = !!last && typeof last.ping === "number";
-    const timeout = isTimeout(last);
+    const last = lastSample(series);
     const row = parent.addStack();
     row.centerAlignContent();
     row.size = new Size(width, rowH);
-    addFixedText(row, c.name, nameW, CARD_FONT.label, c.color);
+    addFixedText(row, c.name, nameW, FONT.label, c.color);
     row.addSpacer(4);
-    addFixedText(row, hasPing ? `${Math.round(last.ping)}ms` : timeout ? "超时" : "-", valW, CARD_FONT.text, hasPing ? latencyColor(last.ping) : timeout ? COL.red : COL.dim2, true);
+    addFixedText(row, pingText(last), valW, FONT.text, pingColor(last), true);
     row.addSpacer(4);
     const img = row.addImage(latencyChart(series, chartW, rowH, scale, c.color));
     img.imageSize = new Size(chartW, rowH);
     row.addSpacer(4);
     const loss = last && typeof last.loss === "number" ? Math.round(last.loss) : null;
-    addFixedText(row, loss === null ? "-" : `${loss}%`, lossW, CARD_FONT.text, loss > 0 ? COL.red : COL.dim2, true);
+    addFixedText(row, loss === null ? "-" : `${loss}%`, lossW, FONT.text, loss > 0 ? COL.red : COL.dim2, true);
   });
 }
 
-// 资源一行：标签 | 进度条 | 百分比
-function addMiniBar(parent, label, value, width, rowH) {
+// 小尺寸用：三网当前延迟一行数字，"电 88  联 60  移 102"
+function addLatencyNumbers(parent, server, width) {
+  if (SYS.show_three_net_details === false) return;
+  const list = carriers(server).slice(0, 3);
+  if (!list.length) return;
   const row = parent.addStack();
   row.centerAlignContent();
-  row.size = new Size(width, rowH);
-  addFixedText(row, label, 32, CARD_FONT.label, COL.dim);
-  const barW = width - 32 - 34;
-  const img = row.addImage(barImg(value, barW, 5, usageColor(value)));
-  img.imageSize = new Size(barW, 5);
-  addFixedText(row, `${Math.round(clampPercent(value))}%`, 34, CARD_FONT.text, COL.fg, true);
+  row.size = new Size(width, 13);
+  list.forEach((c, i) => {
+    if (i > 0) row.addSpacer();
+    const last = lastSample(latencySeries(server, c.key));
+    addText(row, c.name.slice(0, 1), FONT.label, c.color, 1);
+    row.addSpacer(2);
+    addText(row, pingText(last).replace(/ms$/, ""), FONT.text, pingColor(last), 1).minimumScaleFactor = 0.7;
+  });
 }
 
-// 卡片底部：本月流量 · 额度 · 运行天数，右边到期。尽量短，保证一行放得下
-function cardFooter(server) {
-  const parts = [`本月 ↓${shortBytes(server.net_rx_monthly)} ↑${shortBytes(server.net_tx_monthly)}`];
-  if (showTraffic() && server.traffic_limit) parts.push(`额度 ${Math.round(trafficPercent(server))}%`);
-  const boot = normalizeTimestamp(server.boot_time);
-  if (boot > 0) {
-    const days = Math.floor((Date.now() - boot) / 86400000);
-    parts.push(days > 0 ? `运行 ${days} 天` : `运行 ${uptimeText(server)}`);
-  }
-  return parts.join(" · ");
-}
+// ---------- 四种排版 ----------
 
-// 大尺寸列表里的一台：圆角卡片，所有行高固定，避免内容超高时 iOS 压缩文字
-//   名字 / 网速
-//   CPU RAM DISK 进度条 | 三网延迟+丢包柱状图
-//   本月流量 · 额度 · 运行天数 / 到期
-function addServerCard(widget, server, innerW, roomy) {
-  const online = isOnline(server);
-  const pad = roomy ? 9 : 8;
-  const rowH = roomy ? 13 : 12;
-  const gap = roomy ? 4 : 3;
-  const card = widget.addStack();
-  card.layoutVertically();
-  card.backgroundColor = COL.card;
-  card.cornerRadius = 12;
-  card.setPadding(pad, 10, pad, 10);
-  card.size = new Size(innerW + 20, 0);
-
-  const head = card.addStack();
-  head.centerAlignContent();
-  head.size = new Size(innerW, 16);
-  addText(head, "●", Font.systemFont(8), online ? COL.green : COL.dim2, 1);
-  head.addSpacer(5);
-  if (addFlag(head, server, 18, 13)) head.addSpacer(6);
-  const cardName = addText(head, serverName(server), CARD_FONT.name, online ? COL.fg : COL.dim, 1);
-  cardName.minimumScaleFactor = 0.7;
-  head.addSpacer();
-  addText(head, online ? speedText(server) : offlineText(server), CARD_FONT.text, online ? COL.dim : COL.red, 1);
+// 中尺寸 / 大尺寸 2 台时的一张卡片：
+//   ● 国旗 名字 …… 剩 N 天
+//   CPU RAM DISK 三个圆环 + 网速 | 三网延迟柱状图
+//   运行 · 负载 · 本月流量 …… 右下角（更新时间 / 页码，可选）
+function addMediumBody(parent, server, w, h, corner) {
+  addHeader(parent, server, w, false, expiryText(server));
   if (server._missing) return;
 
-  card.addSpacer(6);
-  const body = card.addStack();
+  const headH = 17;
+  const footH = 12;
+  const gap = 6;
+  const bodyH = h - headH - footH - gap * 2;
+  parent.addSpacer(gap);
+  const body = parent.addStack();
   body.layoutHorizontally();
-  const leftW = roomy ? 112 : 102;
-  const rightW = innerW - leftW - 10;
-  const left = body.addStack();
-  left.layoutVertically();
-  addMiniBar(left, "CPU", Number(server.cpu) || 0, leftW, rowH);
-  left.addSpacer(gap);
-  addMiniBar(left, "RAM", percent(server.ram_used, server.ram_total), leftW, rowH);
-  left.addSpacer(gap);
-  addMiniBar(left, "DISK", percent(server.disk_used, server.disk_total), leftW, rowH);
-  body.addSpacer(10);
-  const right = body.addStack();
-  right.layoutVertically();
-  addLatencyRows(right, server, rightW, rowH, gap);
+  body.size = new Size(w, bodyH);
 
-  card.addSpacer(6);
-  const foot = card.addStack();
-  foot.centerAlignContent();
-  foot.size = new Size(innerW, 13);
-  addText(foot, cardFooter(server), CARD_FONT.text, COL.dim2, 1);
-  foot.addSpacer();
-  const days = daysLeft(server);
-  if (days !== null) addText(foot, days >= 0 ? `剩 ${days} 天` : "已到期", CARD_FONT.text, expiryColor(days), 1);
-}
+  const leftW = 128;
+  const left = fixedColumn(body, leftW, bodyH);
+  left.addSpacer();
+  const rings = left.addStack();
+  rings.size = new Size(leftW, 0);
+  const ringSize = bodyH >= 100 ? 38 : 34;
+  addRing(rings, "CPU", Number(server.cpu) || 0, ringSize, leftW / 3);
+  addRing(rings, "RAM", percent(server.ram_used, server.ram_total), ringSize, leftW / 3);
+  addRing(rings, "DISK", percent(server.disk_used, server.disk_total), ringSize, leftW / 3);
+  left.addSpacer(7);
+  addSpeed(left, server, leftW, FONT.text);
+  left.addSpacer();
 
-// 小尺寸列表：每台两行文字
-function addSmallRow(widget, server) {
-  const online = isOnline(server);
-  const head = widget.addStack();
-  head.centerAlignContent();
-  addText(head, "●", Font.systemFont(9), online ? COL.green : COL.dim2, 1);
-  head.addSpacer(4);
-  const name = addText(head, serverName(server), Font.semiboldSystemFont(11), online ? COL.fg : COL.dim, 1);
-  name.minimumScaleFactor = 0.7;
-  head.addSpacer();
-  if (online) {
-    const cpu = Number(server.cpu) || 0;
-    addText(head, `${Math.round(cpu)}%`, Font.semiboldSystemFont(10), usageColor(cpu), 1);
-  }
+  body.addSpacer(12);
+  const rightW = w - leftW - 12;
+  const right = fixedColumn(body, rightW, bodyH);
+  const rowGap = 7;
+  const rowH = Math.max(12, Math.min(19, Math.floor((bodyH - rowGap * 2) / 3) - 2));
+  right.addSpacer();
+  addLatencyRows(right, server, rightW, rowH, rowGap);
+  right.addSpacer();
 
-  const ram = Math.round(percent(server.ram_used, server.ram_total));
-  const disk = Math.round(percent(server.disk_used, server.disk_total));
-  const sub = addText(widget, online ? `R${ram}% D${disk}% ↑${shortBytes(server.net_out_speed)}/s` : offlineText(server), Font.systemFont(9), online ? COL.dim : COL.red, 1);
-  sub.minimumScaleFactor = 0.7;
-}
-
-function addSmallServer(widget, server) {
-  const online = isOnline(server);
-  const cpu = Number(server.cpu) || 0;
-  const ram = percent(server.ram_used, server.ram_total);
-  const disk = percent(server.disk_used, server.disk_total);
-
-  const head = widget.addStack();
-  head.centerAlignContent();
-  addText(head, "●", Font.systemFont(10), online ? COL.green : COL.dim2, 1);
-  head.addSpacer(5);
-  if (addFlag(head, server, 20, 15)) head.addSpacer(5);
-  const name = addText(head, serverName(server), Font.boldSystemFont(13), COL.fg, 1);
-  name.minimumScaleFactor = 0.7;
-
-  widget.addSpacer(8);
-  addBar(widget, "CPU", cpu, 70, 7);
-  widget.addSpacer(5);
-  addBar(widget, "RAM", ram, 70, 7);
-  widget.addSpacer(5);
-  addBar(widget, "DSK", disk, 70, 7);
-  if (showTraffic() && server.traffic_limit) {
-    widget.addSpacer(5);
-    addBar(widget, "TRF", trafficPercent(server), 70, 7);
-  }
-
-  widget.addSpacer();
-  const net = widget.addText(online ? speedText(server) : offlineText(server));
-  net.font = Font.systemFont(10);
-  net.textColor = online ? COL.dim : COL.red;
-  net.lineLimit = 1;
-  net.minimumScaleFactor = 0.7;
-  const up = uptimeText(server);
-  if (online && up) addText(widget, `运行 ${up}`, Font.systemFont(9), COL.dim2, 1);
-}
-
-function addSingleHeader(widget, server, large, footer) {
-  const online = isOnline(server);
-  const head = widget.addStack();
-  head.centerAlignContent();
-  addText(head, "●", Font.systemFont(large ? 12 : 11), online ? COL.green : COL.dim2, 1);
-  head.addSpacer(6);
-  if (addFlag(head, server, large ? 24 : 22, large ? 18 : 16)) head.addSpacer(6);
-  const name = addText(head, serverName(server), Font.boldSystemFont(large ? 18 : 16), COL.fg, 1);
-  name.minimumScaleFactor = 0.65;
-  head.addSpacer();
-  addText(head, online ? "online" : offlineText(server), Font.semiboldSystemFont(11), online ? COL.green : COL.red, 1);
-
-  widget.addSpacer(3);
-  const parts = [footer];
+  parent.addSpacer(gap);
+  const parts = [];
   const up = uptimeText(server);
   if (up) parts.push(`运行 ${up}`);
-  if (server.load_avg) parts.push(`负载 ${String(server.load_avg).split(/\s+/)[0]}`);
-  const days = daysLeft(server);
-  const sub = widget.addStack();
-  sub.centerAlignContent();
-  addText(sub, parts.join(" · "), Font.systemFont(9), COL.dim2, 1).minimumScaleFactor = 0.7;
-  if (days !== null) {
-    sub.addSpacer();
-    addText(sub, days >= 0 ? `剩 ${days} 天` : "已到期", Font.systemFont(9), expiryColor(days), 1);
-  }
+  if (loadText(server)) parts.push(`负载 ${loadText(server)}`);
+  parts.push(`本月 ↓${shortBytes(server.net_rx_monthly)} ↑${shortBytes(server.net_tx_monthly)}`);
+  if (showTraffic() && server.traffic_limit) parts.push(`额度 ${Math.round(trafficPercent(server))}%`);
+  addSplitRow(parent, w, footH, { text: parts.join(" · ") }, corner ? { text: corner } : null);
 }
 
-function addMediumServer(widget, server, footer) {
-  const online = isOnline(server);
-  addSingleHeader(widget, server, false, footer);
-
-  widget.addSpacer(10);
-  const metrics = widget.addStack();
-  metrics.layoutHorizontally();
-  // 按实际可用宽度分配，320pt 屏上写死 80 会顶出去
-  const colW = Math.floor((widgetWidth() - 40) / 3);
-  addMetricColumn(metrics, "CPU", Number(server.cpu) || 0, colW);
-  metrics.addSpacer();
-  addMetricColumn(metrics, "RAM", percent(server.ram_used, server.ram_total), colW);
-  metrics.addSpacer();
-  addMetricColumn(metrics, "DISK", percent(server.disk_used, server.disk_total), colW);
-
-  widget.addSpacer(8);
-  if (showTraffic() && server.traffic_limit) {
-    addBar(widget, "TRF", trafficPercent(server), Math.max(60, widgetWidth() - 100), 6);
-  } else {
-    addText(widget, `本月 ↓${formatBytes(server.net_rx_monthly)}  ↑${formatBytes(server.net_tx_monthly)}`, Font.systemFont(9), COL.dim, 1);
-  }
-
-  widget.addSpacer();
-  const net = widget.addStack();
-  net.centerAlignContent();
-  addText(net, `↓ ${formatBytes(server.net_in_speed)}/s`, Font.systemFont(11), online ? COL.cyan : COL.dim2, 1);
-  net.addSpacer(10);
-  addText(net, `↑ ${formatBytes(server.net_out_speed)}/s`, Font.systemFont(11), online ? COL.blue : COL.dim2, 1);
-  net.addSpacer();
-  const ping = pingParts(server);
-  if (ping.length) addText(net, ping.join(" "), Font.systemFont(9), COL.dim, 1).minimumScaleFactor = 0.6;
+// 小尺寸：名字 / 三个圆环 / 网速 / 三网延迟数字 / 到期 + 更新时间
+function addSmallBody(parent, server, w, h, corner) {
+  addHeader(parent, server, w, false, null);
+  if (server._missing) return;
+  parent.addSpacer(8);
+  const rings = parent.addStack();
+  rings.size = new Size(w, 0);
+  addRing(rings, "CPU", Number(server.cpu) || 0, 40, w / 3);
+  addRing(rings, "RAM", percent(server.ram_used, server.ram_total), 40, w / 3);
+  addRing(rings, "DISK", percent(server.disk_used, server.disk_total), 40, w / 3);
+  parent.addSpacer();
+  addSpeed(parent, server, w, FONT.text);
+  parent.addSpacer(4);
+  addLatencyNumbers(parent, server, w);
+  parent.addSpacer(4);
+  const exp = expiryText(server);
+  addSplitRow(parent, w, 11, exp ? { text: exp.text, color: exp.color } : null, { text: corner });
 }
 
-function addLargeServer(widget, server, footer) {
-  const online = isOnline(server);
-  addSingleHeader(widget, server, true, footer);
-  const sys = [server.os, server.cpu_cores ? `${server.cpu_cores} 核` : "", server.arch].filter(Boolean).join(" · ");
-  if (sys) {
-    widget.addSpacer(2);
-    addText(widget, sys, Font.systemFont(9), COL.dim2, 1).minimumScaleFactor = 0.7;
-  }
+// 大尺寸 1 台：名字 / 系统信息 / 四个大圆环 / 信息框 / 三网延迟柱状图 / 更新时间
+function addLargeBody(parent, server, w, h, corner) {
+  addHeader(parent, server, w, true, { text: "online", font: FONT.label, color: COL.green });
+  if (server._missing) return;
 
-  widget.addSpacer(8);
-  widget.addSpacer();
-  const barW = 140;
-  const gap = 9;
-  addDetailBar(widget, "CPU", Number(server.cpu) || 0, server.load_avg ? `负载 ${server.load_avg}` : "", barW, true);
-  widget.addSpacer(gap);
-  addDetailBar(widget, "RAM", percent(server.ram_used, server.ram_total), `${formatMB(server.ram_used)} / ${formatMB(server.ram_total)}`, barW, true);
-  if (Number(server.swap_total) > 0) {
-    widget.addSpacer(gap);
-    addDetailBar(widget, "SWAP", percent(server.swap_used, server.swap_total), `${formatMB(server.swap_used)} / ${formatMB(server.swap_total)}`, barW, true);
-  }
-  widget.addSpacer(gap);
-  addDetailBar(widget, "DISK", percent(server.disk_used, server.disk_total), `${formatMB(server.disk_used)} / ${formatMB(server.disk_total)}`, barW, true);
+  parent.addSpacer(3);
+  const sys = [server.os, server.cpu_cores ? `${server.cpu_cores} 核` : "", server.arch].filter(Boolean);
+  if (uptimeText(server)) sys.push(`运行 ${uptimeText(server)}`);
+  const exp = expiryText(server);
+  addSplitRow(parent, w, 12, { text: sys.join(" · ") }, exp ? { text: exp.text, color: exp.color } : null);
+
+  parent.addSpacer();
+  const rings = [
+    ["CPU", Number(server.cpu) || 0, loadText(server) ? `负载 ${loadText(server)}` : `${server.cpu_cores || "-"} 核`],
+    ["RAM", percent(server.ram_used, server.ram_total), `${shortMB(server.ram_used)} / ${shortMB(server.ram_total)}`],
+    ["DISK", percent(server.disk_used, server.disk_total), `${shortMB(server.disk_used)} / ${shortMB(server.disk_total)}`]
+  ];
   if (showTraffic() && server.traffic_limit) {
-    widget.addSpacer(gap);
-    addDetailBar(widget, "TRF", trafficPercent(server), `${formatBytes(trafficUsedBytes(server))} / ${formatBytes(trafficLimitBytes(server.traffic_limit))}`, barW, true);
+    rings.push(["流量", trafficPercent(server), `${shortBytes(trafficUsedBytes(server))} / ${shortBytes(trafficLimitBytes(server.traffic_limit))}`]);
+  } else if (Number(server.swap_total) > 0) {
+    rings.push(["SWAP", percent(server.swap_used, server.swap_total), `${shortMB(server.swap_used)} / ${shortMB(server.swap_total)}`]);
   }
+  const ringRow = parent.addStack();
+  ringRow.size = new Size(w, 0);
+  rings.forEach(([label, value, sub]) => addRing(ringRow, label, value, 56, w / rings.length, sub));
 
-  widget.addSpacer(10);
-  widget.addSpacer();
-  const kvGap = 7;
-  addKV(widget, [
-    ["下载", `${formatBytes(server.net_in_speed)}/s`, online ? COL.cyan : COL.dim2],
-    ["上传", `${formatBytes(server.net_out_speed)}/s`, online ? COL.blue : COL.dim2]
-  ], true);
-  widget.addSpacer(kvGap);
-  addKV(widget, [
-    ["本月↓", formatBytes(server.net_rx_monthly)],
-    ["本月↑", formatBytes(server.net_tx_monthly)]
-  ], true);
+  parent.addSpacer();
+  const online = isOnline(server);
   const io = server.disk && typeof server.disk === "object" ? server.disk : null;
-  if (io) {
-    widget.addSpacer(kvGap);
-    addKV(widget, [
-      ["磁盘读", `${formatBytes(io.read_bps)}/s`],
-      ["磁盘写", `${formatBytes(io.write_bps)}/s`]
-    ], true);
-  }
-  widget.addSpacer(kvGap);
-  addKV(widget, [
-    ["TCP", String(server.tcp_conn ?? "-")],
-    ["UDP", String(server.udp_conn ?? "-")],
-    ["进程", String(server.processes ?? "-")]
-  ], true);
-  widget.addSpacer(10);
-  widget.addSpacer();
-  addLatencyRows(widget, server, widgetWidth() - 30, 16, 6);
-  widget.addSpacer();
-}
-
-function addSingleServer(widget, server, footer) {
-  if (family === "small") {
-    addSmallServer(widget, server);
-    widget.addSpacer(3);
-    addText(widget, footer, Font.systemFont(8), COL.dim2, 1).centerAlignText();
-  } else if (family === "large") {
-    addLargeServer(widget, server, footer);
-  } else {
-    addMediumServer(widget, server, footer);
-  }
-}
-
-function addServerList(widget, data, footer) {
-  const servers = data.servers;
-  const max = Math.max(1, Number((CONFIG.maxRows || {})[family]) || 3);
-  const shown = servers.slice(0, max);
-  const more = servers.length - shown.length;
-
-  // 大尺寸有空间，顶部加一行总览
-  if (family === "large") {
-    const head = widget.addStack();
-    head.centerAlignContent();
-    head.size = new Size(widgetWidth() - 24, 18);
-    addText(head, "Servers", Font.boldSystemFont(15), COL.fg, 1);
-    head.addSpacer(8);
-    addText(head, `${data.stats.online}/${data.stats.total} 在线`, CARD_FONT.label, data.stats.offline ? COL.amber : COL.green, 1);
-    head.addSpacer();
-    addText(head, footer, CARD_FONT.text, COL.dim2, 1);
-    widget.addSpacer(6);
-  }
-
-  const innerW = widgetWidth() - 24 - 20;
-  const roomy = widgetWidth() >= 355;
-  const spread = shown.length >= 3;
-  shown.forEach((server, i) => {
-    if (i > 0) {
-      // 3 台时卡片之间用弹性间距，把剩下的高度平均分开
-      if (family === "large") {
-        widget.addSpacer(roomy ? 6 : 4);
-        if (spread) widget.addSpacer();
-      } else {
-        widget.addSpacer(family === "small" ? 5 : 7);
-      }
-    }
-    if (family === "small") addSmallRow(widget, server);
-    else if (family === "large") addServerCard(widget, server, innerW, roomy);
-    else addServerRow(widget, server);
+  const box = parent.addStack();
+  box.layoutVertically();
+  box.backgroundColor = COL.card;
+  box.cornerRadius = 10;
+  box.setPadding(8, 12, 8, 12);
+  box.size = new Size(w, 0);
+  const cellW = (w - 24 - 14) / 2;
+  const cells = [
+    [["下载", `${shortBytes(server.net_in_speed)}/s`, online ? COL.cyan : COL.dim2], ["上传", `${shortBytes(server.net_out_speed)}/s`, online ? COL.blue : COL.dim2]],
+    [["本月 ↓", shortBytes(server.net_rx_monthly)], ["本月 ↑", shortBytes(server.net_tx_monthly)]],
+    [["磁盘读写", io ? `${shortBytes(io.read_bps)} / ${shortBytes(io.write_bps)}/s` : "-"], ["TCP · 进程", `${server.tcp_conn ?? "-"} · ${server.processes ?? "-"}`]]
+  ];
+  cells.forEach((pair, i) => {
+    if (i > 0) box.addSpacer(5);
+    const row = box.addStack();
+    row.centerAlignContent();
+    pair.forEach(([key, value, color], j) => {
+      if (j > 0) row.addSpacer(14);
+      const cell = row.addStack();
+      cell.centerAlignContent();
+      cell.size = new Size(cellW, 13);
+      addText(cell, key, FONT.text, COL.dim2, 1);
+      cell.addSpacer();
+      addText(cell, value, FONT.text, color || COL.fg, 1).minimumScaleFactor = 0.7;
+    });
   });
 
-  if (family !== "large" || !spread) widget.addSpacer();
-  if (family !== "large" || more > 0) {
-    if (family === "large") widget.addSpacer(5);
-    const foot = widget.addStack();
-    if (more > 0) addText(foot, `还有 ${more} 台`, Font.systemFont(8), COL.dim, 1);
-    foot.addSpacer();
-    if (family !== "large") addText(foot, footer, Font.systemFont(8), COL.dim2, 1);
-  }
+  parent.addSpacer();
+  addLatencyRows(parent, server, w, 18, 7);
+  parent.addSpacer(6);
+  addSplitRow(parent, w, 11, null, { text: corner });
 }
+
+// 大尺寸 2 台：顶部一行总览，下面两张中尺寸样式的卡片
+function addTwoCards(parent, data, w, h, corner) {
+  const pg = data.pageInfo;
+  const left = `${data.stats.online}/${data.stats.total} 在线${pg.count > 1 ? ` · ${pg.index}/${pg.count} 页` : ""}`;
+  addSplitRow(parent, w, 12, { text: left, font: FONT.label, color: data.stats.offline ? COL.amber : COL.green }, { text: corner });
+  const topGap = 6;
+  const cardGap = 6;
+  const cardH = Math.floor((h - 12 - topGap - cardGap) / 2);
+  data.servers.forEach((server, i) => {
+    parent.addSpacer(i === 0 ? topGap : cardGap);
+    const card = parent.addStack();
+    card.layoutVertically();
+    card.backgroundColor = COL.card;
+    card.cornerRadius = 14;
+    card.setPadding(10, 12, 10, 12);
+    card.size = new Size(w, cardH);
+    addMediumBody(card, server, w - 24, cardH - 20, null);
+  });
+}
+
+// 小组件内边距（pt）
+const PAD = { small: [13, 12], medium: [12, 14], large1: [14, 14], large2: [10, 10] };
 
 function buildWidget(data) {
   const widget = baseWidget();
-  const small = family === "small";
-  const listPad = data.servers.length > 1 && family !== "small" ? (family === "large" ? 12 : 11) : null;
-  const sidePad = family === "large" && data.servers.length > 1 ? 12 : small ? 13 : 15;
-  widget.setPadding(listPad || (small ? 12 : 14), sidePad, listPad || (small ? 12 : 14), sidePad);
+  const pg = data.pageInfo;
+  if (!data.servers.length) {
+    return errWidget(pg.index > pg.count ? `第 ${pg.index} 页没有机器（现在共 ${pg.count} 页），可以把这个小组件删掉` : "No matching servers");
+  }
 
-  if (!data.servers.length) return errWidget("No matching servers");
+  const two = family === "large" && data.servers.length >= 2;
+  const [py, px] = PAD[family === "large" ? (two ? "large2" : "large1") : family];
+  widget.setPadding(py, px, py, px);
+  const size = widgetSize();
+  const w = size.w - px * 2;
+  const h = size.h - py * 2;
+  const root = widget.addStack();
+  root.layoutVertically();
+  root.size = new Size(w, h);
 
-  const footer = data.staleAt ? `⚠ 缓存 ${cacheTime(data.staleAt)}` : `更新 ${hhmm()}`;
-  if (data.servers.length === 1) addSingleServer(widget, data.servers[0], footer);
-  else addServerList(widget, data, footer);
+  const time = data.staleAt ? `⚠ 缓存 ${cacheTime(data.staleAt)}` : hhmm();
+  const corner = (!two && pg.count > 1 ? `${pg.index}/${pg.count} 页 · ` : "") + (data.staleAt || family === "small" ? time : `更新 ${time}`);
+  const server = data.servers[0];
+  if (two) addTwoCards(root, data, w, h, corner);
+  else if (family === "small") addSmallBody(root, server, w, h, corner);
+  else if (family === "large") addLargeBody(root, server, w, h, corner);
+  else addMediumBody(root, server, w, h, corner);
   return widget;
 }
 
