@@ -3,8 +3,8 @@
 // 用法：粘贴进 Scriptable，改 CONFIG.baseURL；小组件 Parameter 填服务器 id（也支持 id:xxx）
 
 const CONFIG = {
-  baseURL: "example.com", //必填，服务器监控面板网址
-  serverId: "ad7f3449-9681-4988-a6fc-64ccb80d5c75" //必填，也可以在 widgetParameter 中指定
+  baseURL: "https://example.com", //必填，服务器监控面板网址
+  serverId: "ad7f*********c75" //必填，也可以在 widgetParameter 中指定
 };
 
 CONFIG.baseURL = String(CONFIG.baseURL || "").replace(/\/+$/, "");
