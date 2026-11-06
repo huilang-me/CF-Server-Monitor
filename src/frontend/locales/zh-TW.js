@@ -227,6 +227,8 @@ export default {
   resourceAlertMetricDisk: 'DISK (%)',
   resourceAlertMetricNetIn: 'NET In (Mbps)',
   resourceAlertMetricNetOut: 'NET Out (Mbps)',
+  resourceAlertMetricTcp: 'TCP 連線數',
+  resourceAlertMetricUdp: 'UDP 連線數',
   resourceAlertThreshold: '臨界值',
   resourceAlertServers: '伺服器',
   resourceAlertInterval: '間隔',

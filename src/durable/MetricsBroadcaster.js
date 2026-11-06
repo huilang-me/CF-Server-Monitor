@@ -173,6 +173,12 @@ function maskPublicIpUpdate(update) {
   };
 }
 
+// 连接数缺失时必须保持 null：兜底成 0 会让不报该字段的旧 agent 被判为“已恢复”。
+function toOptionalCount(value) {
+  if (value === undefined || value === null || value === '') return null;
+  return toFiniteNumber(value);
+}
+
 function normalizeResourceAlertSample(sample) {
   if (!sample || typeof sample !== 'object') {
     return null;
@@ -198,6 +204,8 @@ function normalizeResourceAlertSample(sample) {
     : null;
   const netIn = Math.max(0, toFiniteNumber(metrics.net_in_speed) ?? 0);
   const netOut = Math.max(0, toFiniteNumber(metrics.net_out_speed) ?? 0);
+  const tcpConn = toOptionalCount(metrics.tcp_conn);
+  const udpConn = toOptionalCount(metrics.udp_conn);
 
   return {
     ts,
@@ -207,7 +215,9 @@ function normalizeResourceAlertSample(sample) {
     disk,
     netIn,
     netOut,
-    netTotal: netIn + netOut
+    netTotal: netIn + netOut,
+    tcpConn,
+    udpConn
   };
 }
 
@@ -223,7 +233,9 @@ function normalizeThresholds(thresholds = {}) {
     disk: normalize(thresholds.diskPercent),
     netIn: normalize(thresholds.netInBps),
     netOut: normalize(thresholds.netOutBps),
-    netTotal: normalize(thresholds.netTotalBps)
+    netTotal: normalize(thresholds.netTotalBps),
+    tcpConn: normalize(thresholds.tcpConn),
+    udpConn: normalize(thresholds.udpConn)
   };
 }
 
@@ -1957,7 +1969,9 @@ export class MetricsBroadcaster {
       ['disk', thresholds.disk],
       ['netIn', thresholds.netIn],
       ['netOut', thresholds.netOut],
-      ['netTotal', thresholds.netTotal]
+      ['netTotal', thresholds.netTotal],
+      ['tcpConn', thresholds.tcpConn],
+      ['udpConn', thresholds.udpConn]
     ].filter(([, threshold]) => threshold > 0);
 
     const alerts = [];

@@ -782,16 +782,23 @@ const normalizeResourceAlertIntervalSetting = (value) => {
 
 const normalizeResourceAlertMetricSetting = (value) => {
   const metric = String(value || '').trim()
-  return ['cpu', 'ram', 'disk', 'netIn', 'netOut'].includes(metric) ? metric : 'cpu'
+  return ['cpu', 'ram', 'disk', 'netIn', 'netOut', 'tcpConn', 'udpConn'].includes(metric) ? metric : 'cpu'
 }
 
-const defaultResourceAlertThreshold = (metric) => (
-  metric === 'netIn' || metric === 'netOut' ? '100' : '80'
-)
+const isConnectionAlertMetricSetting = (metric) => metric === 'tcpConn' || metric === 'udpConn'
+
+const defaultResourceAlertThreshold = (metric) => {
+  if (isConnectionAlertMetricSetting(metric)) return '1000'
+  return metric === 'netIn' || metric === 'netOut' ? '100' : '80'
+}
 
 const normalizeResourceAlertThresholdSetting = (value, metric) => {
   if (value === undefined || value === null || value === '') return defaultResourceAlertThreshold(metric)
   const number = Number(value)
+  if (isConnectionAlertMetricSetting(metric)) {
+    if (!Number.isFinite(number) || number <= 0 || number > 10000000) return defaultResourceAlertThreshold(metric)
+    return String(Math.round(number))
+  }
   const max = metric === 'netIn' || metric === 'netOut' ? 100000 : 100
   if (!Number.isFinite(number) || number <= 0 || number > max) return defaultResourceAlertThreshold(metric)
   return String(Math.round(number * 100) / 100)

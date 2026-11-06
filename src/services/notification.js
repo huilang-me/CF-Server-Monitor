@@ -132,14 +132,25 @@ function getResourceMetricLabel(metric, messages) {
     cpu: 'CPU',
     ram: 'RAM',
     disk: 'DISK',
+    tcpConn: 'TCP Conn',
+    udpConn: 'UDP Conn',
     ...messages.metrics
   };
   return metricLabels[metric?.metric] || metric?.metric || '';
 }
 
+function formatConnectionCount(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) return '0';
+  return String(Math.round(number));
+}
+
 function formatResourceMetricValue(metric, value) {
   if (metric?.metric === 'cpu' || metric?.metric === 'ram' || metric?.metric === 'disk') {
     return formatPercent(value);
+  }
+  if (metric?.metric === 'tcpConn' || metric?.metric === 'udpConn') {
+    return formatConnectionCount(value);
   }
   return formatMegabitsPerSecond(value);
 }

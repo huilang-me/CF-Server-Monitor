@@ -226,6 +226,8 @@ export default {
   resourceAlertMetricDisk: 'DISQUE (%)',
   resourceAlertMetricNetIn: 'Réseau entrant (Mbps)',
   resourceAlertMetricNetOut: 'Réseau sortant (Mbps)',
+  resourceAlertMetricTcp: 'Connexions TCP',
+  resourceAlertMetricUdp: 'Connexions UDP',
   resourceAlertThreshold: 'Seuil',
   resourceAlertServers: 'Serveurs',
   resourceAlertInterval: 'Intervalle',

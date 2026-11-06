@@ -226,6 +226,8 @@ export default {
   resourceAlertMetricDisk: 'DISK (%)',
   resourceAlertMetricNetIn: 'NET Masuk (Mbps)',
   resourceAlertMetricNetOut: 'NET Keluar (Mbps)',
+  resourceAlertMetricTcp: 'Koneksi TCP',
+  resourceAlertMetricUdp: 'Koneksi UDP',
   resourceAlertThreshold: 'Ambang Batas',
   resourceAlertServers: 'Server',
   resourceAlertInterval: 'Interval',

@@ -10,6 +10,11 @@ const netInAlert = [{
   alert: { metrics: [{ metric: 'netIn', threshold: 1000, current: 5000000, triggerValue: 5000000 }] }
 }];
 
+const tcpAlert = [{
+  server: { name: 'web-1' },
+  alert: { metrics: [{ metric: 'tcpConn', threshold: 1000, current: 1200, triggerValue: 1200 }] }
+}];
+
 test('notification language defaults to Chinese for missing or unknown values', () => {
   assert.equal(normalizeNotificationLanguage(undefined), 'zh');
   assert.equal(normalizeNotificationLanguage('ko'), 'zh');
@@ -33,7 +38,7 @@ test('every notification language has a complete message set', () => {
       assert.equal(typeof messages.events[key], 'string', `${code}.events.${key}`);
       assert.ok(messages.events[key].length > 0, `${code}.events.${key} is empty`);
     }
-    for (const key of ['netIn', 'netOut', 'netTotal']) {
+    for (const key of ['netIn', 'netOut', 'netTotal', 'tcpConn', 'udpConn']) {
       assert.ok(messages.metrics[key].length > 0, `${code}.metrics.${key} is empty`);
     }
     for (const key of ['invalidTime', 'noReport', 'testMessage']) {
@@ -50,6 +55,11 @@ test('resource alert payloads keep Chinese text when no language is configured',
   const [payload] = buildResourceAlertNotificationPayloads(netInAlert, [], {});
   assert.equal(payload.context.event, '资源负载告警');
   assert.equal(payload.msg, 'web-1  下行网速 40.0 Mbps');
+});
+
+test('resource alert payloads render connection counts as integers', () => {
+  const [payload] = buildResourceAlertNotificationPayloads(tcpAlert, [], {});
+  assert.equal(payload.msg, 'web-1  TCP 连接数 1200');
 });
 
 test('resource alert payloads are rendered in Spanish', () => {

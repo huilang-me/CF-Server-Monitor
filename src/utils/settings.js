@@ -81,13 +81,23 @@ export const RESOURCE_ALERT_METRIC_RAM = 'ram';
 export const RESOURCE_ALERT_METRIC_DISK = 'disk';
 export const RESOURCE_ALERT_METRIC_NET_IN = 'netIn';
 export const RESOURCE_ALERT_METRIC_NET_OUT = 'netOut';
+export const RESOURCE_ALERT_METRIC_TCP_CONN = 'tcpConn';
+export const RESOURCE_ALERT_METRIC_UDP_CONN = 'udpConn';
 export const RESOURCE_ALERT_METRICS = [
   RESOURCE_ALERT_METRIC_CPU,
   RESOURCE_ALERT_METRIC_RAM,
   RESOURCE_ALERT_METRIC_DISK,
   RESOURCE_ALERT_METRIC_NET_IN,
-  RESOURCE_ALERT_METRIC_NET_OUT
+  RESOURCE_ALERT_METRIC_NET_OUT,
+  RESOURCE_ALERT_METRIC_TCP_CONN,
+  RESOURCE_ALERT_METRIC_UDP_CONN
 ];
+// 连接数类指标的阈值是绝对数量，不是百分比或 Mbps。
+const RESOURCE_ALERT_CONNECTION_METRICS = [
+  RESOURCE_ALERT_METRIC_TCP_CONN,
+  RESOURCE_ALERT_METRIC_UDP_CONN
+];
+const RESOURCE_ALERT_CONNECTION_THRESHOLD_MAX = 10000000;
 const BYTES_PER_MEGABIT = 1000 * 1000 / 8;
 let cachedSiteSettings = null;
 let siteSettingsCacheExpiry = 0;
@@ -339,6 +349,17 @@ export function normalizeResourceAlertMbps(value) {
   return String(Math.round(number * 100) / 100);
 }
 
+function normalizeResourceAlertConnectionCount(value) {
+  if (value === undefined || value === null || value === '') return '0';
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0 || number > RESOURCE_ALERT_CONNECTION_THRESHOLD_MAX) return '0';
+  return String(Math.round(number));
+}
+
+function isResourceAlertConnectionMetric(metric) {
+  return RESOURCE_ALERT_CONNECTION_METRICS.includes(metric);
+}
+
 export function normalizeResourceAlertMode(value) {
   const mode = String(value || '').trim().toLowerCase();
   return mode === RESOURCE_ALERT_MODE_CONTINUOUS
@@ -382,7 +403,9 @@ function normalizeResourceAlertRuleName(value, metric, index) {
     [RESOURCE_ALERT_METRIC_RAM]: 'RAM',
     [RESOURCE_ALERT_METRIC_DISK]: 'DISK',
     [RESOURCE_ALERT_METRIC_NET_IN]: 'NET In',
-    [RESOURCE_ALERT_METRIC_NET_OUT]: 'NET Out'
+    [RESOURCE_ALERT_METRIC_NET_OUT]: 'NET Out',
+    [RESOURCE_ALERT_METRIC_TCP_CONN]: 'TCP Conn',
+    [RESOURCE_ALERT_METRIC_UDP_CONN]: 'UDP Conn'
   };
   return `${labels[metric] || 'Resource'} Alert ${index + 1}`;
 }
@@ -403,6 +426,7 @@ function normalizeResourceAlertServers(value) {
 }
 
 function getDefaultResourceAlertThreshold(metric) {
+  if (isResourceAlertConnectionMetric(metric)) return '1000';
   return metric === RESOURCE_ALERT_METRIC_NET_IN || metric === RESOURCE_ALERT_METRIC_NET_OUT
     ? '100'
     : '80';
@@ -410,9 +434,14 @@ function getDefaultResourceAlertThreshold(metric) {
 
 export function normalizeResourceAlertThreshold(value, metric) {
   const fallback = getDefaultResourceAlertThreshold(metric);
-  const normalized = metric === RESOURCE_ALERT_METRIC_NET_IN || metric === RESOURCE_ALERT_METRIC_NET_OUT
-    ? normalizeResourceAlertMbps(value)
-    : normalizeResourceAlertPercent(value);
+  let normalized;
+  if (isResourceAlertConnectionMetric(metric)) {
+    normalized = normalizeResourceAlertConnectionCount(value);
+  } else if (metric === RESOURCE_ALERT_METRIC_NET_IN || metric === RESOURCE_ALERT_METRIC_NET_OUT) {
+    normalized = normalizeResourceAlertMbps(value);
+  } else {
+    normalized = normalizeResourceAlertPercent(value);
+  }
   return Number(normalized) > 0 ? normalized : fallback;
 }
 
@@ -471,7 +500,9 @@ export function getResourceAlertRuleThresholds(rule) {
     diskPercent: metric === RESOURCE_ALERT_METRIC_DISK ? threshold : 0,
     netInBps: metric === RESOURCE_ALERT_METRIC_NET_IN ? threshold * BYTES_PER_MEGABIT : 0,
     netOutBps: metric === RESOURCE_ALERT_METRIC_NET_OUT ? threshold * BYTES_PER_MEGABIT : 0,
-    netTotalBps: 0
+    netTotalBps: 0,
+    tcpConn: metric === RESOURCE_ALERT_METRIC_TCP_CONN ? threshold : 0,
+    udpConn: metric === RESOURCE_ALERT_METRIC_UDP_CONN ? threshold : 0
   };
 }
 
