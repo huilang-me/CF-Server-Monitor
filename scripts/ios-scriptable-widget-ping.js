@@ -3,8 +3,8 @@
 // 用法：粘贴进 Scriptable，改 CONFIG.baseURL；小组件 Parameter 填服务器 id（也支持 id:xxx）
 
 const CONFIG = {
-  baseURL: "https://example.com", //必填，服务器监控面板网址
-  serverId: "ad7f*********c75" //必填，也可以在 widgetParameter 中指定
+  baseURL: "https://example.com", //必填
+  serverId: "" //必填，也可以在 widgetParameter 中指定
 };
 
 CONFIG.baseURL = String(CONFIG.baseURL || "").replace(/\/+$/, "");
@@ -58,7 +58,7 @@ async function fetchFlagImage(region) {
   if (!code) return null;
   try {
     const req = new Request(`https://flagcdn.com/24x18/${code}.png`);
-    req.timeoutInterval = 5;
+    req.timeoutInterval = 3;
     return await req.loadImage();
   } catch (e) {
     return null;
@@ -72,7 +72,7 @@ function normalizeTimestamp(value) {
 }
 
 function isOnline(server) {
-  const ts = normalizeTimestamp(server.report_timestamp || server.last_updated || server.timestamp);
+  const ts = normalizeTimestamp(server.last_updated);
   return ts > 0 && Date.now() - ts < 300000;
 }
 
@@ -88,25 +88,6 @@ function clampPercent(value) {
 
 function usageColor(p) {
   return p < 60 ? COL.green : p < 85 ? COL.amber : COL.red;
-}
-
-function formatBytes(bytes) {
-  let n = Math.abs(Number(bytes) || 0);
-  if (n === 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let i = 0;
-  while (n >= 1024 && i < units.length - 1) {
-    n /= 1024;
-    i++;
-  }
-  return `${n.toFixed(1)} ${units[i]}`;
-}
-
-// 该项目的 ram_used / ram_total 以 MB 上报，数值很大时才按字节处理
-function ramBytes(value) {
-  const n = Number(value) || 0;
-  if (n <= 0) return 0;
-  return n < 1000000 ? n * 1024 * 1024 : n;
 }
 
 // 解析三网延迟：false = 后台禁用该节点，null/空 = 本轮没取到
@@ -125,6 +106,13 @@ function validPingValue(v) {
   return typeof v === "number" && Number.isFinite(v) && v > 0;
 }
 
+// 三态：ok 有值 / timeout 有历史但当前取不到 / nodata 从未上报过
+// 区分「超时」和「没数据」，避免服务器刚添加、agent 未上报时四行全红
+function pingState(value, series) {
+  if (validPingValue(value)) return "ok";
+  return lastValidPing(series) !== null ? "timeout" : "nodata";
+}
+
 function pingHex(v) {
   if (!validPingValue(v)) return "#f85149";
   if (v < PING_WARN) return "#3fb950";
@@ -132,12 +120,14 @@ function pingHex(v) {
   return "#f85149";
 }
 
-function pingColor(v) {
+function pingColor(state, v) {
+  if (state === "nodata") return COL.dim2;
   return new Color(pingHex(v));
 }
 
-function formatPing(v) {
-  if (!validPingValue(v)) return "time out";
+function formatPing(v, short, state) {
+  if (state === "nodata") return "--";
+  if (!validPingValue(v)) return short ? "T/O" : "time out";
   return `${Math.round(v)}ms`;
 }
 
@@ -171,7 +161,7 @@ function unwrap(payload) {
 
 async function fetchServer(id) {
   const payload = await fetchJSON(`${CONFIG.baseURL}/api/server?id=${encodeURIComponent(id)}`);
-  if (payload && payload.error) throw new Error(`${id}: ${payload.error}`);
+  if (payload && payload.error) throw new Error(payload.error);
   const data = unwrap(payload) || {};
   return data && typeof data === "object" ? data : {};
 }
@@ -181,10 +171,30 @@ async function fetchListServer(id) {
     const payload = await fetchJSON(`${CONFIG.baseURL}/api/servers`, 12);
     const root = unwrap(payload) || {};
     const list = Array.isArray(root.servers) ? root.servers : Array.isArray(payload) ? payload : [];
-    return list.find((s) => String(s.id) === String(id)) || null;
+    return {
+      item: list.find((s) => String(s.id) === String(id)) || null,
+      sysConfig: root && typeof root.sysConfig === "object" ? root.sysConfig : null
+    };
   } catch (e) {
     return null;
   }
+}
+
+const NODE_NAME_KEYS = {
+  ct: "custom_ct_name",
+  cu: "custom_cu_name",
+  cm: "custom_cm_name",
+  bd: "custom_bd_name"
+};
+
+// 节点名跟随后台配置（sysConfig.custom_*_name），没配就保留默认中文名
+function applyNodeNames(nodes, sysConfig) {
+  if (!sysConfig) return;
+  nodes.forEach((node) => {
+    const key = NODE_NAME_KEYS[node.key];
+    const name = key ? String(sysConfig[key] || "").trim() : "";
+    if (name) node.label = name;
+  });
 }
 
 // 趋势点：[{ ts, ct, cu, cm, bd }] → { ct: [...], cu: [...] }
@@ -205,7 +215,8 @@ async function loadData() {
   const id = requiredServerId();
   if (!id) throw new Error("Server id is required. Set the widget parameter.");
 
-  const server = await fetchServer(id);
+  // 两个接口互不依赖，并发发出，避免串行超时叠加（15s + 12s）撑爆小组件预算
+  const [server, listResult] = await Promise.all([fetchServer(id), fetchListServer(id)]);
   const online = isOnline(server);
 
   const nodes = [];
@@ -216,20 +227,21 @@ async function loadData() {
   });
 
   let history = { ct: [], cu: [], cm: [], bd: [] };
-  if (nodes.length) {
-    const item = await fetchListServer(id);
-    if (item) {
-      history = extractHistory(item);
+  if (nodes.length && listResult) {
+    applyNodeNames(nodes, listResult.sysConfig);
+    if (listResult.item) {
+      history = extractHistory(listResult.item);
       // 仅当单点接口完全没返回该字段时，才用列表里的当前值兜底；
       // 0 / null 是明确的超时，不能被旧值覆盖
       nodes.forEach((node) => {
         if (!node.missing || validPingValue(node.value)) return;
-        const fallback = parsePing(item[`ping_${node.key}`]);
+        const fallback = parsePing(listResult.item[`ping_${node.key}`]);
         if (validPingValue(fallback.value)) node.value = fallback.value;
       });
     }
   }
 
+  // 旗帜要等 region 才知道地址，只能排在后面；超时压短，拿不到就不显示
   server._flagRegionCode = getFlagRegionCode(server.region);
   server._flagImage = await fetchFlagImage(server.region);
 
@@ -273,22 +285,27 @@ function barImg(value, width, height, color) {
 // 迷你趋势柱：按本行最大值归一化，缺点用短灰柱表示
 function sparkImg(values, width, height, hex) {
   if (!Array.isArray(values) || values.length < 2) return null;
+  // 后端 latency_window.points 可配，点数过多会把柱子挤成一条实心块，
+  // 按可用宽度截断，只保留最近的点
+  const maxPoints = Math.max(2, Math.floor(width / 4));
+  const points = values.length > maxPoints ? values.slice(-maxPoints) : values;
+
   const dc = new DrawContext();
   dc.size = new Size(width, height);
   dc.opaque = false;
   dc.respectScreenScale = true;
 
-  const n = values.length;
+  const n = points.length;
   const gap = n > 20 ? 1 : 2;
   const bw = Math.max(1, (width - gap * (n - 1)) / n);
   let max = 0;
-  values.forEach((v) => {
+  points.forEach((v) => {
     if (validPingValue(v) && v > max) max = v;
   });
   if (max <= 0) max = 1;
 
   for (let i = 0; i < n; i++) {
-    const v = values[i];
+    const v = points[i];
     const x = i * (bw + gap);
     const ok = validPingValue(v);
     const h = ok ? Math.max(2, height * (v / max)) : Math.max(1.5, height * 0.16);
@@ -315,6 +332,19 @@ function serverName(server) {
   return server.name || server.id || "Server";
 }
 
+// 按实际文字估算标签栏宽度（中文按全角算），让自定义节点名不被截断
+function estimateLabelWidth(nodes, fontSize) {
+  let max = 0;
+  nodes.forEach((node) => {
+    let w = 0;
+    for (const ch of String(node.label || "")) {
+      w += /[\u4e00-\u9fa5]/.test(ch) ? fontSize : fontSize * 0.58;
+    }
+    max = Math.max(max, w);
+  });
+  return Math.max(22, Math.min(56, Math.ceil(max) + 2));
+}
+
 function addFlag(parent, server, width, height) {
   if (server._flagImage) {
     const img = parent.addImage(server._flagImage);
@@ -330,6 +360,30 @@ function addFlag(parent, server, width, height) {
   return false;
 }
 
+// Scriptable 拿不到 widget 实际宽度，只能按屏幕估算。
+// Device.screenSize() 在不同系统上可能返回点、也可能返回像素，先归一化成点再算，
+// 否则会把屏宽算成三分之一，柱条只画到一半。
+function screenShortSidePt() {
+  try {
+    const screen = Device.screenSize();
+    const shortSide = Math.min(screen.width, screen.height);
+    if (!Number.isFinite(shortSide) || shortSide <= 0) return 393;
+    return shortSide > 460 ? shortSide / (Device.screenScale() || 2) : shortSide;
+  } catch (e) {
+    return 393;
+  }
+}
+
+function widgetContentWidth() {
+  const pt = screenShortSidePt();
+  // 各机型 widget 宽度不同（SE / Pro / Pro Max / iPad），一律略低估，
+  // 多余空间交给弹性 spacer，避免在小屏机上把右侧数值裁掉
+  return {
+    wide: Math.max(250, Math.min(360, Math.round(pt * 0.86))) - 30,
+    small: Math.max(118, Math.round(pt * 0.4)) - 26
+  };
+}
+
 function addMetricBar(parent, label, pct, opts) {
   const row = parent.addStack();
   row.centerAlignContent();
@@ -343,84 +397,83 @@ function addMetricBar(parent, label, pct, opts) {
   img.imageSize = new Size(opts.barW, opts.barH);
   row.addSpacer();
 
-  if (opts.detail) {
-    addText(row, opts.detail, Font.systemFont(9), COL.dim2, 1);
-    row.addSpacer(8);
-  }
-
   const val = addText(row, opts.valid === false ? "--" : `${Math.round(clampPercent(pct))}%`, Font.systemFont(10), COL.dim, 1);
   val.rightAlignText();
+  val.minimumScaleFactor = 0.7;
 }
 
 function addPingRow(parent, node, series, opts) {
+  const state = pingState(node.value, series);
   const row = parent.addStack();
   row.centerAlignContent();
 
   const labelBox = row.addStack();
   labelBox.size = new Size(opts.labelW, 12);
   const label = addText(labelBox, node.label, Font.semiboldSystemFont(opts.labelFont), COL.dim, 1);
-  label.minimumScaleFactor = 0.8;
+  label.minimumScaleFactor = 0.7;
 
   if (opts.sparkW) {
-    row.addSpacer(6);
-    const img = sparkImg(series, opts.sparkW, opts.sparkH, pingHex(lastValidPing(series)));
+    const points = opts.maxPoints ? series.slice(-opts.maxPoints) : series;
+    const img = sparkImg(points, opts.sparkW, opts.sparkH, pingHex(lastValidPing(points)));
     if (img) {
+      row.addSpacer(6);
       const el = row.addImage(img);
       el.imageSize = new Size(opts.sparkW, opts.sparkH);
     }
   }
 
   row.addSpacer();
-  const value = addText(row, formatPing(node.value), Font.systemFont(opts.valueFont), pingColor(node.value), 1);
+  const value = addText(row, formatPing(node.value, opts.short, state), Font.systemFont(opts.valueFont), pingColor(state, node.value), 1);
   value.rightAlignText();
+  value.minimumScaleFactor = 0.7;
 }
 
 function emptyHint(parent, text) {
   addText(parent, text, Font.systemFont(11), COL.dim2, 2);
 }
 
-function buildFull(widget, data, large) {
+function buildFull(widget, data) {
   const { server, nodes, history, online } = data;
 
   const head = widget.addStack();
   head.centerAlignContent();
-  addText(head, "●", Font.systemFont(large ? 12 : 11), online ? COL.green : COL.dim2, 1);
+  addText(head, "●", Font.systemFont(11), online ? COL.green : COL.dim2, 1);
   head.addSpacer(6);
-  if (addFlag(head, server, large ? 24 : 22, large ? 18 : 16)) head.addSpacer(6);
-  const name = addText(head, serverName(server), Font.boldSystemFont(large ? 18 : 16), COL.fg, 1);
+  if (addFlag(head, server, 22, 16)) head.addSpacer(6);
+  const name = addText(head, serverName(server), Font.boldSystemFont(16), COL.fg, 1);
   name.minimumScaleFactor = 0.6;
   head.addSpacer();
-  addText(head, online ? hhmm() : "offline", Font.systemFont(large ? 11 : 10), online ? COL.dim2 : COL.red, 1);
+  addText(head, online ? hhmm() : "offline", Font.systemFont(10), online ? COL.dim2 : COL.red, 1);
 
-  const ramUsed = Number(server.ram_used) || 0;
   const ramTotal = Number(server.ram_total) || 0;
-  const ram = percent(ramUsed, ramTotal);
+  const ram = percent(server.ram_used, ramTotal);
   const cpu = Number(server.cpu);
-  const cpuValid = Number.isFinite(cpu);
 
-  widget.addSpacer(large ? 16 : 7);
+  const cw = widgetContentWidth().wide;
+  const labelW = nodes.length ? estimateLabelWidth(nodes, 9) : 28;
+  const barW = Math.max(90, cw - labelW - 6 - 30);
+  const sparkW = Math.max(90, cw - labelW - 6 - 56);
+
+  widget.addSpacer(7);
   addMetricBar(widget, "RAM", ram, {
-    labelW: 28,
-    barW: large ? 158 : 238,
-    barH: large ? 7 : 6,
-    valid: ramTotal > 0,
-    detail: large && ramTotal > 0 ? `${formatBytes(ramBytes(ramUsed))} / ${formatBytes(ramBytes(ramTotal))}` : ""
+    labelW: labelW,
+    barW: barW,
+    barH: 6,
+    valid: ramTotal > 0
   });
 
-  widget.addSpacer(large ? 9 : 5);
+  widget.addSpacer(5);
   addMetricBar(widget, "CPU", cpu, {
-    labelW: 28,
-    barW: large ? 158 : 238,
-    barH: large ? 7 : 6,
-    valid: cpuValid,
-    detail: large && server.cpu_cores ? `${server.cpu_cores} 核` : ""
+    labelW: labelW,
+    barW: barW,
+    barH: 6,
+    valid: Number.isFinite(cpu)
   });
 
-  widget.addSpacer(large ? 18 : 8);
+  widget.addSpacer(8);
 
   if (!nodes.length) {
     emptyHint(widget, "后台未配置三网 Ping 节点");
-    if (large) widget.addSpacer();
     return;
   }
 
@@ -429,34 +482,23 @@ function buildFull(widget, data, large) {
     return Array.isArray(s) && s.filter((v) => validPingValue(v)).length >= 2;
   });
 
-  // 节点越少、行距越松，避免下方留大片空白
-  const rowGap = large
-    ? nodes.length >= 4 ? 16 : 26
-    : nodes.length >= 4 ? 4 : 12;
+  const rowGap = nodes.length >= 4 ? 4 : 12;
 
   nodes.forEach((node, index) => {
     if (index > 0) widget.addSpacer(rowGap);
     addPingRow(widget, node, history[node.key] || [], {
-      labelW: 28,
+      labelW: labelW,
       labelFont: 9,
-      valueFont: large ? 13 : 11,
-      sparkW: sparkAvailable ? (large ? 216 : 218) : 0,
-      sparkH: large ? 26 : 10
+      valueFont: 10,
+      sparkW: sparkAvailable ? sparkW : 0,
+      sparkH: 10
     });
   });
-
-  if (large) {
-    widget.addSpacer();
-    const net = server.net_in_speed || server.net_out_speed
-      ? `↓ ${formatBytes(server.net_in_speed)}/s   ↑ ${formatBytes(server.net_out_speed)}/s`
-      : `updated ${hhmm()}`;
-    const footer = addText(widget, net, Font.systemFont(10), COL.dim2, 1);
-    footer.centerAlignText();
-  }
 }
 
 function buildSmall(widget, data) {
-  const { server, nodes, online } = data;
+  const { server, nodes, history, online } = data;
+  const dense = nodes.length >= 4;
 
   const head = widget.addStack();
   head.centerAlignContent();
@@ -468,69 +510,87 @@ function buildSmall(widget, data) {
 
   const ramTotal = Number(server.ram_total) || 0;
   const cpu = Number(server.cpu);
+  const cwSmall = widgetContentWidth().small;
+  const labelW = nodes.length ? Math.min(42, estimateLabelWidth(nodes, 9)) : 22;
+  const barW = Math.max(36, cwSmall - labelW - 6 - 28);
+  const sparkW = Math.max(36, cwSmall - labelW - 6 - 36);
 
   widget.addSpacer(6);
   addMetricBar(widget, "RAM", percent(server.ram_used, ramTotal), {
-    labelW: 26,
-    barW: 54,
+    labelW: labelW,
+    barW: barW,
     barH: 5,
     valid: ramTotal > 0
   });
   widget.addSpacer(4);
   addMetricBar(widget, "CPU", cpu, {
-    labelW: 26,
-    barW: 54,
+    labelW: labelW,
+    barW: barW,
     barH: 5,
     valid: Number.isFinite(cpu)
   });
-  widget.addSpacer(8);
+  widget.addSpacer(dense ? 5 : 7);
 
   if (!nodes.length) {
     emptyHint(widget, "未配置三网 Ping");
   } else {
+    const sparkAvailable = nodes.some((n) => {
+      const s = history[n.key];
+      return Array.isArray(s) && s.filter((v) => validPingValue(v)).length >= 2;
+    });
     nodes.forEach((node, index) => {
-      if (index > 0) widget.addSpacer(nodes.length >= 4 ? 4 : 6);
-      addPingRow(widget, node, [], { labelW: 26, labelFont: 9, valueFont: 12, sparkW: 0, sparkH: 0 });
+      if (index > 0) widget.addSpacer(dense ? 4 : 5);
+      addPingRow(widget, node, history[node.key] || [], {
+        labelW: labelW,
+        labelFont: 9,
+        valueFont: 10,
+        sparkW: sparkAvailable ? sparkW : 0,
+        sparkH: 11,
+        maxPoints: 10,
+        short: true
+      });
     });
   }
 
-  widget.addSpacer();
-  const time = addText(widget, online ? hhmm() : "offline", Font.systemFont(9), online ? COL.dim2 : COL.red, 1);
-  time.centerAlignText();
+  if (!dense) {
+    widget.addSpacer();
+    const time = addText(widget, online ? hhmm() : "offline", Font.systemFont(9), online ? COL.dim2 : COL.red, 1);
+    time.centerAlignText();
+  }
 }
 
 function buildWidget(data) {
-  const large = family === "large";
   const small = family === "small";
   const widget = baseWidget();
   widget.setPadding(small ? 12 : 14, small ? 13 : 15, small ? 12 : 14, small ? 13 : 15);
 
   if (small) buildSmall(widget, data);
-  else buildFull(widget, data, large);
+  else buildFull(widget, data);
 
   return widget;
 }
 
-function errWidget(message) {
+function hintWidget(message) {
   const widget = baseWidget();
   widget.setPadding(14, 15, 14, 15);
-  addText(widget, "CF Server Monitor", Font.boldSystemFont(14), COL.red, 1);
-  widget.addSpacer(8);
-  addText(widget, message, Font.systemFont(11), COL.fg, 3);
+  widget.addSpacer();
+  addText(widget, message, Font.systemFont(12), COL.red, 3).centerAlignText();
+  widget.addSpacer();
   return widget;
 }
 
 async function main() {
   let widget;
   try {
-    if (!CONFIG.baseURL || CONFIG.baseURL.includes("example.com")) {
-      widget = errWidget("Set CONFIG.baseURL first.");
+    if (!CONFIG.baseURL || CONFIG.baseURL.includes("example.com") || CONFIG.baseURL.includes("exmaple.com")) {
+      widget = hintWidget("Set CONFIG.baseURL");
+    } else if (!requiredServerId()) {
+      widget = hintWidget("Set server id");
     } else {
-      const data = await loadData();
-      widget = buildWidget(data);
+      widget = buildWidget(await loadData());
     }
   } catch (e) {
-    widget = errWidget("Request failed: " + (e.message || e));
+    widget = hintWidget("Request failed: " + (e.message || e));
   }
 
   if (config.runsInWidget) {
