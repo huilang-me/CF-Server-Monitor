@@ -46,7 +46,17 @@
               <HelpTooltip :text="trans.remoteImageTip" />
             </label>
             <div class="flex" style="gap:8px;">
-              <input type="text" v-model="settings.custom_bg" class="form-input flex-1" placeholder="https://...">
+              <div class="input-clear-wrap">
+                <input type="text" v-model="settings.custom_bg" class="form-input" placeholder="https://...">
+                <button
+                  v-if="settings.custom_bg"
+                  type="button"
+                  class="input-clear-btn"
+                  :title="trans.clear"
+                  :aria-label="trans.clear"
+                  @click="settings.custom_bg = ''"
+                >×</button>
+              </div>
               <div class="upload-btn-wrapper">
                 <button class="btn btn-margin-0">📁 {{ trans.upload }}</button>
                 <input type="file" accept="image/*" @change="$emit('upload-bg', $event)">
@@ -61,7 +71,17 @@
               <HelpTooltip :text="trans.remoteImageTip" />
             </label>
             <div class="flex" style="gap:8px;">
-              <input type="text" v-model="settings.custom_bg_mobile" class="form-input flex-1" placeholder="https://...">
+              <div class="input-clear-wrap">
+                <input type="text" v-model="settings.custom_bg_mobile" class="form-input" placeholder="https://...">
+                <button
+                  v-if="settings.custom_bg_mobile"
+                  type="button"
+                  class="input-clear-btn"
+                  :title="trans.clear"
+                  :aria-label="trans.clear"
+                  @click="settings.custom_bg_mobile = ''"
+                >×</button>
+              </div>
               <div class="upload-btn-wrapper">
                 <button class="btn btn-margin-0">📁 {{ trans.upload }}</button>
                 <input type="file" accept="image/*" @change="$emit('upload-bg-mobile', $event)">
@@ -76,7 +96,17 @@
               <HelpTooltip :text="trans.remoteImageTip" />
             </label>
             <div class="flex" style="gap:8px;">
-              <input type="text" v-model="settings.favicon" class="form-input flex-1" placeholder="https://...">
+              <div class="input-clear-wrap">
+                <input type="text" v-model="settings.favicon" class="form-input" placeholder="https://...">
+                <button
+                  v-if="settings.favicon"
+                  type="button"
+                  class="input-clear-btn"
+                  :title="trans.clear"
+                  :aria-label="trans.clear"
+                  @click="settings.favicon = ''"
+                >×</button>
+              </div>
               <div class="upload-btn-wrapper">
                 <button class="btn btn-margin-0">📁 {{ trans.upload }}</button>
                 <input type="file" accept="image/*,.ico" @change="$emit('upload-favicon', $event)">
