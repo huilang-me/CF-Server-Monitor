@@ -6,6 +6,7 @@ import { buildAuthCookie, generateToken } from '../src/middleware/auth.js';
 import { buildResourceAlertNotificationPayloads } from '../src/services/notification.js';
 import { clearSiteSettingsCache, DEFAULT_NOTIFICATION_TEMPLATE, normalizeNotificationTemplate, normalizeResourceAlertRules } from '../src/utils/settings.js';
 import { UPDATE_MAX_REQUEST_BYTES } from '../src/utils/config.js';
+import { HISTORY_INSERT_COLUMNS } from '../src/utils/historyFields.js';
 
 globalThis.WebSocketRequestResponsePair = class WebSocketRequestResponsePair {
   constructor(request, response) {
@@ -1340,6 +1341,60 @@ test('WSS history persistence carries pending history aggregates into next D1 wr
       ),
       false
     );
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test('WSS history persistence 在探针未上报 IP 时用握手来源 IP 按地址族补位', async () => {
+  const savedRows = [];
+  const db = {
+    prepare() {
+      return {
+        bind(...args) {
+          return {
+            async run() {
+              savedRows.push(args);
+              return { meta: { changes: 1 } };
+            }
+          };
+        }
+      };
+    }
+  };
+  const broadcaster = makeBroadcaster([], { DB: db });
+  const originalNow = Date.now;
+  const now = Date.UTC(2026, 0, 1, 0, 0, 0);
+  let attachment = {
+    reportIntervalMs: 60_000,
+    lastD1WriteTs: now - 61_000,
+    clientIp: '2001:db8::1'
+  };
+  const ws = {
+    deserializeAttachment() {
+      return attachment;
+    },
+    serializeAttachment(value) {
+      attachment = value;
+    }
+  };
+
+  try {
+    Date.now = () => now;
+    const result = await broadcaster._persistAgentHistoryIfDue(ws, attachment, {
+      serverId: 'server-1',
+      historyPartitionId: 42,
+      metrics: { cpu: 10, ip_v4: '0', ip_v6: '0' },
+      regionCode: 'US',
+      timestamp: now,
+      agentVersion: 'test',
+      reportIntervalMs: 60_000
+    });
+
+    assert.equal(result.persisted, true);
+    const row = savedRows[0];
+    assert.equal(row[HISTORY_INSERT_COLUMNS.indexOf('ip_v4')], '0');
+    assert.equal(row[HISTORY_INSERT_COLUMNS.indexOf('ip_v6')], '2001:db8::1');
   } finally {
     Date.now = originalNow;
   }

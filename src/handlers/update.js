@@ -5,7 +5,8 @@ import {
   DISK_IO_FIELD_TO_COLUMN,
   DISK_IO_METRIC_FIELDS,
   mergeMetricsIntoServer,
-  coerceNumericMetricFields
+  coerceNumericMetricFields,
+  applyRequestIpFallback
 } from '../utils/metrics.js';
 import { createErrorResponse, createUnauthorizedResponse, createBadRequestResponse } from '../utils/errors.js';
 import { ensureServerOptimization } from '../database/indexOptimization.js';
@@ -744,7 +745,9 @@ async function handleUpdateCore(request, env, ctx, discovery, authState = null) 
     // 获取最后一条插入（如果是批量数据，取最后一个样本）
     const latestSample = samples[samples.length - 1];
     const latestMetrics = getReportMetrics(data, latestSample);
-    const historyMetrics = getHistoryMetrics(data, samples, latestSample);
+    // 探针没探到公网 IP（ip_v4/ip_v6 均为空或 "0"）时，用本次连接的来源 IP 补位，
+    // 按地址族写入对应字段；只作用于落库的指标，广播 payload 本就不含 ip 字段。
+    const historyMetrics = applyRequestIpFallback(getHistoryMetrics(data, samples, latestSample), request);
     await saveMetricsHistory(
       env.DB,
       id,
