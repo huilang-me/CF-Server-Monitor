@@ -1140,6 +1140,7 @@ const initCharts = () => {
           },
           ticks: {
             maxTicksLimit: CHART.MAX_TICKS,
+            autoSkipPadding: 16,
             color: chartTheme.axis,
             font: { size: 9, family: "'JetBrains Mono', monospace" },
             maxRotation: 0,
