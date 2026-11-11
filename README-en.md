@@ -10,7 +10,7 @@ A lightweight multi-server monitoring dashboard built on Cloudflare Workers, D1,
   <a href="README-en.md">English</a>
 </p>
 
-[![Workers](https://img.shields.io/badge/Workers-2.8.7%20Beta7-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
+[![Workers](https://img.shields.io/badge/Workers-2.8.7%20Stable-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
 [![GitHub Stars](https://img.shields.io/github/stars/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/forks)
 [![License](https://img.shields.io/badge/License-MIT-16a34a?style=flat-square)](#license)
@@ -70,7 +70,7 @@ Compared with traditional controller-style monitoring tools, CF-Server-Monitor i
 | Cross-platform Agent | Mainstream Linux, Alpine Linux, OpenWrt, Synology DSM, Feiniu fnOS, FreeBSD, macOS, Windows, plus Docker image deployment; Go Agent by default, Shell/PowerShell still available |
 | Realtime push | Durable Objects + WebSocket refresh the UI immediately after Agent reports |
 | Alerts | Offline alerts, recovery notices, expiration reminders, resource load rules |
-| Multi-language | Built-in Chinese, English, and Latin American Spanish frontend switch; notifications in Chinese, English, or Spanish; Chinese and English documentation |
+| Multi-language | Built-in Simplified Chinese, Traditional Chinese, English, Japanese, Indonesian, French, and Spanish frontend switch; notifications in the same seven languages; Chinese and English documentation |
 | Multi-site | GitHub Pages static frontend and aggregation of multiple Worker APIs |
 | Widget | iOS Scriptable widget script for quick mobile status checks |
 | Security | API Secret, admin password, JWT, Turnstile, CORS, CSP allowlists |
@@ -96,6 +96,7 @@ Core flow:
 4. The Worker verifies `API_SECRET`, writes to D1, and broadcasts realtime data through Durable Objects.
 5. The dashboard, server detail page, admin panel, and iOS widget read from the same API.
 
+## Version Notes
 
 Recent changes:
 
@@ -325,6 +326,8 @@ Usage:
 
 The widget shows online status, CPU, memory, disk, monthly traffic, realtime upload/download speed, and update time. The actual refresh interval is controlled by iOS.
 
+To watch several servers at once, use [scripts/ios-scriptable-widget-multi.js](scripts/ios-scriptable-widget-multi.js): leave the Parameter empty to show all public servers, set `server-a,server-b` to show only those, or set a single server to get the detail view (with three-net latency bars). Servers are paged automatically (1 per page on small/medium widgets, 2 per page on large ones), and `page:2` (also `p2`, `2`, or `第2页`) selects a page for smart stacks. It requests `/api/servers` (the full list), so it costs more D1 reads than the single-server widget when you have many servers.
+
 ## Notifications and Alerts
 
 Configure notifications in Admin -> Global Settings -> Notifications. Notification delivery has three channel modes: built-in channels, SMTP email, and custom Webhook. When custom Webhook is selected, the backend sends only the Webhook request and does not call the built-in channel.
@@ -422,9 +425,14 @@ Send a test notification before saving.
 - After changing `API_SECRET`, redeploy the Worker and reinstall or update all Agents.
 - Keep the admin password separate from `API_SECRET` for long-term use.
 
-### Frontend WebSocket Timeout
+### JWT and WebSocket Auth
 
-Admin settings can configure the frontend WSS timeout in minutes. The default `0` disables time-based disconnects; a positive value closes the built-in frontend subscription at the limit and prompts the user to close or continue.
+- A successful admin login issues a JWT valid for 7 days; the frontend uses it for later admin requests and stores it in the `cfsm_auth` HttpOnly cookie.
+- Private sites (`is_public !== 'true'`) require login for `/api/servers`, `/api/server`, `/api/history/all`, and `/api/ws`; unauthorized WebSocket connections are never forwarded to the Durable Object.
+- `/api/ws` accepts three JWT sources: `Authorization: Bearer <token>`, `Cookie: cfsm_auth=<token>`, and the `token` / `auth_token` / `ws_token` query parameters.
+- Native browser WebSocket cannot set an `Authorization` header, so the built-in same-origin frontend uses the `cfsm_auth` cookie, while cross-origin connections append `token=<jwt>` to the URL.
+- Tokens in query parameters may appear in access logs; only use HTTPS and avoid sharing WebSocket URLs that contain a token.
+- The admin panel can configure the frontend WSS timeout in minutes: the default `0` never disconnects based on connection age; a positive value closes the built-in frontend subscription at the limit and prompts the user to close or continue.
 
 ### Turnstile
 
@@ -445,7 +453,7 @@ Built-in sources include Cloudflare Turnstile, Cloudflare Analytics, Google Font
 The project includes a built-in theme and supports:
 
 - Dark / light display
-- Chinese / English frontend switch
+- Multi-language frontend switch (7 languages)
 - Custom background, favicon, CSS, and `<head>`
 - Mikus mode
 - Theme store
@@ -614,6 +622,7 @@ CF-Server-Monitor/
 │   ├── handlers/            # Worker route handlers
 │   ├── middleware/          # Auth middleware
 │   ├── services/            # Notification service
+│   ├── shared/              # Shared constants for frontend and Worker (language list, etc.)
 │   └── utils/               # Cache, CORS, CSP, metrics, version helpers
 ├── test/                    # Local tests and mock data tools
 ├── API.md                   # REST / WebSocket API reference
@@ -707,7 +716,7 @@ The frontend may display Hong Kong, Macao, Taiwan, and country/region informatio
 ## Related Docs
 
 - [API.md](API.md): REST API, WebSocket, auth, error codes, and data structures
-- [https://github.com/huilang-me/cfsm-agent](cfsm-agent): Go Agent configuration, upgrade, logs, and troubleshooting
+- [cfsm-agent](https://github.com/huilang-me/cfsm-agent): Go Agent configuration, upgrade, logs, and troubleshooting
 - [theme-develop.md](theme-develop.md): Third-party theme development
 - [theme-ai-prompt.md](theme-ai-prompt.md): Theme development AI prompt — paste it into an AI assistant to build themes that follow project rules
 - [test/README.md](test/README.md): Local mock data and testing workflow

@@ -10,7 +10,7 @@
   <a href="README-en.md">English</a>
 </p>
 
-[![Workers](https://img.shields.io/badge/Workers-2.8.7%20Beta7-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
+[![Workers](https://img.shields.io/badge/Workers-2.8.7%20Stable-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
 [![GitHub Stars](https://img.shields.io/github/stars/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/forks)
 [![License](https://img.shields.io/badge/License-MIT-16a34a?style=flat-square)](#许可证)
@@ -70,7 +70,7 @@ CF-Server-Monitor 是一个部署在 Cloudflare Workers 上的服务器监控系
 | 多系统 Agent | 主流 Linux、Alpine Linux、OpenWrt、群晖 DSM、飞牛 fnOS、FreeBSD、macOS、Windows，支持 Docker 镜像部署；默认 Go 版本，保留 Shell/PowerShell 版本 |
 | 实时推送      | Durable Objects + WebSocket，Agent 上报后前端即时刷新                                      |
 | 告警通知      | 离线告警、恢复通知、到期提醒、资源负载告警                                                            |
-| 多语言       | 前端内置中文、英文和西班牙语（拉美）切换；通知消息支持中文、英文和西班牙语；文档提供中文与英文入口              |
+| 多语言       | 前端内置简体中文、繁體中文、English、日本語、Bahasa Indonesia、Français、Español 切换；通知消息支持同样 7 种语言；文档提供中文与英文入口              |
 | 多站点       | 支持 GitHub Pages 静态前台和多个 Worker API 聚合展示                                          |
 | 小组件       | 提供 iOS Scriptable 小组件脚本，适合移动端快速查看                                                |
 | 安全控制      | API Secret、管理员密码、JWT、Turnstile、CORS、CSP 白名单                                      |
@@ -94,6 +94,8 @@ flowchart LR
 2. 目标服务器安装 Agent，按上报间隔向 Worker 发送指标。
 3. Worker 校验 `API_SECRET`，写入 D1，并通过 Durable Object 广播实时数据。
 4. 前台大盘、详情页、管理后台和 iOS 小组件读取同一套 API。
+
+## 版本说明
 
 近期变化：
 
@@ -123,14 +125,14 @@ Go Agent 的完整更新记录见 [cfsm-agent releases](https://github.com/huila
 
 这是推荐方式，适合希望通过 Cloudflare 控制台自动构建和重新部署的用户。
 
-1. Fork 本仓库到自己的 GitHub 账号。
-2. 进入 Cloudflare Dashboard，打开 Workers & Pages。
-3. 创建 Worker，并选择从 GitHub 仓库导入本项目。
+图文教程：<https://huilang.me/cf-server-monitor-setup/>
+
+1. 打开项目地址[CF-Server-Monitor](https://github.com/huilang-me/CF-Server-Monitor/), 老规矩，右上角来个Star，然后点[Fork](https://github.com/huilang-me/CF-Server-Monitor/fork)
+2. 进入 Cloudflare Dashboard，打开 [Workers & Pages](https://dash.cloudflare.com/?to=/:account/workers-and-pages)。
+3. [创建 Worker](https://dash.cloudflare.com/?to=/:account/workers-and-pages/create)，并选择从 GitHub 仓库导入本项目。
 4. 构建命令填写 `npm run build:frontend`。
 5. 部署命令使用 `npx wrangler deploy`。
 6. 部署完成后，在 Worker 的 Variables and Secrets 中添加 `API_SECRET`。
-
-图文教程：<https://huilang.me/cf-server-monitor-setup/>
 
 ### 方式二：GitHub Actions 自动部署
 
@@ -323,7 +325,7 @@ npm run build:github-page
 
 小组件会显示在线状态、CPU、内存、磁盘、月流量、实时上下行速率和更新时间。iOS 会按系统策略决定实际刷新频率。
 
-需要一次看多台时用 [scripts/ios-scriptable-widget-multi.js](scripts/ios-scriptable-widget-multi.js)：用法相同，Parameter 留空显示面板上所有公开服务器，填 `server-a,server-b` 只显示这几台，只填一台时显示详细视图（带三网延迟柱状图）。它请求的是 `/api/servers`（全站列表），服务器较多时会比单机版产生更多 D1 查询。
+需要一次看多台时用 [scripts/ios-scriptable-widget-multi.js](scripts/ios-scriptable-widget-multi.js)：Parameter 留空显示面板上所有公开服务器，填 `server-a,server-b` 只显示这几台，只填一台时显示详细视图（带三网延迟柱状图）。服务器会自动分页（小、中尺寸每页 1 台，大尺寸每页 2 台），Parameter 填 `page:2`（也支持 `p2`、`2`、`第2页`）可指定页码，适合智能叠放。它请求的是 `/api/servers`（全站列表），服务器较多时会比单机版产生更多 D1 查询。
 
 ## 通知与告警
 
@@ -450,7 +452,7 @@ smtp://<用户名>:<密码>@<host>:<port>?from=<发件人>&to=<收件人1,收件
 项目内置默认主题，并支持：
 
 - 深色 / 浅色显示
-- 前台中文 / 英文切换
+- 前台多语言切换（7 种语言）
 - 自定义背景图、favicon、CSS、`<head>`
 - Mikus 模式
 - 主题商店
@@ -620,6 +622,7 @@ CF-Server-Monitor/
 │   ├── handlers/            # Worker 路由处理
 │   ├── middleware/          # 鉴权中间件
 │   ├── services/            # 通知服务
+│   ├── shared/              # 前后端共用常量（语言清单等）
 │   └── utils/               # 缓存、CORS、CSP、指标处理、版本检查
 ├── test/                    # 本地测试和模拟数据工具
 ├── API.md                   # REST / WebSocket API 文档
@@ -712,7 +715,7 @@ echo <CF_CDN_IP> <你的探针域名> | sudo tee -a /etc/hosts
 ## 相关文档
 
 - [API.md](API.md)：REST API、WebSocket、鉴权、错误码和数据结构
-- [https://github.com/huilang-me/cfsm-agent](cfsm-agent)：Go 版本 Agent 配置、升级、日志与排障
+- [cfsm-agent](https://github.com/huilang-me/cfsm-agent)：Go 版本 Agent 配置、升级、日志与排障
 - [theme-develop.md](theme-develop.md)：第三方主题开发
 - [theme-ai-prompt.md](theme-ai-prompt.md)：主题开发 AI 提示词，直接粘贴给 AI 即可按项目规范开发主题
 - [test/README.md](test/README.md)：本地模拟数据和测试流程

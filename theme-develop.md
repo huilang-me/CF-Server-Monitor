@@ -99,7 +99,7 @@ my-theme/
 - 旗帜和 OS 图标走默认皮肤静态文件，不要打包进主题：旗帜使用 `/flags/<code>.svg`，OS 图标使用 `/os-icons/<filename>`
 - 站点标题、背景图、自定义 `<head>`、自定义脚本由用户后台外观设置控制，主题不要把这些配置写死
 - 主题不可用时应让页面暴露加载错误，不要在主题内静默跳转到其他页面
-- 主题底部需要展示 `Powered by CF-Server-Monitor`，并链接到 [https://github.com/huilang-me/CF-Server-Monitor/](https://github.com/huilang-me/CF-Server-Monitor/)；建议同时输出 `/api/config` 返回的 `version`，例如 `Powered by CF-Server-Monitor v2.7.12 Beta`
+- 主题底部需要展示 `Powered by CF-Server-Monitor`，并链接到 [https://github.com/huilang-me/CF-Server-Monitor/](https://github.com/huilang-me/CF-Server-Monitor/)；建议附带 `/api/config` 返回的 `version`作为该链接的 title 提示属性展示。
 
 路由约定：
 
