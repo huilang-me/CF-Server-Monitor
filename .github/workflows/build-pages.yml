@@ -19,8 +19,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-      - run: npm install
+      - name: Install dependencies
+        run: npm install --package-lock=false
       - name: Build
         env:
           VITE_API_BASE: ${{ secrets.API_BASE }}
@@ -37,9 +37,11 @@ jobs:
           cp -a dist/. /tmp/cfsm-site/
           git fetch origin dist || true
           if git show-ref --verify --quiet refs/remotes/origin/dist; then
+            git stash push -u -m "temporary build files"
             git switch -C dist --track origin/dist
             find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
           else
+            git stash push -u -m "temporary build files" || true
             git switch --orphan dist
             git rm -rf . || true
           fi
