@@ -1,29 +1,29 @@
 # CFSM Minimal
 
-A compact, low-dependency third-party theme for CF-Server-Monitor.
+A lightweight third-party theme for CF-Server-Monitor, built with Vue 3 + Vite.
 
-## Design goals
-- Small dashboard cards and restrained colors
-- No charting framework, icon pack, web fonts, or animation library
-- REST only for initial configuration/list and detail/history; live metrics use WebSocket
-- Responsive layout and tabular numerals
+## Design
+- Minimal responsive server cards and compact status summary
+- No charting framework, icon library, UI framework, web font, or animation dependency
+- Lightweight SVG history charts
+- Dark / light appearance follows the site's `preferred_theme`
+- Chinese / English follows `default_language`
 
 ## Development
+
 ```bash
 npm install
-cp .env.example .env
 npm run dev
+npm test
 npm run build
 ```
 
-Set `VITE_API_BASE` to one or more comma-separated Worker origins for local or static hosting. Leave it empty for same-origin deployment.
+By default the theme uses the current origin as its API base. For local development against a remote Worker, set `VITE_API_BASE` in a local `.env` file. Do not commit Worker URLs or credentials.
 
-## Publish
-Push to `theme-minimal` or run the workflow manually. The workflow builds the site and appends the generated `index.html` and `assets/` to the `dist` branch without force-pushing.
+## Build output
 
-In GitHub repository settings:
-1. Actions → General → Workflow permissions → Read and write permissions.
-2. Pages → Build and deployment → Deploy from a branch → `dist` / `/(root)`.
-3. Add repository secrets: `API_BASE`, `TITLE`, `BACKGROUND_IMAGE`, `CSP_API`, `CSP_STATIC`.
+`npm run build` creates only `dist/index.html` and `dist/assets/`.
 
-For cross-origin hosting, add the Pages origin to `CORS_ALLOWED_ORIGINS` on every Worker. Use plain origins separated by commas.
+## Current status
+
+This branch is for theme development and CI verification only. It does not deploy to GitHub Pages, Cloudflare Pages, or Cloudflare Workers. No deployment workflow is enabled.

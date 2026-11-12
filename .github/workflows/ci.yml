@@ -1,0 +1,26 @@
+name: Theme CI
+on:
+  push:
+    branches: [theme-minimal]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: cfsm-minimal-ci
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm install --package-lock=false
+      - name: Unit tests
+        run: npm test
+      - name: Production build
+        run: npm run build
