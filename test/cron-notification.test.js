@@ -142,7 +142,8 @@ function seedSamples(broadcaster, serverId, values, now = Date.now()) {
     samples: values.map((value, index) => ({
       ts: minute - (values.length - 1 - index) * MINUTE,
       minuteTs: minute - (values.length - 1 - index) * MINUTE,
-      cpu: value, ram: value, disk: value, netIn: value, netOut: value, netTotal: value * 2
+      cpu: value, ram: value, disk: value, netIn: value, netOut: value, netTotal: value * 2,
+      tcpConn: value, udpConn: value
     }))
   });
 }
@@ -406,7 +407,7 @@ test('compact recovery preserves complete metric values for every configurable r
     clearAllCaches();
     messages.length = 0;
     t.mock.timers.setTime(NOW);
-    const settings = makeSettings({ resource_alert_rules: ['cpu', 'ram', 'disk', 'netIn', 'netOut'].flatMap(metric =>
+    const settings = makeSettings({ resource_alert_rules: ['cpu', 'ram', 'disk', 'netIn', 'netOut', 'tcpConn', 'udpConn'].flatMap(metric =>
       ['average', 'continuous'].map(mode => ({
         id: `${metric}-${mode}`, metric, mode,
         threshold: metric.startsWith('net') ? 640 : 80,
@@ -424,7 +425,7 @@ test('compact recovery preserves complete metric values for every configurable r
       }
       await checkResourceAlerts(env, { siteSettings: settings });
     }
-    assert.equal(Object.keys(db.resourceState.servers).length, 10);
+    assert.equal(Object.keys(db.resourceState.servers).length, 14);
     assert.ok(Object.values(db.resourceState.servers).every(state => state.status === 'recovered'));
     assert.equal(db.stats.writes, 2);
     assert.equal(db.stats.resource, 2);
@@ -432,6 +433,35 @@ test('compact recovery preserves complete metric values for every configurable r
     runs.push({ state: db.resourceState, messages: structuredClone(messages) });
   }
   assert.deepEqual(runs[0], runs[1]);
+});
+
+test('tcp and udp connection alerts use count thresholds and recover', async t => {
+  const messages = setup(t);
+  const settings = makeSettings({
+    resource_alert_rules: [
+      { id: 'tcp', metric: 'tcpConn', threshold: 1000, intervalMinutes: 5 },
+      { id: 'udp', metric: 'udpConn', threshold: 500, intervalMinutes: 5 }
+    ]
+  });
+  const db = makeDb(settings);
+  const { env, broadcaster } = makeEnv(db);
+
+  seedSamples(broadcaster, 'server-1', [1500, 1500, 1500, 1500, 1500]);
+  await checkResourceAlerts(env, { siteSettings: settings });
+  assert.equal(db.resourceState.servers['tcp:server-1'].status, 'active');
+  assert.equal(db.resourceState.servers['udp:server-1'].status, 'active');
+  assert.equal(messages.length, 1);
+  assert.match(messages[0].text, /TCP 连接数 1500/);
+  assert.match(messages[0].text, /UDP 连接数 1500/);
+
+  t.mock.timers.tick(MINUTE);
+  seedSamples(broadcaster, 'server-1', [100, 100, 100, 100, 100]);
+  await checkResourceAlerts(env, { siteSettings: settings });
+  assert.equal(db.resourceState.servers['tcp:server-1'].status, 'recovered');
+  assert.equal(db.resourceState.servers['udp:server-1'].status, 'recovered');
+  assert.equal(messages.length, 2);
+  assert.match(messages[1].text, /TCP 连接数 100/);
+  assert.match(messages[1].text, /UDP 连接数 100/);
 });
 
 test('malformed compact recovery data cannot clear an active alert', async t => {

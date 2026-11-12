@@ -13,7 +13,7 @@ const NOTIFICATION_MESSAGES = {
       renewed: '服务器自动续费成功',
       test: '测试通知'
     },
-    metrics: { netIn: '下行网速', netOut: '上行网速', netTotal: '总网速' },
+    metrics: { netIn: '下行网速', netOut: '上行网速', netTotal: '总网速', tcpConn: 'TCP 连接数', udpConn: 'UDP 连接数' },
     invalidTime: '无效时间',
     noReport: '无上报记录',
     lastReport: time => `最后上报: ${time}`,
@@ -35,7 +35,7 @@ const NOTIFICATION_MESSAGES = {
       renewed: '伺服器自動續費成功',
       test: '測試通知'
     },
-    metrics: { netIn: '下行網速', netOut: '上行網速', netTotal: '總網速' },
+    metrics: { netIn: '下行網速', netOut: '上行網速', netTotal: '總網速', tcpConn: 'TCP 連線數', udpConn: 'UDP 連線數' },
     invalidTime: '無效時間',
     noReport: '無上報記錄',
     lastReport: time => `最後上報: ${time}`,
@@ -57,7 +57,7 @@ const NOTIFICATION_MESSAGES = {
       renewed: 'Server Auto-Renewed',
       test: 'Test Notification'
     },
-    metrics: { netIn: 'Download Speed', netOut: 'Upload Speed', netTotal: 'Total Speed' },
+    metrics: { netIn: 'Download Speed', netOut: 'Upload Speed', netTotal: 'Total Speed', tcpConn: 'TCP Connections', udpConn: 'UDP Connections' },
     invalidTime: 'Invalid time',
     noReport: 'No reports',
     lastReport: time => `Last report: ${time}`,
@@ -79,7 +79,7 @@ const NOTIFICATION_MESSAGES = {
       renewed: 'サーバー自動更新完了',
       test: 'テスト通知'
     },
-    metrics: { netIn: '下り速度', netOut: '上り速度', netTotal: '合計速度' },
+    metrics: { netIn: '下り速度', netOut: '上り速度', netTotal: '合計速度', tcpConn: 'TCP 接続数', udpConn: 'UDP 接続数' },
     invalidTime: '無効な時刻',
     noReport: '報告なし',
     lastReport: time => `最終報告: ${time}`,
@@ -101,7 +101,7 @@ const NOTIFICATION_MESSAGES = {
       renewed: 'Server Diperpanjang Otomatis',
       test: 'Notifikasi Uji'
     },
-    metrics: { netIn: 'Kecepatan Unduh', netOut: 'Kecepatan Unggah', netTotal: 'Kecepatan Total' },
+    metrics: { netIn: 'Kecepatan Unduh', netOut: 'Kecepatan Unggah', netTotal: 'Kecepatan Total', tcpConn: 'Koneksi TCP', udpConn: 'Koneksi UDP' },
     invalidTime: 'Waktu tidak valid',
     noReport: 'Tidak ada laporan',
     lastReport: time => `Laporan terakhir: ${time}`,
@@ -123,7 +123,7 @@ const NOTIFICATION_MESSAGES = {
       renewed: 'Serveur renouvelé automatiquement',
       test: 'Notification de test'
     },
-    metrics: { netIn: 'Débit descendant', netOut: 'Débit montant', netTotal: 'Débit total' },
+    metrics: { netIn: 'Débit descendant', netOut: 'Débit montant', netTotal: 'Débit total', tcpConn: 'Connexions TCP', udpConn: 'Connexions UDP' },
     invalidTime: 'Heure invalide',
     noReport: 'Aucun rapport',
     lastReport: time => `Dernier rapport : ${time}`,
@@ -145,7 +145,7 @@ const NOTIFICATION_MESSAGES = {
       renewed: 'Servidor renovado automáticamente',
       test: 'Notificación de prueba'
     },
-    metrics: { netIn: 'Velocidad de descarga', netOut: 'Velocidad de subida', netTotal: 'Velocidad total' },
+    metrics: { netIn: 'Velocidad de descarga', netOut: 'Velocidad de subida', netTotal: 'Velocidad total', tcpConn: 'Conexiones TCP', udpConn: 'Conexiones UDP' },
     invalidTime: 'Hora inválida',
     noReport: 'Sin reportes',
     lastReport: time => `Último reporte: ${time}`,

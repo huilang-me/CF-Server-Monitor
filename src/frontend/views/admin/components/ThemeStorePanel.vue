@@ -160,6 +160,29 @@
             </div>
           </div>
         </div>
+
+        <div class="theme-card theme-card-new">
+          <div class="theme-cover-wrap theme-cover-wrap-new">
+            <div class="theme-new-cover">
+              <div class="theme-new-plus">+</div>
+              <pre class="theme-new-tree">my-theme/
+├── index.html
+└── assets/</pre>
+            </div>
+          </div>
+          <div class="theme-info">
+            <div class="theme-header">
+              <h3 class="theme-title">{{ trans.themeStoreCreateTitle }}</h3>
+            </div>
+            <p class="theme-desc">{{ trans.themeStoreCreateDesc }}</p>
+            <div class="theme-space"></div>
+            <div class="theme-actions">
+              <a :href="THEME_DEV_DOC_URL" target="_blank" rel="noopener noreferrer" class="btn btn-sm">↗ {{ trans.themeStoreDevDoc }}</a>
+              <a :href="THEME_AI_PROMPT_URL" target="_blank" rel="noopener noreferrer" class="btn btn-sm">↗ {{ trans.themeStoreAiPrompt }}</a>
+              <a :href="THEME_SUBMIT_URL" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-primary">↗ {{ trans.themeStoreSubmit }}</a>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -185,6 +208,9 @@ const props = defineProps({
 const emit = defineEmits(['theme-applied', 'theme-options-applied', 'alert-message'])
 
 const THEME_STORE_URL = 'https://raw.githubusercontent.com/huilang-me/CFSM-Theme-Store/refs/heads/main/themes.json'
+const THEME_DEV_DOC_URL = 'https://github.com/huilang-me/CF-Server-Monitor/blob/main/theme-develop.md'
+const THEME_AI_PROMPT_URL = 'https://github.com/huilang-me/CF-Server-Monitor/blob/main/theme-ai-prompt.md'
+const THEME_SUBMIT_URL = 'https://github.com/huilang-me/CFSM-Theme-Store'
 const THEME_STORE_FETCH_TIMEOUT_MS = 8000
 const COMMIT_LIMIT = 10
 const GITHUB_FETCH_TIMEOUT_MS = 8000
@@ -1044,4 +1070,56 @@ watch(
   font-size: 12px;
   padding: 6px 12px;
 }
+
+.theme-card-new {
+  border-style: dashed;
+}
+
+.theme-card-new:hover {
+  border-color: var(--accent-green);
+  background: var(--bg-hover, rgba(255, 255, 255, 0.03));
+}
+
+.theme-cover-wrap-new {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border-bottom: 1px dashed var(--border-color);
+}
+
+.theme-new-cover {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.theme-new-plus {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  line-height: 1;
+  color: var(--accent-green);
+  border: 1px dashed var(--accent-green);
+  border-radius: 50%;
+  opacity: 0.8;
+}
+
+.theme-new-tree {
+  margin: 0;
+  font-family: var(--terminal-font);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  opacity: 0.75;
+}
+
+.theme-card-new .theme-desc {
+  -webkit-line-clamp: 4;
+}
+
 </style>

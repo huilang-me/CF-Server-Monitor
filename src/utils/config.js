@@ -1,5 +1,5 @@
 // 当前 Worker 版本：/api/config 返回给前端与主题，用于页脚和升级提示。
-export const CURRENT_VERSION = '2.8.7 Beta5';
+export const CURRENT_VERSION = '2.8.7 Stable';
 
 // 站点设置默认值与缓存策略。
 export const DEFAULT_SITE_TITLE = 'Cloudflare Server Monitor';
@@ -15,7 +15,7 @@ export const DASHBOARD_LATENCY_WINDOW_POINTS = 20;
 export const DASHBOARD_LATENCY_WINDOW_HOURS = 2;
 export const DASHBOARD_LATENCY_WINDOW_CACHE_TTL_MS = 5 * 60 * 1000;
 export const DASHBOARD_LATENCY_WINDOW_CACHE_MAX_SERVERS = 1000;
-export const DASHBOARD_LATENCY_WINDOW_QUERY_CONCURRENCY = 20;
+export const DASHBOARD_LATENCY_WINDOW_BATCH_SIZE = 20;
 
 // 首页从 Durable Object 批量读取最新上报回放时，每次请求携带的服务器 ID 数量。
 export const DASHBOARD_LATEST_REPORT_ID_CHUNK_SIZE = 500;

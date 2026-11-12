@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
+import { Miniflare } from 'miniflare';
 import {
   estimateDurableObjectsBillableRequests,
+  handleAdminAPI,
   sanitizeAdminSettings,
   summarizeDurableObjectsUsage
 } from '../src/handlers/admin.js';
+import { generateToken } from '../src/middleware/auth.js';
 import {
   isValidThemeOptions,
   saveThemeOptions
@@ -134,5 +137,143 @@ assert.deepEqual(JSON.parse(themeOptionsDb.store.get('site_options')), {
 });
 assert.equal(themeOptionsDb.calls.some(call => call.type === 'first'), false);
 assert.equal(themeOptionsDb.calls.some(call => call.type === 'run' && /\$\.theme_options/.test(call.sql)), true);
+
+function makeSortOrderDb() {
+  const calls = [];
+  const batches = [];
+  return {
+    calls,
+    batches,
+    prepare(sql) {
+      calls.push({ type: 'prepare', sql });
+      return {
+        sql,
+        params: [],
+        bind(...params) {
+          return {
+            sql,
+            params,
+            async run() {
+              calls.push({ type: 'run', sql, params });
+              return { success: true };
+            }
+          };
+        }
+      };
+    },
+    async batch(statements) {
+      batches.push(statements.map(stmt => ({ sql: stmt.sql, params: stmt.params })));
+      return statements.map(() => ({ success: true }));
+    }
+  };
+}
+
+const adminSys = {
+  username: 'admin'
+};
+const adminToken = await generateToken({ DB: makeSortOrderDb() }, adminSys);
+
+const invalidOrderDb = makeSortOrderDb();
+const invalidOrderResponse = await handleAdminAPI(
+  new Request('https://monitor.example.com/admin/api', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${adminToken}`
+    },
+    body: JSON.stringify({
+      action: 'save_order',
+      orders: ['11111111-1111-4111-8111-111111111111', 'invalid-uuid']
+    })
+  }),
+  { DB: invalidOrderDb },
+  adminSys
+);
+assert.equal(invalidOrderResponse.status, 400);
+assert.equal(invalidOrderDb.calls.length, 0);
+assert.equal(invalidOrderDb.batches.length, 0);
+
+const validOrderDb = makeSortOrderDb();
+const firstServerId = '11111111-1111-4111-8111-111111111111';
+const secondServerId = '22222222-2222-4222-8222-222222222222';
+const validOrderResponse = await handleAdminAPI(
+  new Request('https://monitor.example.com/admin/api', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${adminToken}`
+    },
+    body: JSON.stringify({
+      action: 'save_order',
+      orders: [secondServerId, firstServerId]
+    })
+  }),
+  { DB: validOrderDb },
+  adminSys
+);
+assert.equal(validOrderResponse.status, 200);
+assert.equal(validOrderDb.calls.some(call => call.type === 'run'), false);
+assert.equal(validOrderDb.batches.length, 1);
+assert.deepEqual(validOrderDb.batches[0], [
+  { sql: 'UPDATE servers SET sort_order = ? WHERE id = ?', params: [0, secondServerId] },
+  { sql: 'UPDATE servers SET sort_order = ? WHERE id = ?', params: [1, firstServerId] }
+]);
+
+const miniflare = new Miniflare({
+  modules: true,
+  script: 'export default { fetch() { return new Response("OK"); } }',
+  d1Databases: { DB: 'admin-save-order-test' }
+});
+try {
+  const d1 = await miniflare.getD1Database('DB');
+  await d1.prepare('CREATE TABLE servers (id TEXT PRIMARY KEY, sort_order INTEGER)').run();
+  await d1.prepare('INSERT INTO servers (id, sort_order) VALUES (?, 0), (?, 1)').bind(firstServerId, secondServerId).run();
+
+  const rejectedReorder = await handleAdminAPI(
+    new Request('https://monitor.example.com/admin/api', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${adminToken}`
+      },
+      body: JSON.stringify({
+        action: 'save_order',
+        orders: [secondServerId, 'invalid-uuid']
+      })
+    }),
+    { DB: d1 },
+    adminSys
+  );
+  assert.equal(rejectedReorder.status, 400);
+  const unchangedRows = await d1.prepare('SELECT id, sort_order FROM servers ORDER BY sort_order ASC').all();
+  assert.deepEqual(unchangedRows.results, [
+    { id: firstServerId, sort_order: 0 },
+    { id: secondServerId, sort_order: 1 }
+  ]);
+
+  const appliedReorder = await handleAdminAPI(
+    new Request('https://monitor.example.com/admin/api', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${adminToken}`
+      },
+      body: JSON.stringify({
+        action: 'save_order',
+        orders: [secondServerId, firstServerId]
+      })
+    }),
+    { DB: d1 },
+    adminSys
+  );
+  assert.equal(appliedReorder.status, 200);
+  const updatedRows = await d1.prepare('SELECT id, sort_order FROM servers ORDER BY sort_order ASC').all();
+  assert.deepEqual(updatedRows.results, [
+    { id: secondServerId, sort_order: 0 },
+    { id: firstServerId, sort_order: 1 }
+  ]);
+} finally {
+  await miniflare.dispose();
+}
 
 console.log('admin usage tests passed');

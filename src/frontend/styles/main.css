@@ -874,6 +874,11 @@ body::before {
     text-transform: uppercase;
 }
 
+/* 模板压缩空白后需要显式补回分隔符两侧的空格 */
+.stat-sep {
+    margin: 0 1ch;
+}
+
 .stat-action-item {
     appearance: none;
     -webkit-appearance: none;
@@ -2718,6 +2723,17 @@ body::before {
     white-space: normal;
 }
 
+.help-tooltip-link {
+    align-self: flex-start;
+    color: var(--accent-cyan);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.help-tooltip-link:hover {
+    color: var(--text-primary);
+}
+
 .help-tooltip-panel::before {
     content: "";
     position: absolute;
@@ -3608,6 +3624,60 @@ body.server-row-drag-active * {
     border: 1px solid var(--border-color);
 }
 
+.input-clear-wrap {
+    position: relative;
+    display: flex;
+    flex: 1;
+    min-width: 0;
+}
+
+.input-clear-wrap .form-input {
+    padding-right: 32px;
+}
+
+.input-clear-btn {
+    position: absolute;
+    right: 5px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    /* 无底色，只靠红色 × 表达“清除”，悬停也不改变背景 */
+    background: none;
+    color: var(--accent-red);
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s;
+}
+
+.input-clear-wrap:hover .input-clear-btn,
+.input-clear-wrap:focus-within .input-clear-btn {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.input-clear-btn:focus-visible {
+    outline: 1px solid var(--accent-red);
+    outline-offset: 1px;
+}
+
+/* 触摸设备没有 hover，常驻显示避免无法清除 */
+@media (hover: none) {
+    .input-clear-btn {
+        opacity: 1;
+        pointer-events: auto;
+    }
+}
+
 /* --------------------------------------------------------------------------
    32. View Panel
    -------------------------------------------------------------------------- */
@@ -4094,7 +4164,7 @@ body.server-row-drag-active * {
 
 .disk-io-header .ping-indicator {
     justify-content: flex-end;
-    gap: 10px 14px;
+    gap: 10px 10px;
     min-width: 0;
 }
 
@@ -5083,7 +5153,35 @@ body.mikus-theme .mikus-stats-mascot-img {
     }
 
     .global-stats {
-        grid-template-columns: 1fr;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        /* 基础样式是 center，会让格子按内容高度收缩，两列时高度不齐 */
+        align-items: stretch;
+    }
+
+    .global-stats .stat-item {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        padding: 10px 8px;
+    }
+
+    .global-stats .stat-main-value-sm {
+        font-size: 14px;
+        line-height: 1.6;
+    }
+
+    /* 两列时下行数值改成上下两行，避免被拆成半截 */
+    .global-stats .stat-sep {
+        display: none;
+    }
+
+    .global-stats .stat-item:not(.stat-action-item) .stat-main-value-sm > span:not(.stat-sep) {
+        display: block;
+    }
+
+    /* 关闭价格展示后只剩三项，最后一项占满整行 */
+    .global-stats .stat-item-full {
+        grid-column: 1 / -1;
     }
 
     .finance-summary-grid,

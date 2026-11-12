@@ -6,6 +6,7 @@ import { buildAuthCookie, generateToken } from '../src/middleware/auth.js';
 import { buildResourceAlertNotificationPayloads } from '../src/services/notification.js';
 import { clearSiteSettingsCache, DEFAULT_NOTIFICATION_TEMPLATE, normalizeNotificationTemplate, normalizeResourceAlertRules } from '../src/utils/settings.js';
 import { UPDATE_MAX_REQUEST_BYTES } from '../src/utils/config.js';
+import { HISTORY_INSERT_COLUMNS } from '../src/utils/historyFields.js';
 
 globalThis.WebSocketRequestResponsePair = class WebSocketRequestResponsePair {
   constructor(request, response) {
@@ -1003,6 +1004,89 @@ test('resource alert batch evaluation returns results per rule', async () => {
   assert.deepEqual(byRule.get('ram-rule').evaluatedServerIds, ['server-1']);
 });
 
+test('resource alert evaluation supports tcp and udp connection counts', async () => {
+  const broadcaster = makeBroadcaster();
+  const now = Date.now();
+  const currentMinute = Math.floor(now / 60_000) * 60_000;
+  const samples = [];
+  for (let index = 4; index >= 0; index--) {
+    const ts = currentMinute - index * 60_000;
+    samples.push({
+      ts,
+      minuteTs: ts,
+      cpu: 10,
+      ram: 10,
+      disk: 10,
+      netIn: 0,
+      netOut: 0,
+      netTotal: 0,
+      tcpConn: 1200,
+      udpConn: 300
+    });
+  }
+  broadcaster.resourceAlertWindows.set('server-1', { samples });
+
+  const result = await broadcaster._evaluateResourceAlertRules([
+    {
+      ruleId: 'tcp-rule',
+      serverIds: ['server-1'],
+      mode: 'average',
+      windowMinutes: 5,
+      thresholds: { tcpConn: 1000 }
+    },
+    {
+      ruleId: 'udp-rule',
+      serverIds: ['server-1'],
+      mode: 'average',
+      windowMinutes: 5,
+      thresholds: { udpConn: 1000 }
+    }
+  ]);
+
+  const byRule = new Map(result.results.map(item => [item.ruleId, item]));
+  assert.equal(byRule.get('tcp-rule').alerts.length, 1);
+  assert.equal(byRule.get('tcp-rule').alerts[0].metrics[0].metric, 'tcpConn');
+  assert.equal(byRule.get('tcp-rule').alerts[0].metrics[0].triggerValue, 1200);
+  assert.equal(byRule.get('udp-rule').alerts.length, 0);
+  assert.deepEqual(byRule.get('udp-rule').evaluatedServerIds, ['server-1']);
+});
+
+test('resource alert evaluation skips nodes without connection count samples', async () => {
+  const broadcaster = makeBroadcaster();
+  const now = Date.now();
+  const currentMinute = Math.floor(now / 60_000) * 60_000;
+  const samples = [];
+  for (let index = 4; index >= 0; index--) {
+    const ts = currentMinute - index * 60_000;
+    samples.push({
+      ts,
+      minuteTs: ts,
+      cpu: 90,
+      ram: 10,
+      disk: 10,
+      netIn: 0,
+      netOut: 0,
+      netTotal: 0,
+      tcpConn: null,
+      udpConn: null
+    });
+  }
+  broadcaster.resourceAlertWindows.set('server-1', { samples });
+
+  const result = await broadcaster._evaluateResourceAlertRules([
+    {
+      ruleId: 'tcp-rule',
+      serverIds: ['server-1'],
+      mode: 'average',
+      windowMinutes: 5,
+      thresholds: { tcpConn: 1000 }
+    }
+  ]);
+
+  assert.equal(result.results[0].alerts.length, 0);
+  assert.deepEqual(result.results[0].evaluatedServerIds, []);
+});
+
 test('resource alert notification payloads group metrics by server and split long batches', () => {
   const alertNodes = [];
   alertNodes.push({
@@ -1257,6 +1341,60 @@ test('WSS history persistence carries pending history aggregates into next D1 wr
       ),
       false
     );
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test('WSS history persistence 在探针未上报 IP 时用握手来源 IP 按地址族补位', async () => {
+  const savedRows = [];
+  const db = {
+    prepare() {
+      return {
+        bind(...args) {
+          return {
+            async run() {
+              savedRows.push(args);
+              return { meta: { changes: 1 } };
+            }
+          };
+        }
+      };
+    }
+  };
+  const broadcaster = makeBroadcaster([], { DB: db });
+  const originalNow = Date.now;
+  const now = Date.UTC(2026, 0, 1, 0, 0, 0);
+  let attachment = {
+    reportIntervalMs: 60_000,
+    lastD1WriteTs: now - 61_000,
+    clientIp: '2001:db8::1'
+  };
+  const ws = {
+    deserializeAttachment() {
+      return attachment;
+    },
+    serializeAttachment(value) {
+      attachment = value;
+    }
+  };
+
+  try {
+    Date.now = () => now;
+    const result = await broadcaster._persistAgentHistoryIfDue(ws, attachment, {
+      serverId: 'server-1',
+      historyPartitionId: 42,
+      metrics: { cpu: 10, ip_v4: '0', ip_v6: '0' },
+      regionCode: 'US',
+      timestamp: now,
+      agentVersion: 'test',
+      reportIntervalMs: 60_000
+    });
+
+    assert.equal(result.persisted, true);
+    const row = savedRows[0];
+    assert.equal(row[HISTORY_INSERT_COLUMNS.indexOf('ip_v4')], '0');
+    assert.equal(row[HISTORY_INSERT_COLUMNS.indexOf('ip_v6')], '2001:db8::1');
   } finally {
     Date.now = originalNow;
   }

@@ -35,6 +35,86 @@ function isPlainMetricObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value);
 }
 
+// 探针公网 IP 探测失败时会回填 "0"（见 install.sh 的 IPV4/IPV6 兜底），
+// 与空字符串一样视为"未获取到"，此时才允许用请求头来源 IP 补位。
+function isBlankIpField(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return true;
+  const normalized = text.toLowerCase();
+  return normalized === '0' || normalized === 'false' || normalized === 'null' || normalized === 'undefined';
+}
+
+const MAX_CLIENT_IP_LENGTH = 64;
+
+function sanitizeClientIp(value) {
+  const ip = String(value ?? '').trim();
+  if (!ip || ip.length > MAX_CLIENT_IP_LENGTH) return '';
+  if (!/^[0-9A-Fa-f:.]+$/.test(ip)) return '';
+  if (!ip.includes('.') && !ip.includes(':')) return '';
+  if (/^0+(\.0+)*$/.test(ip)) return '';
+  return ip;
+}
+
+function isValidIpv4Address(value) {
+  const parts = value.split('.');
+  if (parts.length !== 4) return false;
+  return parts.every(part => /^\d{1,3}$/.test(part) && Number(part) <= 255);
+}
+
+// 统一按地址族归类：IPv4-mapped IPv6（::ffff:1.2.3.4）归到 v4，
+// 否则 v4 客户端会被误写进 ip_v6。
+function normalizeClientIp(value) {
+  const ip = sanitizeClientIp(value);
+  if (!ip) return null;
+
+  const mapped = ip.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i);
+  if (mapped && isValidIpv4Address(mapped[1])) {
+    return { family: 'v4', value: mapped[1] };
+  }
+  if (ip.includes(':')) {
+    return { family: 'v6', value: ip };
+  }
+  return isValidIpv4Address(ip) ? { family: 'v4', value: ip } : null;
+}
+
+// 连接来源 IP：Cloudflare 的 CF-Connecting-IP 最可信，其余代理头按顺序兜底。
+export function resolveClientIpFromRequest(request) {
+  const headers = request?.headers;
+  if (!headers || typeof headers.get !== 'function') return '';
+
+  const forwardedFor = String(headers.get('X-Forwarded-For') || '').split(',')[0];
+  const candidates = [
+    headers.get('CF-Connecting-IP'),
+    headers.get('X-Real-IP'),
+    forwardedFor
+  ];
+
+  for (const candidate of candidates) {
+    const ip = sanitizeClientIp(candidate);
+    if (ip) return ip;
+  }
+  return '';
+}
+
+// 仅当上报的 ip_v4 / ip_v6 都为空时，才按来源 IP 的地址族补写对应字段。
+export function applyClientIpFallback(metrics, clientIp) {
+  if (!isPlainMetricObject(metrics)) return metrics;
+  if (!isBlankIpField(metrics.ip_v4) || !isBlankIpField(metrics.ip_v6)) return metrics;
+
+  const normalized = normalizeClientIp(clientIp);
+  if (!normalized) return metrics;
+
+  metrics[normalized.family === 'v6' ? 'ip_v6' : 'ip_v4'] = normalized.value;
+  return metrics;
+}
+
+export function applyRequestIpFallback(metrics, request) {
+  if (!isPlainMetricObject(metrics)) return metrics;
+  if (!isBlankIpField(metrics.ip_v4) || !isBlankIpField(metrics.ip_v6)) return metrics;
+
+  return applyClientIpFallback(metrics, resolveClientIpFromRequest(request));
+}
+
 export function hasDiskMetricsPayload(metrics) {
   const source = isPlainMetricObject(metrics) ? metrics : {};
 

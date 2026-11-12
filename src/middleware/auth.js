@@ -3,6 +3,10 @@ import { verifyPasswordHash } from '../utils/common.js';
 import { isValidJwtSecret } from '../utils/settings.js';
 
 export const AUTH_COOKIE_NAME = 'cfsm_auth';
+// 与登录态同步出现的标记 cookie，供 Cloudflare 安全规则放行已登录用户使用。
+// 注意：它是全员共享的静态值，只能当作降噪标记，不能当作访问凭证。
+export const UA_COOKIE_NAME = 'cfsm_ua';
+export const AUTH_COOKIE_MAX_AGE = 604800;
 const TOKEN_QUERY_KEYS = ['token', 'auth_token', 'ws_token'];
 
 async function generateKeyFromSecret(secret) {
@@ -145,7 +149,7 @@ export async function checkWebSocketAuth(request, env, sys) {
   return false;
 }
 
-export function buildAuthCookie(request, token, maxAge = 604800) {
+export function buildAuthCookie(request, token, maxAge = AUTH_COOKIE_MAX_AGE) {
   const secure = new URL(request.url).protocol === 'https:' ? '; Secure' : '';
   return `${AUTH_COOKIE_NAME}=${encodeURIComponent(token || '')}; Max-Age=${maxAge}; Path=/; HttpOnly; SameSite=Lax${secure}`;
 }
@@ -153,6 +157,19 @@ export function buildAuthCookie(request, token, maxAge = 604800) {
 export function buildClearAuthCookie(request) {
   const secure = new URL(request.url).protocol === 'https:' ? '; Secure' : '';
   return `${AUTH_COOKIE_NAME}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax${secure}`;
+}
+
+// ua 允许分号、逗号、空格等字符，必须编码后再写入 Cookie 头。
+export function buildUaCookie(request, ua, maxAge = AUTH_COOKIE_MAX_AGE) {
+  const value = encodeURIComponent(String(ua ?? '').trim());
+  if (!value) return '';
+  const secure = new URL(request.url).protocol === 'https:' ? '; Secure' : '';
+  return `${UA_COOKIE_NAME}=${value}; Max-Age=${maxAge}; Path=/; HttpOnly; SameSite=Lax${secure}`;
+}
+
+export function buildClearUaCookie(request) {
+  const secure = new URL(request.url).protocol === 'https:' ? '; Secure' : '';
+  return `${UA_COOKIE_NAME}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax${secure}`;
 }
 
 export async function validateCredentials(username, password, env, sys) {

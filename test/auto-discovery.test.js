@@ -9,6 +9,7 @@ import {
   isAutoDiscoveryEnabled,
   resolveDiscoveredServerName
 } from '../src/utils/autoDiscovery.js';
+import { HISTORY_MAX_PARTITION_ID, insertServerWithPartition } from '../src/database/indexOptimization.js';
 import { clearServerDetailCache, clearServersListCache } from '../src/utils/cache.js';
 import { clearSiteSettingsCache } from '../src/utils/settings.js';
 import { handleUpdate } from '../src/handlers/update.js';
@@ -47,13 +48,6 @@ function createFakeDb(initialServers = [], siteOptions = null) {
           const row = servers.find(server => server.id === args[0]);
           return row ? { ...row } : null;
         }
-        if (/MAX\(sort_order\)/.test(text)) {
-          const maxOrder = servers.reduce(
-            (max, server) => Math.max(max, Number(server.sort_order ?? -1)),
-            -1
-          );
-          return { max_order: maxOrder };
-        }
         return null;
       },
       async all() {
@@ -63,9 +57,25 @@ function createFakeDb(initialServers = [], siteOptions = null) {
         return { results: [] };
       },
       async run() {
-        if (text.startsWith('INSERT INTO servers')) {
+        if (text.includes('INSERT INTO servers')) {
           if (state.failInsert) throw new Error('D1_ERROR');
-          const [id, name, server_group, region, iface, sort_order, history_partition_id, timestamp] = args;
+          // 测试替身：只用于 discoverServer 流程，SQL 本身由 test/server-insert-sql.test.js 用真实 D1 覆盖。
+          const [, id, name, server_group, region, iface, timestamp] = args;
+          const usedPartitionIds = new Set(
+            servers.map(server => Number(server.history_partition_id)).filter(pid => pid > 0)
+          );
+          let history_partition_id = 0;
+          for (let pid = 1; pid <= HISTORY_MAX_PARTITION_ID; pid++) {
+            if (!usedPartitionIds.has(pid)) {
+              history_partition_id = pid;
+              break;
+            }
+          }
+          if (!history_partition_id) return { meta: { changes: 0 } };
+          const sort_order = servers.reduce(
+            (max, server) => Math.max(max, Number(server.sort_order ?? -1)),
+            -1
+          ) + 1;
           servers.push({
             id,
             name,
@@ -77,6 +87,7 @@ function createFakeDb(initialServers = [], siteOptions = null) {
             timestamp
           });
           state.inserted.push(id);
+          return { meta: { changes: 1 } };
         } else if (text.startsWith('DELETE FROM servers')) {
           const index = servers.findIndex(server => server.id === args[0]);
           if (index >= 0) servers.splice(index, 1);
@@ -154,6 +165,24 @@ test('discoverServer creates a server when no server matches the name', async ()
   assert.equal(db.servers[0].server_group, 'Default');
   assert.equal(db.servers[0].history_partition_id, 1);
   assert.equal(db.servers[0].sort_order, 0);
+});
+
+test('insertServerWithPartition only treats changes===0 as no free partition', async () => {
+  const makeDb = result => ({
+    prepare: () => ({ bind: () => ({ run: async () => result }) })
+  });
+
+  // 测试替身/包装层可能不返回 meta，写入其实已经成功，不能误判为“分区已满”。
+  await assert.doesNotReject(() =>
+    insertServerWithPartition(makeDb({ success: true }), { id: 'x', name: 'X' })
+  );
+  await assert.doesNotReject(() =>
+    insertServerWithPartition(makeDb({ meta: {} }), { id: 'x', name: 'X' })
+  );
+  await assert.rejects(
+    () => insertServerWithPartition(makeDb({ meta: { changes: 0 } }), { id: 'x', name: 'X' }),
+    /No available history partition id/
+  );
 });
 
 test('discoverServer reuses an existing server with the same name', async () => {

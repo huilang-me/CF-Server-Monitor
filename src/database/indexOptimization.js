@@ -79,20 +79,53 @@ export async function ensureServerOptimization(db) {
   return { success: true, assigned: updated };
 }
 
-// 获取下一个可用的历史记录分区ID
-export async function getNextServerHistoryPartitionId(db) {
-  const servers = await getAllServers(db, true);
-  const usedIds = new Set(
-    servers
-      .map(s => Number(s.history_partition_id))
-      .filter(id => Number.isInteger(id) && id > 0 && id <= HISTORY_MAX_PARTITION_ID)
-  );
-  
-  for (let id = 1; id <= HISTORY_MAX_PARTITION_ID; id++) {
-    if (!usedIds.has(id)) return id;
+// 取一个空闲分区号：优先用候选号 p（导入时保留原分区号），不可用则取 1..900 中最小的空闲值。
+// 依赖调用方提供 CTE 列 p（SELECT ? 或常量 0）。整个表达式在 INSERT 语句内求值，D1 写串行保证不撞号。
+export const HISTORY_PARTITION_PICK_SQL = `
+    CASE
+      WHEN p BETWEEN 1 AND ${HISTORY_MAX_PARTITION_ID}
+       AND NOT EXISTS (SELECT 1 FROM servers WHERE history_partition_id = p)
+      THEN p
+      ELSE (
+        SELECT MIN(candidate) FROM (
+          SELECT 1 AS candidate
+          UNION ALL
+          SELECT history_partition_id + 1 FROM servers
+          WHERE history_partition_id BETWEEN 1 AND ${HISTORY_MAX_PARTITION_ID - 1}
+        )
+        WHERE candidate NOT IN (
+          SELECT history_partition_id FROM servers WHERE history_partition_id IS NOT NULL
+        )
+      )
+    END`;
+
+// 新建服务器的唯一入口：分区号与 sort_order 在同一条 INSERT 内计算。
+// 这里不保留外部传入的分区号（p=0），始终取最小空闲值。
+const SERVER_INSERT_SQL = `
+  WITH pref(p) AS (SELECT ?),
+  next AS (
+    SELECT
+      (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM servers) AS sort_order,
+      ${HISTORY_PARTITION_PICK_SQL} AS pid
+    FROM pref
+  )
+  INSERT INTO servers
+    (id, name, server_group, region, "interface", sort_order, history_partition_id, timestamp)
+  SELECT ?, ?, ?, ?, ?, sort_order, pid, ?
+  FROM next
+  WHERE pid IS NOT NULL
+`;
+
+export async function insertServerWithPartition(db, { id, name, group = 'Default', region = '', iface = '' }) {
+  const result = await db.prepare(SERVER_INSERT_SQL)
+    .bind(0, id, name, group, region, iface, Date.now())
+    .run();
+  // 900 个分区全被占用时 SELECT 不返回行，changes 为 0；与旧的抛错行为保持一致。
+  // 只在明确的 0 行写入时抛错：缺少 meta 的返回值（测试替身、包装层）不能当成失败。
+  if (result?.meta?.changes === 0) {
+    throw new Error('No available history partition id');
   }
-  debug(`No available history partition id`);
-  throw new Error(`No available history partition id`);
+  return result;
 }
 
 function padHistoryTimePart(value) {

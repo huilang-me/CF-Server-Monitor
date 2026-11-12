@@ -1676,7 +1676,7 @@ UUID 缺失或格式非法时返回 `400 { "error": "invalidServerId", "code": 4
 
 ### 3.13 `action: export_servers` - 导出服务器
 
-导出 `servers` 表全部配置，按 `sort_order` 升序排列；不包含历史指标。
+导出 `servers` 全表（按 `sort_order` 升序）与站点/外观设置，不含历史指标。`settings` 是合并默认值后的生效值，源站未配置过的字段也会带默认值过去。
 
 **Request**
 
@@ -1692,9 +1692,26 @@ UUID 缺失或格式非法时返回 `400 { "error": "invalidServerId", "code": 4
   "servers": [
     { "id": "9b2c4d3e-1a2b-4c5d-9e8f-7a6b5c4d3e2f", "name": "HK-01", "sort_order": 0 }
   ],
+  "settings": {
+    "site": { "is_public": "true", "show_price": "true" },
+    "appearance": { "site_title": "CF Server Monitor", "display_mode": "ring" }
+  },
   "message": "serversExported"
 }
 ```
+
+**不导出的字段**（与部署绑定，覆盖会导致无法登录、探针失联或告警错位）：
+
+| 字段 | 原因 |
+| --- | --- |
+| `username` `password` `jwt_secret` | 凭据失效，当前会话被强制退出 |
+| `turnstile_*`（4 项） | 站点密钥绑定域名白名单 |
+| `ua` | 与域名防护规则配套，覆盖后上报全部失败 |
+| `resource_alert_rules` | 规则内是服务器 ID |
+| `csp_static` `csp_api` | CSP 白名单按域名配置 |
+| `servers_optimized` | 分区迁移标记，覆盖会重排 `history_partition_id` |
+
+> `cloudflare_account_id` / `cloudflare_token` 会导出（同账号迁移需要），备份文件因此含明文 API 令牌。
 
 **失败返回**：`400 serversExportFailed`。
 
@@ -1709,16 +1726,23 @@ UUID 缺失或格式非法时返回 `400 { "error": "invalidServerId", "code": 4
   "action": "import_servers",
   "servers": [
     { "id": "9b2c4d3e-1a2b-4c5d-9e8f-7a6b5c4d3e2f", "name": "HK-01", "server_group": "HK" }
-  ]
+  ],
+  "settings": {
+    "site": { "is_public": "true" },
+    "appearance": { "site_title": "CF Server Monitor" }
+  }
 }
 ```
 
+`servers` 与 `settings` 均可省略，但不能同时为空，否则返回 `400 noServersToImport`。
+
 **行为说明**：
 
-- `servers` 不是非空数组时返回 `400 noServersToImport`
-- UUID 非法或与现有服务器重复的记录会被跳过
-- `history_partition_id` 非法、重复或超出允许范围时会重新分配；无可用分区时跳过该记录
-- 仅导入服务器配置，不导入 `metrics_history`；单行插入失败也会跳过，并继续处理后续记录
+- `servers`：UUID 非法、重复或非对象记录跳过；`history_partition_id` 冲突时重新分配，无可用分区跳过；不导入 `metrics_history`；单条失败跳过并继续
+- `settings`：只写白名单字段，其余字段记入 `settings.ignoredFields`
+- `settings` 按字段覆盖，复用 `saveSiteOptions` / `saveAppearanceOptions` 的归一化，不重复 `save_settings` 的 Turnstile / 通知 / UA 前置校验
+- 只导入 `settings` 时不访问 `servers` 表
+- `wss_report_enabled` / `wss_report_hours` 变更后下发上报模式变更
 
 **Response 200**
 
@@ -1728,11 +1752,17 @@ UUID 缺失或格式非法时返回 `400 { "error": "invalidServerId", "code": 4
   "imported": 2,
   "skipped": 1,
   "skippedIds": ["<duplicate-or-invalid-id>"],
+  "settings": {
+    "imported": true,
+    "site": 12,
+    "appearance": 8,
+    "ignoredFields": ["password", "ua"]
+  },
   "message": "serversImported"
 }
 ```
 
-全部记录均跳过时仍返回 `200`，`message` 为 `noServersImported`。
+全部记录均跳过且未写入设置时仍返回 `200`，`message` 为 `noServersImported`；只导入了设置时 `message` 为 `settingsImported`。
 
 ***
 

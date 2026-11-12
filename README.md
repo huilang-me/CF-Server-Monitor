@@ -10,7 +10,7 @@
   <a href="README-en.md">English</a>
 </p>
 
-[![Workers](https://img.shields.io/badge/Workers-2.8.7%20Beta5-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
+[![Workers](https://img.shields.io/badge/Workers-2.8.7%20Stable-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
 [![GitHub Stars](https://img.shields.io/github/stars/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/forks)
 [![License](https://img.shields.io/badge/License-MIT-16a34a?style=flat-square)](#许可证)
@@ -70,7 +70,7 @@ CF-Server-Monitor 是一个部署在 Cloudflare Workers 上的服务器监控系
 | 多系统 Agent | 主流 Linux、Alpine Linux、OpenWrt、群晖 DSM、飞牛 fnOS、FreeBSD、macOS、Windows，支持 Docker 镜像部署；默认 Go 版本，保留 Shell/PowerShell 版本 |
 | 实时推送      | Durable Objects + WebSocket，Agent 上报后前端即时刷新                                      |
 | 告警通知      | 离线告警、恢复通知、到期提醒、资源负载告警                                                            |
-| 多语言       | 前端内置中文、英文和西班牙语（拉美）切换；通知消息支持中文、英文和西班牙语；文档提供中文与英文入口              |
+| 多语言       | 前端内置简体中文、繁體中文、English、日本語、Bahasa Indonesia、Français、Español 切换；通知消息支持同样 7 种语言；文档提供中文与英文入口              |
 | 多站点       | 支持 GitHub Pages 静态前台和多个 Worker API 聚合展示                                          |
 | 小组件       | 提供 iOS Scriptable 小组件脚本，适合移动端快速查看                                                |
 | 安全控制      | API Secret、管理员密码、JWT、Turnstile、CORS、CSP 白名单                                      |
@@ -95,9 +95,11 @@ flowchart LR
 3. Worker 校验 `API_SECRET`，写入 D1，并通过 Durable Object 广播实时数据。
 4. 前台大盘、详情页、管理后台和 iOS 小组件读取同一套 API。
 
+## 版本说明
+
 近期变化：
 
-- `2.8.7`：优化定时任务逻辑，降低CPU负载，避免超出免费额度限制；`/update` 增加 512KB 请求体上限，超限直接返回 413；服务器被删除后，其 Agent 的 WSS 连接会在 2 分钟内自动断开；WSS 上报增加帧大小校验，D1 抖动时不再中断已认证会话；批量样本只保留最新 300 条。新增服务端自动发现机制自动绑定服务器ID。新增自定义UA；
+- `2.8.7`：优化定时任务逻辑，降低CPU负载，避免超出免费额度限制；`/update` 增加 512KB 请求体上限，超限直接返回 413；服务器被删除后，其 Agent 的 WSS 连接会在 2 分钟内自动断开；WSS 上报增加帧大小校验，D1 抖动时不再中断已认证会话；批量样本只保留最新 300 条。新增服务端自动发现机制自动绑定服务器ID。新增自定义UA；导入导出包含设置选项；资源负载告警新增 TCP/UDP 连接数监控。上报未探到公网 IP 时用请求头来源地址补位
 - `2.8.6`：WSS前端订阅采用250毫秒批量上报，新增SMTP通知渠道，新增月度流量阈值告警，移除旧版数据库兼容性，新增Docker安装方式。
 - `2.8.5`：支持自定义 Ping 节点名称；增加ICMP模式；优化WSS响应逻辑；API接口优化；原皮前端优化；新增4个ping节点。
 - `2.8.4`：新增 Agent WSS 上报和 WSS 开启时段，提升实时数据推送及时性，并允许非目标时段自动改用 POST 降低 Do 时长消耗；该能力要求 Agent 升级到 `v1.0.10+`。新增账户Do用量展示，优化无前端订阅时的 Do 实时广播请求，降低空闲额度消耗。通知设置新增自定义 Webhook 渠道, 新增前端wss超时配置。
@@ -123,14 +125,14 @@ Go Agent 的完整更新记录见 [cfsm-agent releases](https://github.com/huila
 
 这是推荐方式，适合希望通过 Cloudflare 控制台自动构建和重新部署的用户。
 
-1. Fork 本仓库到自己的 GitHub 账号。
-2. 进入 Cloudflare Dashboard，打开 Workers & Pages。
-3. 创建 Worker，并选择从 GitHub 仓库导入本项目。
+图文教程：<https://huilang.me/cf-server-monitor-setup/>
+
+1. 打开项目地址[CF-Server-Monitor](https://github.com/huilang-me/CF-Server-Monitor/), 老规矩，右上角来个Star，然后点[Fork](https://github.com/huilang-me/CF-Server-Monitor/fork)
+2. 进入 Cloudflare Dashboard，打开 [Workers & Pages](https://dash.cloudflare.com/?to=/:account/workers-and-pages)。
+3. [创建 Worker](https://dash.cloudflare.com/?to=/:account/workers-and-pages/create)，并选择从 GitHub 仓库导入本项目。
 4. 构建命令填写 `npm run build:frontend`。
 5. 部署命令使用 `npx wrangler deploy`。
 6. 部署完成后，在 Worker 的 Variables and Secrets 中添加 `API_SECRET`。
-
-图文教程：<https://huilang.me/cf-server-monitor-setup/>
 
 ### 方式二：GitHub Actions 自动部署
 
@@ -254,11 +256,14 @@ loginctl enable-linger 用户名
 后台复制安装命令的目标系统支持选择 Docker，会生成如下容器命令（服务器 ID、Secret、Worker 地址已按当前服务器自动填充，镜像标签默认 `latest`，可在 Agent 版本栏自定义）：
 
 ```bash
-docker run -d --name cf-probe --restart=unless-stopped --network=host \
+docker run -d --name cf-probe --restart=unless-stopped --network=host --pid=host --cap-drop=ALL --cap-add=NET_RAW \
   -v cf-probe-data:/data \
+  -v /etc/os-release:/etc/os-release:ro \
   -e SERVER_ID=<服务器ID> -e SECRET='<API_SECRET>' -e WORKER_URL=https://<你的后台地址>/update \
   ghcr.io/huilang-me/cfsm-agent:latest
 ```
+
+群晖 DSM 需要额外挂载版本文件，否则面板只能显示镜像内的系统名：在命令中追加 `-v /etc/defaults/VERSION:/etc/defaults/VERSION:ro`。
 
 采集间隔、上报间隔、Ping 节点、网卡、流量重置日、上下行校正等运行参数由 Agent 按 `SERVER_ID` 从后台动态拉取，无需在命令中重复指定；更换镜像标签即回退/升级到指定版本。卸载容器：
 
@@ -319,6 +324,10 @@ npm run build:github-page
 5. 在小组件 Parameter 中填写服务器 ID，也可以写成 `id:SERVER_ID`。
 
 小组件会显示在线状态、CPU、内存、磁盘、月流量、实时上下行速率和更新时间。iOS 会按系统策略决定实际刷新频率。
+
+三个脚本都支持 `CONFIG.userAgent`：如果启用了上文「Cloudflare 安全规则」，需要把它填成后台的自定义 UA，否则小组件的请求会被质询拦截。留空则使用 Scriptable 的默认 UA。
+
+需要一次看多台时用 [scripts/ios-scriptable-widget-multi.js](scripts/ios-scriptable-widget-multi.js)：Parameter 留空显示面板上所有公开服务器，填 `server-a,server-b` 只显示这几台，只填一台时显示详细视图（带三网延迟柱状图）。服务器会自动分页（小、中尺寸每页 1 台，大尺寸每页 2 台），Parameter 填 `page:2`（也支持 `p2`、`2`、`第2页`）可指定页码，适合智能叠放。它请求的是 `/api/servers`（全站列表），服务器较多时会比单机版产生更多 D1 查询。
 
 ## 通知与告警
 
@@ -405,7 +414,7 @@ smtp://<用户名>:<密码>@<host>:<port>?from=<发件人>&to=<收件人1,收件
 
 - 离线告警：节点离线达到设定阈值后通知，恢复后发送恢复通知。
 - 到期提醒：服务器到期前 1 到 7 天内，按通知时区和到期通知时间每天提醒，也可关闭。
-- 资源负载告警：按 CPU、内存、磁盘、上下行速率等指标配置规则。
+- 资源负载告警：按 CPU、内存、磁盘、上下行速率、TCP/UDP 连接数等指标配置规则。
 
 配置后请先点击发送测试通知，再保存配置。
 
@@ -430,6 +439,47 @@ smtp://<用户名>:<密码>@<host>:<port>?from=<发件人>&to=<收件人1,收件
 
 可在后台启用 Cloudflare Turnstile，用于降低公开 API 和登录入口被刷的风险。多站点模式下，如果多个站点都启用 Turnstile，请保持 Site Key 一致。
 
+### Cloudflare 安全规则
+
+探针域名被扫描器反复请求时，每次请求都会计入 Workers 请求额度。可以让 Cloudflare 在请求到达 Worker 之前先做一次质询：只放行携带自定义 UA 的 Agent，以及登录后台后携带 `cfsm_ua` Cookie 的浏览器，其余请求全部质询。
+
+**前提**
+
+- 域名已托管在 Cloudflare 并绑定到 Worker。
+- Agent 版本 ≥ `1.1.1`，Workers 版本 ≥ `2.8.7`。
+
+**步骤**
+
+1. 进入后台 → 设置 → 安全设置 → 自定义 UA，填入一段自定义字符串（下文示例统一用 `myUa/name`），保存。
+2. 等待几分钟，让新 UA 通过 `/update` 响应头或 WSS ack 下发到所有 Agent，再继续下一步。
+3. 进入 Cloudflare 仪表盘 → 选择已绑定的域名 → 安全性 → 安全规则 → 创建规则：
+   - **表达式**（域名和 UA 换成你自己的值）：
+
+     ```
+     (http.host eq "tz.example.com" and http.user_agent ne "myUa/name" and not http.cookie contains "cfsm_ua=myUa%2Fname")
+     ```
+
+   - **操作**：托管质询（Managed Challenge）或 JavaScript 质询。
+
+   表达式含义：只对「探针域名 + UA 不是自定义 UA + 没有后台登录 Cookie」的请求发起质询。Agent 靠 UA 放行，已登录的浏览器靠 `cfsm_ua` Cookie 放行。
+
+4. 保存后，用无痕窗口访问探针域名应看到质询页；登录后台后不再质询。
+
+**关于 `cfsm_ua` Cookie**
+
+- 登录成功时服务端会同时下发 `cfsm_ua`，值为后台设置的自定义 UA，属性为 `HttpOnly; Path=/; SameSite=Lax`，有效期与登录态一致（7 天）。
+- 值会做 URL 编码后写入，`myUa/name` 实际是 `myUa%2Fname`，规则里要匹配**编码后**的形式。
+- 退出登录时一并清除，未登录不会存在；上线本功能前已登录的会话需要重新登录一次才会带上。
+
+**注意事项**
+
+- `http.host` 必须与探针实际访问的完整主机名一致（如 `tz.example.com`）。写成根域名规则不会命中探针，写成通配或包含则会把同域下的其他服务一起质询。
+- **规则启用后不要再直接修改后台的自定义 UA**。改了 UA 而规则没跟着改，Agent 的上报会被全部质询。正确顺序是：暂停规则 → 修改 UA → 等待几分钟下发到 Agent → 同步修改规则里的 UA 和编码后的 Cookie 值 → 重新启用规则。
+- iOS Scriptable 小组件、自建脚本和第三方 API 调用不携带后台登录 Cookie，会被这条规则拦截。需要这些调用在请求头里带上 `User-Agent: <自定义 UA>` 才能放行。
+- 启用质询后，可以关掉后台的「启用 Turnstile 人机验证码（全局）」，避免同一个请求被验证两次。
+- 这条规则用于降低扫描噪音：`cfsm_ua` 是固定字符串，可被伪造，不能当作访问控制手段。
+- 未登录时打开后台，页面会先过一次质询；登录请求依赖这次质询留下的 `cf_clearance`，如果质询已过期导致登录没反应，刷新页面重新通过一次即可。
+
 ### CORS
 
 默认建议仅同源访问。如果需要独立前台或多站点聚合，在 `CORS_ALLOWED_ORIGINS` 中加入可信来源。
@@ -445,7 +495,7 @@ smtp://<用户名>:<密码>@<host>:<port>?from=<发件人>&to=<收件人1,收件
 项目内置默认主题，并支持：
 
 - 深色 / 浅色显示
-- 前台中文 / 英文切换
+- 前台多语言切换（7 种语言）
 - 自定义背景图、favicon、CSS、`<head>`
 - Mikus 模式
 - 主题商店
@@ -615,6 +665,7 @@ CF-Server-Monitor/
 │   ├── handlers/            # Worker 路由处理
 │   ├── middleware/          # 鉴权中间件
 │   ├── services/            # 通知服务
+│   ├── shared/              # 前后端共用常量（语言清单等）
 │   └── utils/               # 缓存、CORS、CSP、指标处理、版本检查
 ├── test/                    # 本地测试和模拟数据工具
 ├── API.md                   # REST / WebSocket API 文档
@@ -707,7 +758,7 @@ echo <CF_CDN_IP> <你的探针域名> | sudo tee -a /etc/hosts
 ## 相关文档
 
 - [API.md](API.md)：REST API、WebSocket、鉴权、错误码和数据结构
-- [https://github.com/huilang-me/cfsm-agent](cfsm-agent)：Go 版本 Agent 配置、升级、日志与排障
+- [cfsm-agent](https://github.com/huilang-me/cfsm-agent)：Go 版本 Agent 配置、升级、日志与排障
 - [theme-develop.md](theme-develop.md)：第三方主题开发
 - [theme-ai-prompt.md](theme-ai-prompt.md)：主题开发 AI 提示词，直接粘贴给 AI 即可按项目规范开发主题
 - [test/README.md](test/README.md)：本地模拟数据和测试流程

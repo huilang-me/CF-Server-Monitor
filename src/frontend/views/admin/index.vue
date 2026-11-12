@@ -782,16 +782,23 @@ const normalizeResourceAlertIntervalSetting = (value) => {
 
 const normalizeResourceAlertMetricSetting = (value) => {
   const metric = String(value || '').trim()
-  return ['cpu', 'ram', 'disk', 'netIn', 'netOut'].includes(metric) ? metric : 'cpu'
+  return ['cpu', 'ram', 'disk', 'netIn', 'netOut', 'tcpConn', 'udpConn'].includes(metric) ? metric : 'cpu'
 }
 
-const defaultResourceAlertThreshold = (metric) => (
-  metric === 'netIn' || metric === 'netOut' ? '100' : '80'
-)
+const isConnectionAlertMetricSetting = (metric) => metric === 'tcpConn' || metric === 'udpConn'
+
+const defaultResourceAlertThreshold = (metric) => {
+  if (isConnectionAlertMetricSetting(metric)) return '1000'
+  return metric === 'netIn' || metric === 'netOut' ? '100' : '80'
+}
 
 const normalizeResourceAlertThresholdSetting = (value, metric) => {
   if (value === undefined || value === null || value === '') return defaultResourceAlertThreshold(metric)
   const number = Number(value)
+  if (isConnectionAlertMetricSetting(metric)) {
+    if (!Number.isFinite(number) || number <= 0 || number > 10000000) return defaultResourceAlertThreshold(metric)
+    return String(Math.round(number))
+  }
   const max = metric === 'netIn' || metric === 'netOut' ? 100000 : 100
   if (!Number.isFinite(number) || number <= 0 || number > max) return defaultResourceAlertThreshold(metric)
   return String(Math.round(number * 100) / 100)
@@ -1939,8 +1946,9 @@ const getCustomInstallCommand = () => {
     const ua = installUserAgent()
     const uaEnv = ua ? ` -e UA=${quotePosixShellArg(ua)}` : ''
     return [
-      'docker run -d --name cf-probe --restart=unless-stopped --network=host \\',
+      'docker run -d --name cf-probe --restart=unless-stopped --network=host --pid=host --cap-drop=ALL --cap-add=NET_RAW \\',
       '  -v cf-probe-data:/data \\',
+      '  -v /etc/os-release:/etc/os-release:ro \\',
       `  -e SERVER_ID=${quotePosixShellArg(copyServerId.value)} -e SECRET=${quotePosixShellArg(apiSecret.value)} -e WORKER_URL=${quotePosixShellArg(`${HOST}/update`)}${uaEnv} \\`,
       `  ${image}`
     ].join('\n')
