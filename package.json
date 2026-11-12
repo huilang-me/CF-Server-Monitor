@@ -1,46 +1,9 @@
 {
-  "name": "cf-server-monitor",
-  "version": "2.8.7",
-  "description": "Cloudflare Workers Server Monitor - 多服务器监控探针",
+  "name": "cfsm-minimal-theme",
+  "version": "1.0.0",
+  "private": true,
   "type": "module",
-  "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "npm run build:frontend && wrangler deploy",
-    "tail": "wrangler tail",
-    "dev:frontend": "vite",
-    "build": "node scripts/build.js",
-    "build:frontend": "node scripts/build.js",
-    "build:github-page": "node scripts/build-github-page.js",
-    "test": "node --test test/auto-discovery.test.js test/admin-usage.test.js test/cron-notification.test.js test/dashboard-latency-window.test.js test/frontend-admin-entry-url.test.js test/frontend-api-base.test.js test/frontend-live-socket.test.js test/latest-metrics-all.test.js test/latest-timestamps.test.js test/metrics-broadcaster-agent-config.test.js test/notification-language.test.js test/traffic-alert.test.js test/server-detail-cache.test.js test/server-insert-sql.test.js test/import-export-settings.test.js test/server-backup-format.test.js test/update-payload-limit.test.js test/update-request-ip.test.js test/user-agent.test.js test/i18n-locales.test.js test/i18n-runtime.test.js",
-    "test:all": "npm run test && npm run test:agent-config && npm run test:history-query",
-    "test:agent-config": "node test/agent-config.js",
-    "test:history-query": "node --test test/history-query.test.js",
-    "preview": "vite preview"
-  },
-  "keywords": [
-    "cloudflare",
-    "workers",
-    "monitor",
-    "server",
-    "probe"
-  ],
-  "author": "",
-  "license": "MIT",
-  "devDependencies": {
-    "@vitejs/plugin-vue": "^6.0.0",
-    "fs-extra": "^11.3.5",
-    "miniflare": "^5.20260801.1-alpha",
-    "vite": "^6.0.0",
-    "vite-plugin-mkcert": "^2.1.0",
-    "wrangler": "^4.0.0"
-  },
-  "dependencies": {
-    "chart.js": "^4.4.0",
-    "cloudflare-smtp": "^0.1.2",
-    "vue": "^3.4.0",
-    "vue-router": "^4.4.0"
-  },
-  "engines": {
-    "node": ">=18.0.0"
-  }
+  "scripts": { "dev": "vite --host 0.0.0.0", "build": "vite build" },
+  "dependencies": { "vue": "^3.5.13" },
+  "devDependencies": { "@vitejs/plugin-vue": "^5.2.1", "vite": "^6.0.7" }
 }
