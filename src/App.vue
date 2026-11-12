@@ -365,6 +365,15 @@ function pingName(key, base) {
   const names = { ct: cfg.custom_ct_name || 'CT', cu: cfg.custom_cu_name || 'CU', cm: cfg.custom_cm_name || 'CM', bd: cfg.custom_bd_name || 'BGP' }
   return names[key]
 }
+function historyName(key) {
+  const match = key.match(/^(ping|loss)_(ct|cu|cm|bd|node_[1-4])$/)
+  if (!match) return key
+  const [, kind, provider] = match
+  const name = ['ct','cu','cm','bd'].includes(provider)
+    ? pingName(provider, detailBase.value)
+    : nodeName(Number(provider.slice(-1)), detailBase.value)
+  return name + ' ' + (kind === 'ping' ? 'Ping' : 'Loss')
+}
 function nodeName(index, base) {
   return configs[base]?.['node_' + index + '_name'] || 'Node ' + index
 }
@@ -475,6 +484,7 @@ onMounted(async () => {
     for (const base of bases) configs[base] = await requestConfig(base)
     if (requireLogin()) return
     applyTheme()
+    document.title = configs[bases[0]]?.site_title || 'Server Monitor'
     applyThemeOptions()
     if (route.value.name === 'detail') await loadDetail(route.value.id)
     else for (const base of bases) await loadHome(base)
@@ -550,10 +560,14 @@ onUnmounted(() => {
             <div v-if="themeOptions.showNetwork"><span>{{ t('上传', 'Up') }}</span><strong>{{ formatBytes(server.net_out_speed) }}/s</strong></div>
           </div>
           <div class="usage-track"><i :style="{ width: (server.ram_total > 0 ? Math.min(100, server.ram_used / server.ram_total * 100) : 0) + '%' }"></i></div>
-          <div v-if="siteConfigs[server.__base]?.show_three_net_details === true && (server.ping || []).length" class="latency-row">
-            <span v-for="key in ['ct','cu','cm','bd']" :key="key" v-show="showMetric(latestValue(server.ping, key))" class="latency-item">
+          <div v-if="siteConfigs[server.__base]?.show_three_net_details === true && ((server.ping || []).length || (server.loss || []).length)" class="latency-row">
+            <span v-for="key in ['ct','cu','cm','bd']" :key="'ping-' + key" v-show="showMetric(latestValue(server.ping, key))" class="latency-item">
               {{ pingName(key, server.__base) }} <b>{{ metric(latestValue(server.ping, key), 'ms') }}</b>
               <svg v-if="miniPoints(server.ping, key)" viewBox="0 0 60 18" aria-hidden="true"><polyline class="mini-line" :points="miniPoints(server.ping, key)"/></svg>
+            </span>
+            <span v-for="key in ['ct','cu','cm','bd']" :key="'loss-' + key" v-show="showMetric(latestValue(server.loss, key))" class="latency-item">
+              {{ pingName(key, server.__base) }} <b>{{ metric(latestValue(server.loss, key), '%') }}</b>
+              <svg v-if="miniPoints(server.loss, key)" viewBox="0 0 60 18" aria-hidden="true"><polyline class="mini-line secondary" :points="miniPoints(server.loss, key)"/></svg>
             </span>
           </div>
           <div v-if="siteConfigs[server.__base]?.show_price === true || siteConfigs[server.__base]?.show_expire === true" class="server-meta">
@@ -589,7 +603,7 @@ onUnmounted(() => {
           </select>
         </div>
         <div v-if="history.length" class="charts-grid">
-          <div v-for="chart in [{title:'CPU %',key:'cpu'},{title:'RAM MB',key:'ram_used'},{title:'Swap MB',key:'swap_used'},{title:'Download B/s',key:'net_in_speed'},{title:'Upload B/s',key:'net_out_speed'},{title:'Ping CT ms',key:'ping_ct'},{title:'Loss CT %',key:'loss_ct'}]" :key="chart.key" v-show="chartRows(chart.key).length" class="chart-card">
+          <div v-for="chart in [{title:'CPU %',key:'cpu'},{title:'RAM MB',key:'ram_used'},{title:'Swap MB',key:'swap_used'},{title:'Download B/s',key:'net_in_speed'},{title:'Upload B/s',key:'net_out_speed'},...['ct','cu','cm','bd','node_1','node_2','node_3','node_4'].flatMap(key=>[{title:historyName('ping_'+key),key:'ping_'+key},{title:historyName('loss_'+key),key:'loss_'+key}])]" :key="chart.key" v-show="chartRows(chart.key).length" class="chart-card">
             <div class="chart-title">{{ chart.title }} <b>{{ chartRows(chart.key).length ? metric(chartRows(chart.key).at(-1)[chart.key], chart.key.includes('ping') ? 'ms' : chart.key.includes('loss') ? '%' : chart.key.includes('speed') ? 'B/s' : chart.key === 'cpu' ? '%' : 'MB') : '' }}</b></div>
             <svg viewBox="0 0 600 120" preserveAspectRatio="none" role="img" :aria-label="chart.title"><polyline class="chart-line" :points="chartPoints(chartRows(chart.key), chart.key)"/></svg>
             <div class="chart-time"><span>{{ chartLabel(chartRows(chart.key)[0]) }}</span><span>{{ chartLabel(chartRows(chart.key).at(-1)) }}</span></div>
