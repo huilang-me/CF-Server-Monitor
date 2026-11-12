@@ -387,21 +387,22 @@ function latestValue(points, key) {
 }
 function chartPoints(rows, key) {
   if (!rows.length) return ''
-  const values = rows.map(row => Number(row?.[key])).filter(Number.isFinite)
+  const values = rows.filter(row => row?.[key] !== null && row?.[key] !== false && row?.[key] !== undefined).map(row => Number(row[key])).filter(Number.isFinite)
   if (!values.length) return ''
   const min = Math.min(0, ...values)
   const max = Math.max(1, ...values)
   const range = max - min || 1
   const width = 600, height = 120, pad = 6
   return rows.map((row, index) => {
-    const value = Number(row?.[key])
+    if (row?.[key] === null || row?.[key] === false || row?.[key] === undefined) return null
+    const value = Number(row[key])
     if (!Number.isFinite(value)) return null
     const x = rows.length === 1 ? width / 2 : pad + index / (rows.length - 1) * (width - 2 * pad)
     const y = height - pad - ((value - min) / range) * (height - 2 * pad)
     return x.toFixed(1) + ',' + y.toFixed(1)
   }).filter(Boolean).join(' ')
 }
-function chartRows(key) { return history.value.filter(row => row[key] !== undefined && row[key] !== false && row[key] !== null) }
+function chartRows(key) { return history.value.filter(row => row[key] !== undefined && row[key] !== false) }
 function miniPoints(points, key) {
   const valid = (points || []).filter(point => point?.[key] !== undefined && point?.[key] !== false && point?.[key] !== null)
   if (!valid.length) return ''
