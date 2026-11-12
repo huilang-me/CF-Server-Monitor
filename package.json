@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "scripts": { "dev": "vite --host 0.0.0.0", "build": "vite build", "test": "node --test" },
+  "scripts": { "dev": "vite --host 0.0.0.0", "build": "vite build", "test": "node --test test/theme-utils.test.js" },
   "dependencies": { "vue": "^3.5.13" },
   "devDependencies": { "@vitejs/plugin-vue": "^5.2.1", "vite": "^6.0.7" }
 }
