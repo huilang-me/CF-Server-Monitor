@@ -20,6 +20,7 @@ const pending = new Map()
 const sockets = new Map()
 const timers = new Map()
 const retries = new Map()
+const loadedHome = new Set()
 const wsStarted = new Map()
 let flushTimer = 0
 let disposed = false
@@ -118,11 +119,14 @@ function connect(base, ids, singleId = '') {
   }
 }
 async function loadHome(base) {
-  const data = await request(base, '/api/servers')
-  servers[base] = data.servers || []
-  stats[base] = data.stats || {}
-  sites[base] = data.sysConfig || {}
-  connect(base, (data.servers || []).map(s => s.id))
+  if (!loadedHome.has(base)) {
+    const data = await request(base, '/api/servers')
+    servers[base] = data.servers || []
+    stats[base] = data.stats || {}
+    sites[base] = data.sysConfig || {}
+    loadedHome.add(base)
+  }
+  connect(base, (servers[base] || []).map(s => s.id))
 }
 async function loadDetail(id, hours = '0.167') {
   const base = bases.find(b => (servers[b] || []).some(s => s.id === id)) || bases[0]
