@@ -325,6 +325,8 @@ npm run build:github-page
 
 小组件会显示在线状态、CPU、内存、磁盘、月流量、实时上下行速率和更新时间。iOS 会按系统策略决定实际刷新频率。
 
+三个脚本都支持 `CONFIG.userAgent`：如果启用了上文「Cloudflare 安全规则」，需要把它填成后台的自定义 UA，否则小组件的请求会被质询拦截。留空则使用 Scriptable 的默认 UA。
+
 需要一次看多台时用 [scripts/ios-scriptable-widget-multi.js](scripts/ios-scriptable-widget-multi.js)：Parameter 留空显示面板上所有公开服务器，填 `server-a,server-b` 只显示这几台，只填一台时显示详细视图（带三网延迟柱状图）。服务器会自动分页（小、中尺寸每页 1 台，大尺寸每页 2 台），Parameter 填 `page:2`（也支持 `p2`、`2`、`第2页`）可指定页码，适合智能叠放。它请求的是 `/api/servers`（全站列表），服务器较多时会比单机版产生更多 D1 查询。
 
 ## 通知与告警
@@ -436,6 +438,47 @@ smtp://<用户名>:<密码>@<host>:<port>?from=<发件人>&to=<收件人1,收件
 ### Turnstile
 
 可在后台启用 Cloudflare Turnstile，用于降低公开 API 和登录入口被刷的风险。多站点模式下，如果多个站点都启用 Turnstile，请保持 Site Key 一致。
+
+### Cloudflare 安全规则
+
+探针域名被扫描器反复请求时，每次请求都会计入 Workers 请求额度。可以让 Cloudflare 在请求到达 Worker 之前先做一次质询：只放行携带自定义 UA 的 Agent，以及登录后台后携带 `cfsm_ua` Cookie 的浏览器，其余请求全部质询。
+
+**前提**
+
+- 域名已托管在 Cloudflare 并绑定到 Worker。
+- Agent 版本 ≥ `1.1.1`，Workers 版本 ≥ `2.8.7`。
+
+**步骤**
+
+1. 进入后台 → 设置 → 安全设置 → 自定义 UA，填入一段自定义字符串（下文示例统一用 `myUa/name`），保存。
+2. 等待几分钟，让新 UA 通过 `/update` 响应头或 WSS ack 下发到所有 Agent，再继续下一步。
+3. 进入 Cloudflare 仪表盘 → 选择已绑定的域名 → 安全性 → 安全规则 → 创建规则：
+   - **表达式**（域名和 UA 换成你自己的值）：
+
+     ```
+     (http.host eq "tz.example.com" and http.user_agent ne "myUa/name" and not http.cookie contains "cfsm_ua=myUa%2Fname")
+     ```
+
+   - **操作**：托管质询（Managed Challenge）或 JavaScript 质询。
+
+   表达式含义：只对「探针域名 + UA 不是自定义 UA + 没有后台登录 Cookie」的请求发起质询。Agent 靠 UA 放行，已登录的浏览器靠 `cfsm_ua` Cookie 放行。
+
+4. 保存后，用无痕窗口访问探针域名应看到质询页；登录后台后不再质询。
+
+**关于 `cfsm_ua` Cookie**
+
+- 登录成功时服务端会同时下发 `cfsm_ua`，值为后台设置的自定义 UA，属性为 `HttpOnly; Path=/; SameSite=Lax`，有效期与登录态一致（7 天）。
+- 值会做 URL 编码后写入，`myUa/name` 实际是 `myUa%2Fname`，规则里要匹配**编码后**的形式。
+- 退出登录时一并清除，未登录不会存在；上线本功能前已登录的会话需要重新登录一次才会带上。
+
+**注意事项**
+
+- `http.host` 必须与探针实际访问的完整主机名一致（如 `tz.example.com`）。写成根域名规则不会命中探针，写成通配或包含则会把同域下的其他服务一起质询。
+- **规则启用后不要再直接修改后台的自定义 UA**。改了 UA 而规则没跟着改，Agent 的上报会被全部质询。正确顺序是：暂停规则 → 修改 UA → 等待几分钟下发到 Agent → 同步修改规则里的 UA 和编码后的 Cookie 值 → 重新启用规则。
+- iOS Scriptable 小组件、自建脚本和第三方 API 调用不携带后台登录 Cookie，会被这条规则拦截。需要这些调用在请求头里带上 `User-Agent: <自定义 UA>` 才能放行。
+- 启用质询后，可以关掉后台的「启用 Turnstile 人机验证码（全局）」，避免同一个请求被验证两次。
+- 这条规则用于降低扫描噪音：`cfsm_ua` 是固定字符串，可被伪造，不能当作访问控制手段。
+- 未登录时打开后台，页面会先过一次质询；登录请求依赖这次质询留下的 `cf_clearance`，如果质询已过期导致登录没反应，刷新页面重新通过一次即可。
 
 ### CORS
 

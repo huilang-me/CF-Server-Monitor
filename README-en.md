@@ -326,6 +326,8 @@ Usage:
 
 The widget shows online status, CPU, memory, disk, monthly traffic, realtime upload/download speed, and update time. The actual refresh interval is controlled by iOS.
 
+All three scripts support `CONFIG.userAgent`. If the Cloudflare security rule above is enabled, set it to the custom UA from the admin panel, otherwise the widget requests are challenged. Leave it empty to use Scriptable's default UA.
+
 To watch several servers at once, use [scripts/ios-scriptable-widget-multi.js](scripts/ios-scriptable-widget-multi.js): leave the Parameter empty to show all public servers, set `server-a,server-b` to show only those, or set a single server to get the detail view (with three-net latency bars). Servers are paged automatically (1 per page on small/medium widgets, 2 per page on large ones), and `page:2` (also `p2`, `2`, or `第2页`) selects a page for smart stacks. It requests `/api/servers` (the full list), so it costs more D1 reads than the single-server widget when you have many servers.
 
 ## Notifications and Alerts
@@ -437,6 +439,47 @@ Send a test notification before saving.
 ### Turnstile
 
 Cloudflare Turnstile can be enabled from the admin panel to reduce abuse of public APIs and login endpoints. In multi-site mode, use the same Site Key across sites when Turnstile is enabled.
+
+### Cloudflare security rule
+
+When scanners keep hitting the monitor domain, every request still counts against the Workers request quota. Cloudflare can challenge requests before they reach the Worker: only Agents carrying the custom UA and browsers holding the `cfsm_ua` cookie from a successful admin login are let through.
+
+**Requirements**
+
+- The domain is hosted on Cloudflare and bound to the Worker.
+- Agent version ≥ `1.1.1`, Workers version ≥ `2.8.7`.
+
+**Steps**
+
+1. Open the admin panel → Settings → Security → Custom UA, enter a custom string (the examples below use `myUa/name`), and save.
+2. Wait a few minutes for the new UA to reach every Agent through the `/update` response header or the WSS ack before continuing.
+3. In the Cloudflare dashboard → select the bound domain → Security → Security rules → Create rule:
+   - **Expression** (replace the host and UA with your own values):
+
+     ```
+     (http.host eq "tz.example.com" and http.user_agent ne "myUa/name" and not http.cookie contains "cfsm_ua=myUa%2Fname")
+     ```
+
+   - **Action**: Managed Challenge or JavaScript Challenge.
+
+   The expression challenges only requests that target the monitor host, do not carry the custom UA, and do not carry the admin login cookie. Agents pass via their UA; a logged-in browser passes via `cfsm_ua`.
+
+4. After saving, a private window should hit the challenge page, while the admin panel no longer does once you are logged in.
+
+**About the `cfsm_ua` cookie**
+
+- A successful login sets `cfsm_ua` alongside `cfsm_auth`. Its value is the custom UA from the admin panel, with `HttpOnly; Path=/; SameSite=Lax`, and it expires together with the login (7 days).
+- The value is URL-encoded, so `myUa/name` is stored as `myUa%2Fname`; match the **encoded** form in the rule.
+- Logout clears it, and it never exists while logged out. Sessions created before this feature was deployed need to log in once more.
+
+**Notes**
+
+- `http.host` must be the exact hostname the monitor is served on (for example `tz.example.com`). A root-domain rule will not match the monitor, and a wildcard or `contains` match will challenge other services on the same domain.
+- **Do not change the custom UA while the rule is enabled.** Agents would report a UA that no longer matches. The correct order is: pause the rule → change the UA → wait a few minutes for it to reach the Agents → update both the UA and the encoded cookie value in the rule → re-enable the rule.
+- The iOS Scriptable widget, custom scripts, and third-party API clients do not carry the admin cookie and will be challenged. They must send `User-Agent: <custom UA>` to pass.
+- Once the challenge is in place, you can turn off the global Turnstile verification in the admin panel to avoid verifying the same request twice.
+- This rule reduces scanner noise only: `cfsm_ua` is a fixed, forgeable string and must not be treated as access control.
+- Opening the admin panel while logged out means passing the challenge first. The login request relies on the `cf_clearance` cookie from that challenge; if it has expired and login seems to do nothing, reload the page to pass the challenge again.
 
 ### CORS
 

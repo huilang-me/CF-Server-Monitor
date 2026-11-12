@@ -12,7 +12,7 @@ import { describeAgentConfig } from '../src/utils/agentConfig.js';
 import { handleAdminAPI } from '../src/handlers/admin.js';
 import { handleUpdate } from '../src/handlers/update.js';
 import { MetricsBroadcaster } from '../src/durable/MetricsBroadcaster.js';
-import { generateToken } from '../src/middleware/auth.js';
+import { buildClearUaCookie, buildUaCookie, generateToken } from '../src/middleware/auth.js';
 import { clearServerDetailCache } from '../src/utils/cache.js';
 
 // MetricsBroadcaster 构造时会用到 Workers 运行时的 WebSocketRequestResponsePair。
@@ -145,6 +145,17 @@ test('validateUserAgent 拒绝会破坏 header / 配置文件 / 安装命令的�
     assert.equal(result.value, DEFAULT_USER_AGENT);
     assert.equal(sanitizeUserAgent(value), DEFAULT_USER_AGENT);
   }
+});
+
+test('cfsm_ua 使用 URL 编码写入，避免分号等字符写坏 Cookie 头', () => {
+  const request = new Request('https://example.com/admin');
+  const cookie = buildUaCookie(request, 'MyAgent/1.0 (edge)');
+  assert.match(cookie, /^cfsm_ua=MyAgent%2F1\.0%20\(edge\); Max-Age=604800; Path=\/; HttpOnly; SameSite=Lax; Secure$/);
+
+  // 分号编码后不会注入新的 Cookie 属性。
+  assert.match(buildUaCookie(request, 'ua;semi'), /^cfsm_ua=ua%3Bsemi;/);
+  assert.equal(buildUaCookie(request, ''), '');
+  assert.match(buildClearUaCookie(request), /^cfsm_ua=; Max-Age=0;/);
 });
 
 test('validateUserAgent 限制长度', () => {

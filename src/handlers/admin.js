@@ -1,4 +1,4 @@
-import { buildAuthCookie, buildClearAuthCookie, checkAuth, simpleAuthResponse, validateCredentials, generateToken } from '../middleware/auth.js';
+import { buildAuthCookie, buildClearAuthCookie, buildUaCookie, buildClearUaCookie, checkAuth, simpleAuthResponse, validateCredentials, generateToken } from '../middleware/auth.js';
 import { getLatestMetricsForAllServers } from '../database/schema.js';
 import { getAllServers, clearServersListCache } from '../utils/cache.js';
 import { clearAppearanceSettingsCache, isValidThemeOptions, isWssReportConfigured, isWssReportEnabled, normalizeBooleanSetting, normalizeDefaultLanguage, normalizeDisplayMode, normalizeExpireNotificationTime, normalizeExpireReminder, normalizeFrontendWsTimeoutMinutes, normalizeLongHistoryPoints, normalizeNotificationLanguage, normalizeNotificationTemplate, normalizeNotificationTimezone, normalizeNotificationWebhookBody, normalizeNotificationWebhookFormat, normalizeNotificationWebhookHeaders, normalizeNotificationWebhookMethod, normalizePreferredTheme, normalizeResourceAlertRules, normalizeTgNotify, normalizeWssReportHours, saveSiteOptions, saveAppearanceOptions, saveThemeOptions, validateUserAgent, SITE_FIELDS, APPEARANCE_FIELDS, IMPORTABLE_SITE_FIELDS, IMPORTABLE_APPEARANCE_FIELDS, loadSiteSettings, loadAppearanceOptions } from '../utils/settings.js';
@@ -520,13 +520,14 @@ async function handleLoginAction({ request, env, sys, data }) {
 
   try {
     const token = await generateToken(env, sys);
-    return createSuccessResponse({
+    return createSuccessResponseWithCookies({
       success: true,
       token: token,
       message: 'loginSuccessful'
-    }, {
-      'Set-Cookie': buildAuthCookie(request, token)
-    });
+    }, [
+      buildAuthCookie(request, token),
+      buildUaCookie(request, sys?.ua)
+    ]);
   } catch (e) {
     return createErrorResponse(e);
   }
@@ -537,6 +538,7 @@ function handleLogoutAction({ request }) {
     success: true
   }, [
     buildClearAuthCookie(request),
+    buildClearUaCookie(request),
     buildClearThemePreviewAuthCookie(request)
   ]);
 }

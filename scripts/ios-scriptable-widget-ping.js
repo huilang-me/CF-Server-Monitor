@@ -4,10 +4,12 @@
 
 const CONFIG = {
   baseURL: "https://example.com", //必填
-  serverId: "" //必填，也可以在 widgetParameter 中指定
+  serverId: "", //必填，也可以在 widgetParameter 中指定
+  userAgent: "" //可选，填后台「安全设置 - 自定义 UA」；启用 Cloudflare 安全规则后必填
 };
 
 CONFIG.baseURL = String(CONFIG.baseURL || "").replace(/\/+$/, "");
+CONFIG.userAgent = String(CONFIG.userAgent || "").trim();
 
 const family = config.widgetFamily || "medium";
 const widgetParameter = String(args.widgetParameter || "").trim();
@@ -149,6 +151,7 @@ function hhmm() {
 async function fetchJSON(url, timeout) {
   const req = new Request(url);
   req.timeoutInterval = timeout || 15;
+  if (CONFIG.userAgent) req.headers = { "User-Agent": CONFIG.userAgent };
   return await req.loadJSON();
 }
 

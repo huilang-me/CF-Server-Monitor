@@ -2723,6 +2723,17 @@ body::before {
     white-space: normal;
 }
 
+.help-tooltip-link {
+    align-self: flex-start;
+    color: var(--accent-cyan);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.help-tooltip-link:hover {
+    color: var(--text-primary);
+}
+
 .help-tooltip-panel::before {
     content: "";
     position: absolute;

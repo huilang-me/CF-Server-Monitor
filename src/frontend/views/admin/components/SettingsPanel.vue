@@ -677,7 +677,10 @@
           <div class="form-group flex-1">
             <label class="form-label">
               {{ trans.customUserAgent }}
-              <HelpTooltip :text="trans.customUserAgentTip" />
+              <HelpTooltip>
+                <span class="help-tooltip-text">{{ trans.customUserAgentTip }}</span>
+                <a class="help-tooltip-link" :href="CUSTOM_USER_AGENT_DOC_URL" target="_blank" rel="noopener noreferrer">{{ trans.customUserAgentDocs }}</a>
+              </HelpTooltip>
             </label>
             <div class="password-input-wrapper">
               <input
@@ -866,6 +869,9 @@ import { LANGUAGES, LANGUAGE_MAP } from '../../../locales'
 import { NOTIFICATION_LANGUAGE_CODES } from '../../../../shared/languages.js'
 
 const languages = LANGUAGES
+
+// 自定义 UA 与 Cloudflare 放行规则的说明见 README「安全建议」章节。
+const CUSTOM_USER_AGENT_DOC_URL = 'https://github.com/huilang-me/CF-Server-Monitor#cloudflare-安全规则拦截'
 
 // 通知语言只支持后端已有文案的语种；选项固定显示各语言原生名称，不随界面语言翻译。
 const notificationLanguages = NOTIFICATION_LANGUAGE_CODES
