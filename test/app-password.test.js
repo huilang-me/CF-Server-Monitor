@@ -251,14 +251,54 @@ test('save_settings 会校验并落库 app_password，非法长度直接拒绝',
   clearSiteSettingsCache();
 });
 
-test('全局 Turnstile 对 App 口令放行，登录处的校验仍然保留', () => {
+test('全局 Turnstile 对 App 口令放行，登录处也可由 App 口令绕过', () => {
   const indexSource = readFileSync(new URL('../src/index.js', import.meta.url), 'utf8');
   assert.match(indexSource, /turnstileEnabled && !hasAppPasswordAccess\(request, sys\)/);
 
   const adminSource = readFileSync(new URL('../src/handlers/admin.js', import.meta.url), 'utf8');
   const loginStart = adminSource.indexOf('async function handleLoginAction');
   const loginGate = adminSource.slice(loginStart, adminSource.indexOf('validateCredentials', loginStart));
-  assert.doesNotMatch(loginGate, /hasAppPasswordAccess/, '登录校验不应接入 App 口令');
+  assert.match(loginGate, /hasAppPasswordAccess/, '登录校验应接入 App 口令以绕过 Turnstile');
+});
+
+test('登录时携带正确 App 口令可绕过 Turnstile，但凭据仍须正确', async () => {
+  resetCaches();
+  const env = { API_SECRET: 'secret' };
+  const sys = {
+    turnstile_enabled: 'true',
+    turnstile_login_enabled: 'true',
+    turnstile_secret_key: 'secret',
+    app_password: APP_PASSWORD,
+    username: 'admin',
+    password: ''
+  };
+
+  const buildLogin = (password) => new Request('https://example.com/admin/api', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      [APP_PASSWORD_HEADER]: APP_PASSWORD
+    },
+    body: JSON.stringify({ action: 'login', username: 'admin', password })
+  });
+
+  // App 口令正确 → 跳过 Turnstile，凭据正确则登录成功并下发 token
+  const ok = await handleAdminAPI(buildLogin('secret'), env, sys);
+  assert.equal(ok.status, 200);
+  assert.ok((await ok.json()).token);
+
+  // App 口令正确但仍需凭据：口令错误时即便绕过 Turnstile 也拒绝
+  const badCreds = await handleAdminAPI(buildLogin('wrong'), env, sys);
+  assert.equal(badCreds.status, 401);
+
+  // 没有 App 口令且未通过 Turnstile → 直接拒绝
+  const noPass = new Request('https://example.com/admin/api', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'login', username: 'admin', password: 'secret' })
+  });
+  const noPassRes = await handleAdminAPI(noPass, env, sys);
+  assert.equal(noPassRes.status, 403);
 });
 
 test('App 口令不参与后台管理鉴权', async () => {

@@ -250,7 +250,7 @@ export default {
       
       // 全局 Turnstile 验证：仅 turnstile_enabled 开启时拦截所有 API 请求
       // turnstile_login_enabled 仅在登录时验证，不在此处拦截
-      // 携带正确 App 访问口令的第三方客户端放行；登录处的 Turnstile 校验不受影响。
+      // 携带正确 App 访问口令的第三方客户端放行；登录处的 Turnstile 校验同样可由 App 口令绕过。
       if (turnstileEnabled && !hasAppPasswordAccess(request, sys)) {
         const hasValidCookie = await isTurnstileVerified(request, env, sys);
         
