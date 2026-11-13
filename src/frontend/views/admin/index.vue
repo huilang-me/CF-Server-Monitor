@@ -1007,7 +1007,8 @@ const settings = ref({
   theme_url: '',
   csp_static: '',
   csp_api: '',
-  ua: 'cfsm'
+  ua: 'cfsm',
+  app_password: ''
 })
 const apiSecret = ref('')
 const cacheRefreshing = ref(false)
@@ -1033,7 +1034,7 @@ const toggleAdminPasswordChange = () => {
 }
 
 const { visibility: passwordVisible, toggle: togglePassword } = usePasswordVisibility([
-  'login', 'tgBotToken', 'tgChatId', 'notificationWebhookUrl', 'smtpPassword', 'turnstileSecret', 'cloudflareToken', 'jwtSecret', 'ua', 'password', 'confirmPassword'
+  'login', 'tgBotToken', 'tgChatId', 'notificationWebhookUrl', 'smtpPassword', 'turnstileSecret', 'cloudflareToken', 'jwtSecret', 'ua', 'appPassword', 'password', 'confirmPassword'
 ])
 
 const {
@@ -1463,7 +1464,8 @@ const loadSettings = async () => {
         theme_url: settingsData.theme_url || '',
         csp_static: settingsData.csp_static || '',
         csp_api: settingsData.csp_api || '',
-        ua: settingsData.ua || 'cfsm'
+        ua: settingsData.ua || 'cfsm',
+        app_password: settingsData.app_password || ''
       }
       applyMikusThemeOptions(settingsData.theme_options)
       changeAdminPassword.value = !settings.value.password_configured || !String(settings.value.username || '').trim()
@@ -1660,7 +1662,8 @@ const saveSettings = async () => {
       node_1_name: settings.value.node_1_name.trim(), node_2_name: settings.value.node_2_name.trim(), node_3_name: settings.value.node_3_name.trim(), node_4_name: settings.value.node_4_name.trim(),
       csp_static: settings.value.csp_static || '',
       csp_api: settings.value.csp_api || '',
-      ua: String(settings.value.ua ?? '').trim()
+      ua: String(settings.value.ua ?? '').trim(),
+      app_password: String(settings.value.app_password ?? '').trim()
     }
   }
 

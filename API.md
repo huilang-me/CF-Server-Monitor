@@ -126,6 +126,20 @@
 
 浏览器原生 WebSocket 不能自定义 `Authorization` Header。内置前端同域连接走 `cfsm_auth` Cookie，跨域连接才追加 `token=<jwt>` 查询参数。服务端会在转发到 Durable Object 前完成私有站点权限校验；公开站点不要求 JWT。
 
+#### E. App 访问口令（第三方 App / iOS 小组件）
+
+- **使用位置**：`GET /api/servers`、`GET /api/server`、`GET /api/history/all`、`GET /api/ws` 的只读可见范围
+- **方式**：`X-App-Password: <app_password>` Header
+- **配置**：后台 → 安全设置 → App 访问口令，16-32 位可见 ASCII（不含空格），留空表示不启用
+- **效果**：通过后等同于登录用户的只读权限——可访问私有站点（`is_public !== 'true'`）数据、可看到 `is_hidden` 服务器、可拉取超过 24 小时的历史；**不参与** `/admin/api` 等管理鉴权
+- **失败返回**：口令未配置或不匹配时按未登录处理，私有站点返回 `401 { "error": "Unauthorized", "code": 401 }`
+- **注意**：`GET /api/config` 不反映口令授权状态，携带口令时仍然返回 `authorization: false`、`verified: false`。第三方客户端不要用 `/api/config` 判断是否已拿到只读权限，直接请求 `/api/servers` 等业务接口即可
+
+```bash
+curl https://status.example.com/api/servers \
+  -H "X-App-Password: <app_password>"
+```
+
 ### 0.2 Turnstile 人机验证
 
 当 `site_options.turnstile_enabled === 'true'` 时，**所有** **`/api/*`** **与** **`/admin/api`** **公共接口**（除了下方 bypass 列表）都需要先验证 Cloudflare Turnstile Token。
@@ -134,6 +148,7 @@
 
 - `/admin/api`（`/admin/api` 走另一套 Turnstile：见 `action: login`）
 - `/api/ws`（WebSocket 升级）
+- 请求头 `X-App-Password` 与站点 `site_options.app_password` 一致（第三方 App / iOS 小组件）；登录 `action: login` 的 Turnstile 校验不受此放行影响
 - `/api/config` 在 **不携带** `X-Turnstile-Token` 与 `X-Turnstile-Verified` 时（用于初始化判断是否需要验证）
 
 **验证流程**：
@@ -632,7 +647,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 
 - Method：`GET`
 - Path：`/api/servers`
-- Headers（按需）：`Authorization: Bearer <jwt>`、`X-Turnstile-Token` 或 `X-Turnstile-Verified`
+- Headers（按需）：`Authorization: Bearer <jwt>`、`X-App-Password: <app_password>`、`X-Turnstile-Token` 或 `X-Turnstile-Verified`
 
 **Response** `200 OK`
 
@@ -902,6 +917,7 @@ Content-Type: application/json
 
 - 公开站点：无需 JWT。
 - 私有站点：必须通过 WebSocket JWT 认证，认证来源支持 `Authorization: Bearer <jwt>`、`Cookie: cfsm_auth=<jwt>`、查询参数 `token` / `auth_token` / `ws_token`。浏览器前端同域走 Cookie，跨域走查询参数。
+- 私有站点也可以改用请求头 `X-App-Password: <app_password>`（后台「安全设置 → App 访问口令」），适合第三方 App / iOS 小组件。
 - `ids` 只控制订阅过滤范围，不是服务端鉴权。
 
 **Response** `101 Switching Protocols`（WebSocket 握手）
@@ -1354,6 +1370,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled` 或
     "jwt_secret": "",
     "username": "admin",
     "password": "<plain text, will be PBKDF2-hashed before save>",
+    "app_password": "<16-32 chars, blank to disable>",
     "cloudflare_account_id": "",
     "cloudflare_token": "",
     "custom_ct": "gd-ct-dualstack.ip.zstaticcdn.com",
@@ -1957,6 +1974,7 @@ UUID 缺失或格式非法时返回 `400 { "error": "invalidServerId", "code": 4
   turnstile_secret_key: string,
   username: string,
   password: string,              // PBKDF2 哈希值；旧版 MD5 哈希会在成功登录后自动升级；get_settings 不返回此字段
+  app_password: string,          // 第三方 App / iOS 小组件口令，16-32 位可见 ASCII；空 = 不启用；get_settings 返回明文
   cloudflare_account_id: string,
   cloudflare_token: string,
   custom_ct: string,             // 电信测速节点 host[:port]
@@ -2064,19 +2082,46 @@ curl https://status.example.com/api/config
 
 ```bash
 curl https://status.example.com/api/servers
+
+# 私有站点，或需要包含隐藏服务器时：带上 App 访问口令
+curl https://status.example.com/api/servers \
+  -H "X-App-Password: <app_password>"
 ```
 
 ### 8.4 公共：单台详情
 
 ```bash
 curl "https://status.example.com/api/server?id=9b2c4d3e-1a2b-4c5d-9e8f-7a6b5c4d3e2f"
+
+# 私有站点 / 隐藏服务器
+curl "https://status.example.com/api/server?id=9b2c4d3e-1a2b-4c5d-9e8f-7a6b5c4d3e2f" \
+  -H "X-App-Password: <app_password>"
 ```
 
 ### 8.5 公共：24h 历史
 
 ```bash
 curl "https://status.example.com/api/history/all?id=9b2c4d3e-1a2b-4c5d-9e8f-7a6b5c4d3e2f&hours=24"
+
+# 私有站点 / 隐藏服务器 / 超过 24 小时的历史
+curl "https://status.example.com/api/history/all?id=9b2c4d3e-1a2b-4c5d-9e8f-7a6b5c4d3e2f&hours=168" \
+  -H "X-App-Password: <app_password>"
 ```
+
+### 8.5.1 第三方 App / iOS 小组件：带口令访问
+
+```bash
+# 口令在 后台 → 安全设置 → App 访问口令 配置：16-32 位可见 ASCII，留空不启用
+curl https://status.example.com/api/servers \
+  -H "X-App-Password: <app_password>" \
+  -H "User-Agent: <自定义 UA>"
+
+# 私有站点 + 隐藏服务器 + 超过 24 小时的历史
+curl "https://status.example.com/api/history/all?id=9b2c4d3e-1a2b-4c5d-9e8f-7a6b5c4d3e2f&hours=168" \
+  -H "X-App-Password: <app_password>"
+```
+
+`User-Agent` 是可选的，只有启用了 Cloudflare 安全规则时才需要填后台的自定义 UA。携带正确口令时全局 Turnstile 也会放行，无需再带 `X-Turnstile-Token`；登录接口（`action: login`）的 Turnstile 校验不受影响。
 
 ### 8.6 管理：登录
 
@@ -2139,7 +2184,8 @@ curl -X POST https://status.example.com/admin/api \
       "long_history_points":"120",
       "turnstile_enabled":"true",
       "turnstile_site_key":"1x00000000000000000000AA",
-      "turnstile_secret_key":"1x0000000000000000000000000000000AA"
+      "turnstile_secret_key":"1x0000000000000000000000000000000AA",
+      "app_password":"0123456789abcdef"
     }
   }'
 ```
@@ -2187,6 +2233,9 @@ wscat -c "wss://status.example.com/api/ws?subscribe=9b2c4d3e-1a2b-4c5d-9e8f-7a6b
 
 # 私有站点：使用查询参数 JWT
 wscat -c "wss://status.example.com/api/ws?subscribe=all&token=<jwt>"
+
+# 私有站点：使用 App 访问口令（第三方 App / iOS 小组件）
+wscat -c "wss://status.example.com/api/ws?subscribe=all" -H "X-App-Password: <app_password>"
 ```
 
 ### 8.16 公共：获取主题商店
@@ -2226,6 +2275,7 @@ curl -X POST https://status.example.com/admin/api \
 
 ## 9. 版本与变更说明
 
+- **2026-11-13**：新增 `app_password` 站点设置（后台「安全设置 → App 访问口令」）：第三方 App / iOS 小组件通过 `X-App-Password` 请求头获得只读权限，可访问私有站点、隐藏服务器和超过 24 小时的历史；长度 16-32 位，留空不启用。携带正确口令时同样跳过全局 Turnstile，登录验证不受影响。
 - **2026-09-07**：统一 Ping/丢包取值约定并与 WSS 对齐：`false` / 字段缺失表示未配置、未上报或未取样（前端不显示）；`null` 表示该轮探测超时/未取到有效 RTT（前端显示 Timeout）。历史接口读取旧数据时按同行的 `loss=100` 归位，不再把“未上报”误显示成超时。
 - **2026-08-20**：新增 `frontend_ws_timeout_minutes` 站点设置与 `/api/config` 字段；默认 `0` 不超时，正整数表示前端实时订阅连接的分钟级寿命上限。
 - **2026-07-26**：重新同步 `main` 源码；当前 Workers 版本为 `2.8.0 Beta`，Agent 版本为 `1.3.2`。补充主题商店、主题代理、最新批次缓存、测试通知、服务器导入/导出及探针动态配置，修正鉴权、历史查询、WebSocket、数据库维护和数据结构说明。

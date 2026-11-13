@@ -8,7 +8,7 @@ import { handleServerAPI, handleServersAPI } from './handlers/dashboard.js';
 import { handleTheme } from './handlers/theme.js';
 import { isValidThemeOptions, loadSettings, loadSiteSettings, loadAppearanceOptions, normalizeFrontendWsTimeoutMinutes, normalizeLongHistoryPoints, saveThemeOptions, setDebug, debug } from './utils/settings.js';
 import { omitNullLossProbeFields } from './handlers/dashboard.js';
-import { checkAuth, simpleAuthResponse } from './middleware/auth.js';
+import { checkAuth, hasAppPasswordAccess, simpleAuthResponse } from './middleware/auth.js';
 import { getServerDetail, getMetricsHistoryCache, setMetricsHistoryCache, getCacheDuration } from './utils/cache.js';
 import { AppError, createSuccessResponse, createUnauthorizedResponse, createBadRequestResponse, createNotFoundResponse, createErrorResponse } from './utils/errors.js';
 import { verifyTurnstileToken } from './utils/common.js';
@@ -113,16 +113,18 @@ async function fetchHistoryData(env, request, id, hours, columns, sys = null) {
     sys = await loadSiteSettings(env.DB);
   }
   const isLoggedIn = await checkAuth(request, env, sys);
+  // App 口令与登录态等价，只放宽只读范围：私有站点、隐藏服务器与超过 24 小时的历史。
+  const canViewPrivate = isLoggedIn || hasAppPasswordAccess(request, sys);
   
-  if (sys.is_public !== 'true' && !isLoggedIn) {
+  if (sys.is_public !== 'true' && !canViewPrivate) {
     return simpleAuthResponse();
   }
   
-  if (hours > 24 && !isLoggedIn) {
+  if (hours > 24 && !canViewPrivate) {
     return createUnauthorizedResponse();
   }
   
-  const server = await getServerDetail(env.DB, id, isLoggedIn);
+  const server = await getServerDetail(env.DB, id, canViewPrivate);
   if (!server) return createNotFoundResponse();
   
   // 最多查询7天数据
@@ -248,7 +250,8 @@ export default {
       
       // 全局 Turnstile 验证：仅 turnstile_enabled 开启时拦截所有 API 请求
       // turnstile_login_enabled 仅在登录时验证，不在此处拦截
-      if (turnstileEnabled) {
+      // 携带正确 App 访问口令的第三方客户端放行；登录处的 Turnstile 校验不受影响。
+      if (turnstileEnabled && !hasAppPasswordAccess(request, sys)) {
         const hasValidCookie = await isTurnstileVerified(request, env, sys);
         
         if (!hasValidCookie) {

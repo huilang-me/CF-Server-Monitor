@@ -172,6 +172,28 @@ export function buildClearUaCookie(request) {
   return `${UA_COOKIE_NAME}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax${secure}`;
 }
 
+// 第三方 App / iOS 小组件的共享口令头。它只放宽只读可见范围（私有站点、隐藏服务器），
+// 不参与后台管理鉴权，避免把「能看」变成「能改」。
+export const APP_PASSWORD_HEADER = 'X-App-Password';
+
+// 常量时间比较，避免通过响应耗时逐位试探口令。
+function constantTimeEquals(a, b) {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i += 1) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+export function hasAppPasswordAccess(request, sys) {
+  const expected = String(sys?.app_password ?? '');
+  if (!expected) return false;
+  const provided = String(request?.headers?.get(APP_PASSWORD_HEADER) ?? '').trim();
+  if (!provided) return false;
+  return constantTimeEquals(provided, expected);
+}
+
 export async function validateCredentials(username, password, env, sys) {
   try {
     const validUsername = (sys && sys.username && sys.username.length > 0)

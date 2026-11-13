@@ -13,13 +13,14 @@ import {
 
 export const APPEARANCE_FIELDS = ['site_title', 'custom_bg', 'custom_bg_mobile', 'favicon', 'custom_head', 'custom_script', 'csp_static', 'csp_api', 'display_mode', 'preferred_theme', 'default_language', 'theme_options'];
 
-export const SITE_FIELDS = ['auto_discovery', 'is_public', 'show_price', 'show_expire', 'show_tf', 'show_three_net_details', 'wss_report_enabled', 'wss_report_hours', 'frontend_ws_timeout_minutes', 'long_history_points', 'tg_notify', 'tg_bot_token', 'tg_chat_id', 'notification_timezone', 'notification_language', 'expire_notification_time', 'notification_webhook_enabled', 'notification_webhook_url', 'notification_webhook_method', 'notification_webhook_format', 'notification_webhook_headers', 'notification_webhook_body', 'notification_template', 'turnstile_enabled', 'turnstile_login_enabled', 'turnstile_site_key', 'turnstile_secret_key', 'jwt_secret', 'username', 'password', 'cloudflare_account_id', 'cloudflare_token', 'custom_ct', 'custom_cu', 'custom_cm', 'custom_bd', 'node_1', 'node_2', 'node_3', 'node_4', 'custom_ct_name', 'custom_cu_name', 'custom_cm_name', 'custom_bd_name', 'node_1_name', 'node_2_name', 'node_3_name', 'node_4_name', 'expire_reminder', 'resource_alert_rules', 'traffic_alert_threshold', 'theme_url', 'servers_optimized', 'ua'];
+export const SITE_FIELDS = ['auto_discovery', 'is_public', 'show_price', 'show_expire', 'show_tf', 'show_three_net_details', 'wss_report_enabled', 'wss_report_hours', 'frontend_ws_timeout_minutes', 'long_history_points', 'tg_notify', 'tg_bot_token', 'tg_chat_id', 'notification_timezone', 'notification_language', 'expire_notification_time', 'notification_webhook_enabled', 'notification_webhook_url', 'notification_webhook_method', 'notification_webhook_format', 'notification_webhook_headers', 'notification_webhook_body', 'notification_template', 'turnstile_enabled', 'turnstile_login_enabled', 'turnstile_site_key', 'turnstile_secret_key', 'jwt_secret', 'username', 'password', 'cloudflare_account_id', 'cloudflare_token', 'custom_ct', 'custom_cu', 'custom_cm', 'custom_bd', 'node_1', 'node_2', 'node_3', 'node_4', 'custom_ct_name', 'custom_cu_name', 'custom_cm_name', 'custom_bd_name', 'node_1_name', 'node_2_name', 'node_3_name', 'node_4_name', 'expire_reminder', 'resource_alert_rules', 'traffic_alert_threshold', 'theme_url', 'servers_optimized', 'ua', 'app_password'];
 
 // 导出/导入服务器时一并迁移站点与外观设置。以下字段与当前部署的环境强绑定，
 // 直接覆盖会让目标站点无法登录、探针失联或告警错位，因此既不导出也不导入：
 // - username/password/jwt_secret：覆盖后旧凭据失效，当前登录会被强制退出
 // - turnstile_*：站点密钥绑定域名白名单，覆盖后未加白的新域名会直接不可访问
 // - ua：自定义 UA 通常配套域名防护规则，覆盖后上报全部失败，机器全部掉线
+// - app_password：第三方 App 的共享口令，覆盖后旧口令立即失效、新口令扩散到别的站点
 // - resource_alert_rules：规则里存的是服务器 ID，跨站点覆盖后 ID 对不上
 // - csp_static/csp_api：CSP 白名单按域名配置，跨站点覆盖会拦掉本站静态资源与接口
 // - servers_optimized：历史分区迁移完成标记，跨库覆盖会让目标库重排 history_partition_id
@@ -33,6 +34,7 @@ export const SETTINGS_EXCLUDED_FIELDS = [
   'turnstile_site_key',
   'turnstile_secret_key',
   'ua',
+  'app_password',
   'resource_alert_rules',
   'csp_static',
   'csp_api',
@@ -44,6 +46,8 @@ export const IMPORTABLE_APPEARANCE_FIELDS = APPEARANCE_FIELDS.filter((field) => 
 
 export const DEFAULT_USER_AGENT = 'cfsm';
 export const USER_AGENT_MAX_LENGTH = 100;
+export const APP_PASSWORD_MIN_LENGTH = 16;
+export const APP_PASSWORD_MAX_LENGTH = 32;
 export const TG_NOTIFY_MINUTES_MIN = 2;
 export const TG_NOTIFY_MINUTES_MAX = 30;
 export const TG_NOTIFY_LEGACY_TRUE_MINUTES = 5;
@@ -168,7 +172,8 @@ const defaults = {
   traffic_alert_threshold: '0',
   theme_url: '',
   servers_optimized: 'false',
-  ua: DEFAULT_USER_AGENT
+  ua: DEFAULT_USER_AGENT,
+  app_password: ''
 };
 
 export function normalizeLongHistoryPoints(value) {
@@ -200,6 +205,28 @@ export function validateUserAgent(value) {
 export function sanitizeUserAgent(value) {
   const result = validateUserAgent(value);
   return result.valid ? result.value : DEFAULT_USER_AGENT;
+}
+
+// 第三方 App / iOS 小组件使用的共享口令：留空表示不启用，启用时必须 16-32 位。
+// 只允许可见 ASCII 且不含空格，保证能原样放进请求头。
+const APP_PASSWORD_ALLOWED_RE = /^[\x21-\x7E]+$/;
+
+export function validateAppPassword(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return { valid: true, value: '' };
+  if (raw.length < APP_PASSWORD_MIN_LENGTH || raw.length > APP_PASSWORD_MAX_LENGTH) {
+    return { valid: false, value: '' };
+  }
+  if (!APP_PASSWORD_ALLOWED_RE.test(raw)) {
+    return { valid: false, value: '' };
+  }
+  return { valid: true, value: raw };
+}
+
+// 读到非法值（例如手改库、旧数据）时按未启用处理，避免带着异常值继续放行。
+export function normalizeAppPassword(value) {
+  const result = validateAppPassword(value);
+  return result.valid ? result.value : '';
 }
 
 export function normalizeFrontendWsTimeoutMinutes(value) {
@@ -659,7 +686,7 @@ export function isWssReportEnabled(settings = {}, now = Date.now()) {
 // 这些字段是在旧版「逐 key 存 settings」方案废弃之后才加入的，库里不可能存在对应的旧行，
 // 因此缺失时直接回退默认值即可。把它们排除在 hasMissingFields 之外，避免老部署每次
 // 刷新设置缓存都多做一次 SELECT * FROM settings 的兼容查询。
-const LEGACY_FALLBACK_EXEMPT_FIELDS = new Set(['ua']);
+const LEGACY_FALLBACK_EXEMPT_FIELDS = new Set(['ua', 'app_password']);
 
 function hasMissingFields(source, fields) {
   if (!source || typeof source !== 'object') return true;
@@ -768,6 +795,7 @@ export async function loadSiteSettings(db, options = {}) {
     result.expire_notification_time = normalizeExpireNotificationTime(result.expire_notification_time);
     result.traffic_alert_threshold = normalizeTrafficAlertThreshold(result.traffic_alert_threshold);
     result.ua = sanitizeUserAgent(result.ua);
+    result.app_password = normalizeAppPassword(result.app_password);
   } catch (e) {
     console.error('加载站点设置失败:', e);
     if (cachedSiteSettings) {
@@ -943,6 +971,7 @@ export async function saveSiteOptions(db, updates) {
   siteOptions.expire_notification_time = normalizeExpireNotificationTime(siteOptions.expire_notification_time);
   siteOptions.traffic_alert_threshold = normalizeTrafficAlertThreshold(siteOptions.traffic_alert_threshold);
   siteOptions.ua = sanitizeUserAgent(siteOptions.ua);
+  siteOptions.app_password = normalizeAppPassword(siteOptions.app_password);
   
   await db.prepare(
     'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'

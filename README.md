@@ -10,7 +10,7 @@
   <a href="README-en.md">English</a>
 </p>
 
-[![Workers](https://img.shields.io/badge/Workers-2.8.7%20Stable-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
+[![Workers](https://img.shields.io/badge/Workers-2.8.8%20Beta1-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
 [![GitHub Stars](https://img.shields.io/github/stars/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/forks)
 [![License](https://img.shields.io/badge/License-MIT-16a34a?style=flat-square)](#许可证)
@@ -99,7 +99,8 @@ flowchart LR
 
 近期变化：
 
-- `2.8.7`：优化定时任务逻辑，降低CPU负载，避免超出免费额度限制；`/update` 增加 512KB 请求体上限，超限直接返回 413；服务器被删除后，其 Agent 的 WSS 连接会在 2 分钟内自动断开；WSS 上报增加帧大小校验，D1 抖动时不再中断已认证会话；批量样本只保留最新 300 条。新增服务端自动发现机制自动绑定服务器ID。新增自定义UA；导入导出包含设置选项；资源负载告警新增 TCP/UDP 连接数监控。上报未探到公网 IP 时用请求头来源地址补位
+- `2.8.8`：登录下发 cfsm_ua Cookie 供 Cloudflare 安全规则放行；新增APP Password用于第三方 App / iOS 小组件获得更多权限，同时绕过Turnstile。
+- `2.8.7`：优化定时任务逻辑，降低CPU负载，避免超出免费额度限制；`/update` 增加 512KB 请求体上限，超限直接返回 413；服务器被删除后，其 Agent 的 WSS 连接会在 2 分钟内自动断开；WSS 上报增加帧大小校验，D1 抖动时不再中断已认证会话；批量样本只保留最新 300 条。新增服务端自动发现机制自动绑定服务器ID。新增自定义UA；导入导出包含设置选项；资源负载告警新增 TCP/UDP 连接数监控。上报未探到公网 IP 时用请求头来源地址补位。
 - `2.8.6`：WSS前端订阅采用250毫秒批量上报，新增SMTP通知渠道，新增月度流量阈值告警，移除旧版数据库兼容性，新增Docker安装方式。
 - `2.8.5`：支持自定义 Ping 节点名称；增加ICMP模式；优化WSS响应逻辑；API接口优化；原皮前端优化；新增4个ping节点。
 - `2.8.4`：新增 Agent WSS 上报和 WSS 开启时段，提升实时数据推送及时性，并允许非目标时段自动改用 POST 降低 Do 时长消耗；该能力要求 Agent 升级到 `v1.0.10+`。新增账户Do用量展示，优化无前端订阅时的 Do 实时广播请求，降低空闲额度消耗。通知设置新增自定义 Webhook 渠道, 新增前端wss超时配置。
@@ -305,7 +306,7 @@ npm run build:github-page
 | ------------- | ------------------------------------- |
 | 站点设置          | 标题、背景、favicon、默认展示模式、默认外观、默认语言、三网详情、公开访问策略、自动发现（可复制免 ID 的 Linux 安装命令） |
 | 服务器参数         | HTTP/WSS 上报间隔、采集间隔、Ping 节点、网卡、月流量、价格、到期时间、自动续费 |
-| 安全设置          | 管理员账号密码、JWT Secret、自定义 UA、Turnstile     |
+| 安全设置          | 管理员账号密码、JWT Secret、自定义 UA、Turnstile、App 访问口令     |
 | 通知设置          | 离线告警、到期提醒、资源负载告警、测试通知                 |
 | 外观设置          | 自定义 CSS、`<head>`、CSP 白名单、Mikus 模式     |
 | 数据库管理         | 升级数据库、清空历史数据                          |
@@ -326,6 +327,8 @@ npm run build:github-page
 小组件会显示在线状态、CPU、内存、磁盘、月流量、实时上下行速率和更新时间。iOS 会按系统策略决定实际刷新频率。
 
 三个脚本都支持 `CONFIG.userAgent`：如果启用了上文「Cloudflare 安全规则」，需要把它填成后台的自定义 UA，否则小组件的请求会被质询拦截。留空则使用 Scriptable 的默认 UA。
+
+如果站点未开启公开访问、或需要显示隐藏服务器，把后台「安全设置 → App 访问口令」填到 `CONFIG.appPassword`，脚本会通过 `X-App-Password` 请求头带上。
 
 需要一次看多台时用 [scripts/ios-scriptable-widget-multi.js](scripts/ios-scriptable-widget-multi.js)：Parameter 留空显示面板上所有公开服务器，填 `server-a,server-b` 只显示这几台，只填一台时显示详细视图（带三网延迟柱状图）。服务器会自动分页（小、中尺寸每页 1 台，大尺寸每页 2 台），Parameter 填 `page:2`（也支持 `p2`、`2`、`第2页`）可指定页码，适合智能叠放。它请求的是 `/api/servers`（全站列表），服务器较多时会比单机版产生更多 D1 查询。
 
@@ -438,6 +441,12 @@ smtp://<用户名>:<密码>@<host>:<port>?from=<发件人>&to=<收件人1,收件
 ### Turnstile
 
 可在后台启用 Cloudflare Turnstile，用于降低公开 API 和登录入口被刷的风险。多站点模式下，如果多个站点都启用 Turnstile，请保持 Site Key 一致。
+
+### 第三方 App 访问口令
+
+后台 → 安全设置 → App 访问口令 可设置一段 16-32 位口令（可见 ASCII，不含空格），留空表示不启用。第三方 App、iOS 小组件在请求头携带 `X-App-Password: <口令>` 后，可以像登录用户一样只读访问：私有站点（未开启公开访问）的数据、`is_hidden` 的隐藏服务器，以及超过 24 小时的历史数据。
+
+该口令不能用于后台管理操作；泄露后请及时在后台修改。开启「Turnstile 人机验证码（全局）」时，携带正确口令的请求同样会跳过验证，登录入口的 Turnstile 仍然保留。
 
 ### Cloudflare 安全规则
 

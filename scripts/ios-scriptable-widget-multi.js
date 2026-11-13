@@ -19,11 +19,13 @@ const CONFIG = {
   baseURL: "https://www.example.com", //必填
   servers: [], //可选，填 id 或名字，例如 ["server-a", "server-b"]；留空 = 全部
   refreshMinutes: 5, //iOS 会自己限流，实际刷新间隔通常更长
-  userAgent: "" //可选，填后台「安全设置 - 自定义 UA」；启用 Cloudflare 安全规则后必填
+  userAgent: "", //可选，填后台「安全设置 - 自定义 UA」；启用 Cloudflare 安全规则后必填
+  appPassword: "" //可选，填后台「安全设置 - App 访问口令」；私有站点或需要看隐藏服务器时必填
 };
 
 CONFIG.baseURL = String(CONFIG.baseURL || "").replace(/\/+$/, "");
 CONFIG.userAgent = String(CONFIG.userAgent || "").trim();
+CONFIG.appPassword = String(CONFIG.appPassword || "").trim();
 
 const family = config.widgetFamily || "medium";
 const widgetParameter = String(args.widgetParameter || "").trim();
@@ -216,7 +218,10 @@ function cacheTime(ts) {
 async function fetchJSON(path) {
   const req = new Request(CONFIG.baseURL + path);
   req.timeoutInterval = 15;
-  if (CONFIG.userAgent) req.headers = { "User-Agent": CONFIG.userAgent };
+  const headers = {};
+  if (CONFIG.userAgent) headers["User-Agent"] = CONFIG.userAgent;
+  if (CONFIG.appPassword) headers["X-App-Password"] = CONFIG.appPassword;
+  if (Object.keys(headers).length > 0) req.headers = headers;
   return await req.loadJSON();
 }
 
