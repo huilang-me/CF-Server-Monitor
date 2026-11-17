@@ -37,6 +37,8 @@
         </div>
         <div v-if="loginError" id="login-error" class="login-error">{{ loginError }}</div>
         <button type="submit" class="login-btn">{{ loginLoading ? '⏳' : trans.login }}</button>
+        <button type="button" class="login-btn passkey-login-btn" :disabled="loginLoading || !passkeyAvailable" @click="$emit('passkey-login')">{{ trans.passkeyLogin }}</button>
+        <p v-if="!passkeyAvailable" class="passkey-login-hint">{{ trans.passkeySameOrigin }}</p>
       </form>
     </div>
     <Footer />
@@ -55,11 +57,17 @@ defineProps({
   passwordVisible: { type: Object, required: true },
   loginError: { type: String, default: '' },
   loginLoading: { type: Boolean, default: false },
+  passkeyAvailable: { type: Boolean, default: false },
   turnstileSiteKey: { type: String, default: '' },
   turnstileLoginEnabled: { type: Boolean, default: false },
   turnstileEnabled: { type: Boolean, default: false },
   turnstileVerified: { type: Boolean, default: false }
 })
 
-defineEmits(['login', 'toggle-password', 'api-index-change'])
+defineEmits(['login', 'passkey-login', 'toggle-password', 'api-index-change'])
 </script>
+
+<style scoped>
+.passkey-login-btn { margin-top: 10px; background: transparent; color: inherit; border: 1px solid currentColor; }
+.passkey-login-hint { margin: 8px 0 0; font-size: 0.85em; opacity: 0.75; }
+</style>

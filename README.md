@@ -438,6 +438,16 @@ smtp://<用户名>:<密码>@<host>:<port>?from=<发件人>&to=<收件人1,收件
 - 查询参数 token 可能出现在访问日志中，请只通过 HTTPS 使用，并避免把带 token 的 WebSocket URL 分享给他人。
 - 后台可配置“前端 WSS 超时（分钟）”：默认 `0`，表示不因连接时长主动断开；设为正整数后，内置前端到时会断开实时订阅并弹窗让用户选择关闭或继续。
 
+### Passkey 登录
+
+管理员可在后台添加多个 Passkey，并在登录页选择 Passkey 登录；原有密码登录仍可使用。支持 iCloud 钥匙串、Windows Hello，以及支持 FIDO2 用户验证的 YubiKey 等安全密钥。安全密钥可能需要先设置 PIN；仅支持旧版 U2F 或不支持用户验证的设备不适用。
+
+请通过 Worker 自身的 HTTPS 后台地址绑定和使用 Passkey。Passkey 与登录页面域名绑定：更换域名后需在新域名重新绑定，GitHub Pages 或其他跨域前台不能直接复用 Worker 域名下的 Passkey。建议至少绑定两个独立凭证作为备用，并为后台设置独立强密码；保留密码登录时，密码安全仍影响整个账户。
+
+添加或删除凭证需要管理员登录并再次输入当前密码。服务端只保存公钥和凭证信息，不保存 Passkey 私钥。
+
+登录入口会生成短期有效的挑战并写入 D1；如需限制恶意请求和额度消耗，可启用后台登录 Turnstile，并结合 Cloudflare 的安全规则或速率限制保护 `/admin/api`。
+
 ### Turnstile
 
 可在后台启用 Cloudflare Turnstile，用于降低公开 API 和登录入口被刷的风险。多站点模式下，如果多个站点都启用 Turnstile，请保持 Site Key 一致。
@@ -594,7 +604,7 @@ Go 版本和旧 Shell / PowerShell 版本卸载脚本只清理各自安装的服
 
 ### 环境要求
 
-- Node.js 18+
+- Node.js 20+
 - npm
 - Wrangler 4
 

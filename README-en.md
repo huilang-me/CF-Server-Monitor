@@ -595,7 +595,7 @@ After upgrading from older versions to versions with GPU, disk IO, packet loss, 
 
 ### Requirements
 
-- Node.js 18+
+- Node.js 20+
 - npm
 - Wrangler 4
 

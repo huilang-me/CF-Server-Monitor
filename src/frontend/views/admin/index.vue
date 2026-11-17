@@ -10,11 +10,13 @@
       :password-visible="passwordVisible"
       :login-error="loginError"
       :login-loading="loginLoading"
+      :passkey-available="passkeyAvailable"
       :turnstile-site-key="turnstileSiteKey"
       :turnstile-login-enabled="turnstileLoginEnabled"
       :turnstile-enabled="turnstileEnabled"
       :turnstile-verified="turnstileVerified"
       @login="handleLogin"
+      @passkey-login="handlePasskeyLogin"
       @toggle-password="togglePassword"
       @api-index-change="handleApiIndexChange"
     />
@@ -143,6 +145,8 @@
           :password-visible="passwordVisible"
           :active-tab="activeTab"
           :selected-api-base="selectedApiBase"
+          :selected-api-index="selectedApiIndex"
+          :passkey-available="passkeyAvailable"
           :current-origin="currentOrigin"
           :saving="saving"
           :change-admin-password="changeAdminPassword"
@@ -596,6 +600,7 @@
 
 <script setup>
 import { ref, computed, onMounted, watch, nextTick, inject } from 'vue'
+import { startAuthentication } from '@simplewebauthn/browser'
 import { useRoute, useRouter } from 'vue-router'
 import TerminalHeader from '../../components/TerminalHeader.vue'
 import Footer from '../../components/Footer.vue'
@@ -612,6 +617,7 @@ import DeleteServerModal from './components/DeleteServerModal.vue'
 import CopyCommandModal from './components/CopyCommandModal.vue'
 import AutoDiscoveryCommandModal from './components/AutoDiscoveryCommandModal.vue'
 import { adminApi, login, logout as apiLogout, upgradeDatabase, clearHistory, fetchConfig } from '../../utils/api'
+import { http } from '../../utils/http.js'
 import { hasMultipleApiBases, getApiBases } from '../../utils/config.js'
 import { copyTextToClipboard } from '../../utils/clipboard.js'
 import { normalizeLanguagePreference, normalizeNotificationLanguagePreference, t, useTranslation } from '../../utils/i18n'
@@ -919,6 +925,13 @@ const normalizeApiIndex = (value) => {
 const selectedApiIndex = ref(normalizeApiIndex(route.query.apiIndex))
 const selectedApiBase = computed(() => apiBases[selectedApiIndex.value] || apiBases[0])
 const currentOrigin = computed(() => window.location.origin)
+const passkeyAvailable = computed(() => {
+  try {
+    return window.isSecureContext && !!window.PublicKeyCredential && new URL(selectedApiBase.value, window.location.href).origin === window.location.origin
+  } catch (_) {
+    return false
+  }
+})
 
 const syncApiIndexQuery = () => {
   if (!isMultipleMode.value) return
@@ -1295,6 +1308,40 @@ const handleLogin = async () => {
     resetTurnstile('#admin-turnstile-container')
   }
   loginLoading.value = false
+}
+
+const handlePasskeyLogin = async () => {
+  if (loginLoading.value || !passkeyAvailable.value) return
+  loginError.value = ''
+  if ((turnstileLoginEnabled.value || (turnstileEnabled.value && !turnstileVerified.value)) && !turnstileToken.value) {
+    loginError.value = 'Please complete the verification'
+    return
+  }
+  loginLoading.value = true
+  const apiIndex = selectedApiIndex.value
+  try {
+    if (turnstileToken.value) localStorage.setItem(STORAGE.TURNSTILE_TOKEN, turnstileToken.value)
+    const options = await http.postByIndex('/admin/api', { action: 'passkey_login_options' }, apiIndex, { autoRedirect: false })
+    if (options.error || !options.data?.options || !options.data?.challengeId) throw new Error(options.error || 'options')
+    const credential = await startAuthentication({ optionsJSON: options.data.options })
+    if (apiIndex !== selectedApiIndex.value) throw new Error('siteChanged')
+    const result = await http.postByIndex('/admin/api', {
+      action: 'passkey_login_verify', challengeId: options.data.challengeId, credential
+    }, apiIndex, { autoRedirect: false })
+    if (result.error || !result.data?.token) throw new Error(result.error || 'authentication')
+    localStorage.setItem(STORAGE.JWT_TOKEN, result.data.token)
+    isLoggedIn.value = true
+    syncApiIndexQuery()
+    clearTurnstile()
+    turnstileVerified.value = hasSharedTurnstileVerified()
+    await Promise.all([loadSettings(), loadServers(), loadLatestAgentVersion()])
+  } catch (_) {
+    loginError.value = trans.value.passkeyFailed
+    clearTurnstile()
+    resetTurnstile('#admin-turnstile-container')
+  } finally {
+    loginLoading.value = false
+  }
 }
 
 const logout = async () => {

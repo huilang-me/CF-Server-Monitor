@@ -836,6 +836,8 @@
 
       </div>
 
+      <PasskeyManager :trans="trans" :api-index="selectedApiIndex" :active="activeTab === 'settings'" :available="passkeyAvailable" />
+
       <div class="settings-section">
         <div class="section-title"><span>▸</span> {{ trans.pingNodes }}</div>
 
@@ -890,6 +892,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import HelpTooltip from '../../../components/HelpTooltip.vue'
+import PasskeyManager from './PasskeyManager.vue'
 import { FRONTEND_WS_TIMEOUT_MINUTES_MAX, HISTORY } from '../../../utils/constants.js'
 import { PING_NODE_FIELDS, validatePingNode } from '../../../utils/pingNode.js'
 import { LANGUAGES, LANGUAGE_MAP } from '../../../locales'
@@ -906,6 +909,8 @@ const notificationLanguages = NOTIFICATION_LANGUAGE_CODES
   .filter(Boolean)
 
 const props = defineProps({
+  selectedApiIndex: { type: Number, default: 0 },
+  passkeyAvailable: { type: Boolean, default: false },
   trans: { type: Object, required: true },
   settings: { type: Object, required: true },
   servers: { type: Array, default: () => [] },

@@ -14,6 +14,7 @@ import { isValidTrafficCorrection, normalizeConnectionMode, normalizePingMode, n
 import { scheduleAgentConfigChanged, scheduleAgentReportModeChanged } from '../utils/agentConfigNotify.js';
 import { detectBillingCycle, detectCurrencySymbol, normalizeBillingCycle, normalizeCurrency, normalizePrice, renewExpireDateIfNeeded } from '../utils/serverBilling.js';
 import { THEME_PREVIEW_AUTH_TTL_SECONDS } from '../utils/config.js';
+import { handlePasskeyAction } from './passkey.js';
 
 const PING_NODE_FIELDS = ['custom_ct', 'custom_cu', 'custom_cm', 'custom_bd', 'node_1', 'node_2', 'node_3', 'node_4'];
 const THEME_PREVIEW_AUTH_COOKIE = 'cfsm_theme_preview_auth';
@@ -557,6 +558,8 @@ function handleClearThemePreviewAuthAction({ request }) {
 
 const PUBLIC_ADMIN_ACTION_HANDLERS = {
   login: handleLoginAction,
+  passkey_login_options: handlePasskeyAction,
+  passkey_login_verify: handlePasskeyAction,
   logout: handleLogoutAction,
   clear_theme_preview_auth: handleClearThemePreviewAuthAction
 };
@@ -765,6 +768,10 @@ async function handleSendTestNotificationAction({ data }) {
 }
 
 const AUTHENTICATED_ADMIN_ACTION_HANDLERS = {
+  passkey_list: handlePasskeyAction,
+  passkey_register_options: handlePasskeyAction,
+  passkey_register_verify: handlePasskeyAction,
+  passkey_delete: handlePasskeyAction,
   get_settings: handleGetSettingsAction,
   start_theme_preview: handleStartThemePreviewAction,
   save_theme_options: handleSaveThemeOptionsAction,
