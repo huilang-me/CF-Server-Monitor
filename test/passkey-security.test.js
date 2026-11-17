@@ -27,7 +27,7 @@ test('Passkey registration and authentication enforce WebAuthn security', { skip
       body: JSON.stringify({ action, ...fields })
     });
     const response = await handleAdminAPI(request, env, sys);
-    return { status: response.status, body: await response.json() };
+    return { status: response.status, body: await response.json(), headers: response.headers };
   }
   const denied = result => assert.ok(result.status >= 400 || result.body.error, JSON.stringify(result));
 
@@ -36,19 +36,14 @@ test('Passkey registration and authentication enforce WebAuthn security', { skip
     denied(await request('passkey_register_options', { password: 'wrong' }, { authenticated: true }));
   });
 
-  await t.test('external security key is selectable without restricting the normal passkey flow', async () => {
+  await t.test('registration supports device and external passkeys with a nonempty account display name', async () => {
     const normal = await request('passkey_register_options', { password: env.API_SECRET }, { authenticated: true });
-    const external = await request('passkey_register_options', { password: env.API_SECRET, authenticatorType: 'security-key' }, { authenticated: true });
     assert.equal(normal.status, 200, JSON.stringify(normal));
-    assert.equal(external.status, 200, JSON.stringify(external));
     assert.equal(normal.body.options.authenticatorSelection.authenticatorAttachment, undefined);
-    assert.equal(external.body.options.authenticatorSelection.authenticatorAttachment, 'cross-platform');
-    assert.ok(external.body.options.hints.includes('security-key'));
-    for (const { body: { options } } of [normal, external]) {
-      assert.equal(options.authenticatorSelection.userVerification, 'required');
-      assert.equal(options.user.name, 'admin');
-      assert.equal(options.user.displayName, options.user.name);
-    }
+    assert.equal(normal.body.options.authenticatorSelection.userVerification, 'required');
+    assert.equal(normal.body.options.user.name, 'admin');
+    assert.equal(normal.body.options.user.displayName, normal.body.options.user.name);
+    assert.equal(normal.headers.get('Cache-Control'), 'no-store');
   });
 
   await t.test('cross-origin requests cannot start or manage a credential', async () => {
@@ -109,6 +104,38 @@ test('Passkey registration and authentication enforce WebAuthn security', { skip
     }, { authenticated: true, authToken: anotherToken }));
   });
 
+  await t.test('registration uses the authenticated session consistently across cookies and Bearer tokens', async () => {
+    const encodedToken = encodeURIComponent(token).replaceAll('.', '%2E');
+    for (const authorization of ['', 'Bearer invalid-token']) {
+      const key = createAuthenticator();
+      const begin = await request('passkey_register_options', { password: env.API_SECRET }, {
+        headers: { Cookie: `cfsm_auth=${encodedToken}`, ...(authorization ? { Authorization: authorization } : {}) }
+      });
+      assert.equal(begin.status, 200, JSON.stringify(begin));
+      const verified = await request('passkey_register_verify', {
+        challengeId: begin.body.challengeId,
+        credential: key.registration({ challenge: begin.body.options.challenge })
+      }, { authenticated: true });
+      assert.equal(verified.status, 200, JSON.stringify(verified));
+      await request('passkey_delete', { id: key.id, password: env.API_SECRET }, { authenticated: true });
+    }
+  });
+
+  await t.test('changing the password invalidates pending registrations', async () => {
+    const begin = await request('passkey_register_options', { password: env.API_SECRET }, { authenticated: true });
+    const key = createAuthenticator();
+    const original = sys.password;
+    sys.password = 'changed-password-hash';
+    try {
+      denied(await request('passkey_register_verify', {
+        challengeId: begin.body.challengeId,
+        credential: key.registration({ challenge: begin.body.options.challenge })
+      }, { authenticated: true }));
+    } finally {
+      sys.password = original;
+    }
+  });
+
   await t.test('a real credential can register, but its challenge cannot be replayed', async () => {
     const options = await request('passkey_register_options', { password: env.API_SECRET }, { authenticated: true });
     assert.equal(options.status, 200, JSON.stringify(options));
@@ -136,6 +163,43 @@ test('Passkey registration and authentication enforce WebAuthn security', { skip
     }, { authenticated: true }));
   });
 
+  await t.test('warm login options use one D1 batch while preserving registered credentials', async () => {
+    const originalBatch = db.batch;
+    const originalPrepare = db.prepare;
+    let batches = 0;
+    let directQueries = 0;
+    db.batch = async function(statements) {
+      batches++;
+      assert.equal(statements.length, 3);
+      return originalBatch.call(this, statements);
+    };
+    db.prepare = function(sql) {
+      const statement = originalPrepare.call(this, sql);
+      for (const method of ['first', 'all', 'run']) {
+        const original = statement[method];
+        statement[method] = function(...args) {
+          directQueries++;
+          return original.apply(this, args);
+        };
+      }
+      return statement;
+    };
+    try {
+      const begin = await request('passkey_login_options');
+      assert.equal(begin.status, 200, JSON.stringify(begin));
+      assert.equal(batches, 1);
+      assert.equal(directQueries, 0, 'preparing the prompt should not make serial D1 calls');
+      assert.ok(begin.body.options.allowCredentials.some(credential => credential.id === auth.id));
+      assert.equal(begin.body.options.userVerification, 'required');
+      const persisted = await originalPrepare.call(db, 'SELECT challenge FROM passkey_challenges WHERE id = ?')
+        .bind(begin.body.challengeId).first();
+      assert.equal(persisted.challenge, begin.body.options.challenge);
+    } finally {
+      db.batch = originalBatch;
+      db.prepare = originalPrepare;
+    }
+  });
+
   await t.test('valid assertion signs in and replay is rejected', async () => {
     const options = await request('passkey_login_options');
     assert.equal(options.status, 200, JSON.stringify(options));
@@ -144,6 +208,7 @@ test('Passkey registration and authentication enforce WebAuthn security', { skip
     const login = await request('passkey_login_verify', fields);
     assert.equal(login.status, 200, JSON.stringify(login));
     assert.ok(login.body.token);
+    assert.equal(login.headers.get('Cache-Control'), 'no-store');
     denied(await request('passkey_login_verify', fields));
   });
 
@@ -215,6 +280,29 @@ test('Passkey registration and authentication enforce WebAuthn security', { skip
     const list = await request('passkey_list', {}, { authenticated: true });
     assert.equal(list.status, 200, JSON.stringify(list));
     assert.equal(list.body.credentials.length, 2);
+    for (const credential of list.body.credentials) {
+      assert.deepEqual(Object.keys(credential).sort(), ['created_at', 'id', 'last_used_at', 'name']);
+    }
+  });
+
+  await t.test('synced passkeys with a zero signature counter can authenticate repeatedly', async () => {
+    for (let index = 0; index < 2; index++) {
+      const begin = await request('passkey_login_options');
+      const login = await request('passkey_login_verify', {
+        challengeId: begin.body.challengeId,
+        credential: backup.assertion({ challenge: begin.body.options.challenge, counter: 0 })
+      });
+      assert.equal(login.status, 200, JSON.stringify(login));
+      assert.ok(login.body.token);
+    }
+  });
+
+  await t.test('a nonzero signature counter cannot move backwards', async () => {
+    const begin = await request('passkey_login_options');
+    denied(await request('passkey_login_verify', {
+      challengeId: begin.body.challengeId,
+      credential: auth.assertion({ challenge: begin.body.options.challenge, counter: 1 })
+    }));
   });
 
   await t.test('deleting a credential requires the current password', async () => {

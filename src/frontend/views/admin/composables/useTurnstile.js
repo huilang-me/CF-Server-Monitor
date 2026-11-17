@@ -16,6 +16,7 @@ export function useTurnstile() {
   const turnstileToken = ref('')
   const turnstileVerified = ref(false)
   let widgetId = null
+  let configRequestVersion = 0
 
   const removeTurnstile = (containerSelector) => {
     if (typeof window !== 'undefined' && window.turnstile && widgetId) {
@@ -80,6 +81,7 @@ export function useTurnstile() {
   }
 
   const loadTurnstileConfig = async (selectedApiIndex, _isMultipleMode, loginError) => {
+    const version = ++configRequestVersion
     try {
       turnstileEnabled.value = false
       turnstileLoginEnabled.value = false
@@ -90,13 +92,20 @@ export function useTurnstile() {
       removeTurnstile('#admin-turnstile-container')
 
       const result = await fetchTurnstileConfigByIndex(selectedApiIndex)
+      if (version !== configRequestVersion) return false
       if (!result.error) {
         await applyTurnstileConfig(result.data)
       }
+      if (version !== configRequestVersion) return false
       turnstileToken.value = getTurnstileToken()
+      const config = result.data
+      return !result.error && !!config && ['turnstile_enabled', 'turnstile_login_enabled']
+        .every(key => [true, false, 'true', 'false'].includes(config[key]))
     } catch (e) {
+      if (version !== configRequestVersion) return false
       turnstileToken.value = getTurnstileToken()
       console.error('Failed to load Turnstile config:', e)
+      return false
     }
   }
 

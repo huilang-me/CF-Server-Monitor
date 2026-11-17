@@ -2,6 +2,12 @@
 
 本目录包含用于本地测试聚合功能的完整工具，可以无需部署到 Cloudflare 就验证效果。
 
+## 自动化测试
+
+使用 Node.js 22.5 或更高版本执行 `npm test`，可运行包括 Passkey 在内的完整默认测试集。Passkey 安全测试使用 Node 内置 SQLite 和软件验证器生成真实 WebAuthn 注册响应及签名；在较早 Node 版本上，该组安全测试会明确标记为跳过。
+
+`npm run test:all` 还会运行 Agent 配置和历史查询测试。自动化测试不替代 iCloud 钥匙串、Windows Hello 和实体 FIDO2 密钥的设备验证。
+
 ## 快速开始
 
 ### 方式一：使用 Wrangler 本地模式（推荐）

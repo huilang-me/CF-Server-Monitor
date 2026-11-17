@@ -20,14 +20,21 @@ export async function createPasskeyTestDb() {
         async run() {
           const result = sqlite.prepare(sql).run(...params);
           return { success: true, meta: { changes: Number(result.changes), last_row_id: Number(result.lastInsertRowid) } };
+        },
+        executeBatch() {
+          const results = sqlite.prepare(sql).all(...params).map(row => ({ ...row }));
+          const changes = /^\s*(SELECT|PRAGMA|EXPLAIN)\b/i.test(sql)
+            ? 0 : Number(sqlite.prepare('SELECT changes() AS count').get().count);
+          return { success: true, results, meta: { changes } };
         }
       };
     },
     async batch(statements) {
       sqlite.exec('BEGIN');
       try {
-        const results = [];
-        for (const statement of statements) results.push(await statement.run());
+        // D1 batches return rows for SELECT/RETURNING statements as well as
+        // write metadata, and execute without interleaving another batch.
+        const results = statements.map(statement => statement.executeBatch());
         sqlite.exec('COMMIT');
         return results;
       } catch (error) {

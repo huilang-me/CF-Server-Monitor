@@ -1,6 +1,6 @@
 export default {
-  passkeyAddSecurityKey: "物理セキュリティキーを追加",
-  passkeySecurityKeyHint: "YubiKeyなどのFIDO2キーにはPINを設定してください。iPhoneではセキュリティキーを選択し、案内に従って接続またはタッチしてください。",
+  passkeyPreparing: 'パスキーを準備中…',
+  passkeyVerifying: 'パスキーを確認中…',
   passkeyPasswordInvalid: "管理者パスワードが正しくありません。",
   passkeyOptionsFailed: "登録を開始できません。接続とログイン状態を確認してください。",
   passkeyVerifyFailed: "ブラウザーから認証情報が返されましたが、サーバーでの検証に失敗しました。",

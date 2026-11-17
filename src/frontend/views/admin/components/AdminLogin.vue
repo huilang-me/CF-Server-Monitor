@@ -9,7 +9,7 @@
       <form @submit.prevent="$emit('login')">
         <div v-if="isMultipleMode" class="login-form-group">
           <label class="login-label">{{ trans.apiEndpoint }}</label>
-          <select :value="selectedApiIndex" class="login-input" @change="$emit('api-index-change', Number($event.target.value))">
+          <select :value="selectedApiIndex" class="login-input" :disabled="loginLoading" @change="$emit('api-index-change', Number($event.target.value))">
             <option
               v-for="(base, index) in apiBases"
               :key="index"
@@ -36,8 +36,8 @@
           <div id="admin-turnstile-container"></div>
         </div>
         <div v-if="loginError" id="login-error" class="login-error">{{ loginError }}</div>
-        <button type="submit" class="login-btn">{{ loginLoading ? '⏳' : trans.login }}</button>
-        <button type="button" class="login-btn passkey-login-btn" :disabled="loginLoading || !passkeyAvailable" @click="$emit('passkey-login')">{{ trans.passkeyLogin }}</button>
+        <button type="submit" class="login-btn" :disabled="loginLoading">{{ loginLoading ? '⏳' : trans.login }}</button>
+        <button type="button" class="login-btn passkey-login-btn" :aria-busy="!!passkeyStatus" :disabled="loginLoading || !passkeyAvailable" @click="$emit('passkey-login')">{{ passkeyStatus === 'preparing' ? trans.passkeyPreparing : passkeyStatus === 'verifying' ? trans.passkeyVerifying : trans.passkeyLogin }}</button>
         <p v-if="!passkeyAvailable" class="passkey-login-hint">{{ trans.passkeySameOrigin }}</p>
       </form>
     </div>
@@ -58,6 +58,7 @@ defineProps({
   loginError: { type: String, default: '' },
   loginLoading: { type: Boolean, default: false },
   passkeyAvailable: { type: Boolean, default: false },
+  passkeyStatus: { type: String, default: '' },
   turnstileSiteKey: { type: String, default: '' },
   turnstileLoginEnabled: { type: Boolean, default: false },
   turnstileEnabled: { type: Boolean, default: false },

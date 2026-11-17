@@ -1,6 +1,6 @@
 export default {
-  passkeyAddSecurityKey: "添加物理安全密钥",
-  passkeySecurityKeyHint: "使用 YubiKey 等 FIDO2 密钥时，请设置安全密钥 PIN；iPhone 上请选择安全密钥并按提示插入或轻触。",
+  passkeyPreparing: '正在准备 Passkey…',
+  passkeyVerifying: '正在验证 Passkey…',
   passkeyPasswordInvalid: "管理员密码不正确。",
   passkeyOptionsFailed: "无法开始注册，请检查网络和登录状态。",
   passkeyVerifyFailed: "浏览器已返回凭证，但服务器验证失败，请重试。",
@@ -17,7 +17,7 @@ export default {
   passkeyPassword: '当前管理员密码',
   passkeyPasswordHint: '添加或删除通行密钥前，请输入当前管理员密码。',
   passkeyPasswordRequired: '请先输入当前管理员密码。',
-  passkeyAdd: '添加通行密钥',
+  passkeyAdd: '添加 Passkey',
   passkeyDelete: '删除',
   passkeyDeleteConfirm: '确定删除此通行密钥？',
   passkeyAdded: '通行密钥已添加。',

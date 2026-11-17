@@ -1,6 +1,6 @@
 export default {
-  passkeyAddSecurityKey: "Add security key",
-  passkeySecurityKeyHint: "For a FIDO2 key such as YubiKey, set a security key PIN. On iPhone, choose security key and insert or tap it when prompted.",
+  passkeyPreparing: 'Preparing passkey…',
+  passkeyVerifying: 'Verifying passkey…',
   passkeyPasswordInvalid: "Incorrect administrator password.",
   passkeyOptionsFailed: "Could not start registration. Check your connection and login.",
   passkeyVerifyFailed: "The browser returned a credential, but server verification failed. Try again.",

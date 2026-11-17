@@ -122,11 +122,17 @@ export async function generateToken(env, sys) {
   return signJwt(payload, secret);
 }
 
-export async function checkAuth(request, env, sys) {
-  if (await verifyToken(extractBearerToken(request), env, sys)) {
-    return true;
+// Return the credential that actually authenticated the request so sensitive
+// multi-step operations can bind to the same session across Cookie/Bearer use.
+export async function getAuthenticatedToken(request, env, sys) {
+  for (const token of [extractBearerToken(request), getCookieValue(request, AUTH_COOKIE_NAME)]) {
+    if (await verifyToken(token, env, sys)) return token;
   }
-  return verifyToken(getCookieValue(request, AUTH_COOKIE_NAME), env, sys);
+  return '';
+}
+
+export async function checkAuth(request, env, sys) {
+  return Boolean(await getAuthenticatedToken(request, env, sys));
 }
 
 export async function checkWebSocketAuth(request, env, sys) {
