@@ -1,4 +1,6 @@
 export default {
+  passkeyRateLimited: 'Trop de tentatives. Patientez avant de réessayer.',
+  passkeyBrowserPrompt: 'En attente d’une interaction dans le navigateur…',
   passkeyPreparing: 'Préparation de la clé d’accès…',
   passkeyVerifying: 'Vérification de la clé d’accès…',
   passkeyPasswordInvalid: "Mot de passe administrateur incorrect.",

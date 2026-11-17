@@ -37,7 +37,8 @@
         </div>
         <div v-if="loginError" id="login-error" class="login-error">{{ loginError }}</div>
         <button type="submit" class="login-btn" :disabled="loginLoading">{{ loginLoading ? '⏳' : trans.login }}</button>
-        <button type="button" class="login-btn passkey-login-btn" :aria-busy="!!passkeyStatus" :disabled="loginLoading || !passkeyAvailable" @click="$emit('passkey-login')">{{ passkeyStatus === 'preparing' ? trans.passkeyPreparing : passkeyStatus === 'verifying' ? trans.passkeyVerifying : trans.passkeyLogin }}</button>
+        <button type="button" class="login-btn passkey-login-btn" :aria-busy="!!passkeyStatus" :disabled="loginLoading || !passkeyAvailable" @click="$emit('passkey-login')">{{ passkeyStatus === 'preparing' ? trans.passkeyPreparing : passkeyStatus ? trans.passkeyVerifying : trans.passkeyLogin }}</button>
+        <p v-if="passkeyStatus === 'browser'" class="passkey-login-hint" role="status" aria-live="polite">{{ trans.passkeyBrowserPrompt }}</p>
         <p v-if="!passkeyAvailable" class="passkey-login-hint">{{ trans.passkeySameOrigin }}</p>
       </form>
     </div>

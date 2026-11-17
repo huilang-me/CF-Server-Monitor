@@ -1,4 +1,6 @@
 export default {
+  passkeyRateLimited: 'Too many attempts. Please wait and try again.',
+  passkeyBrowserPrompt: 'Waiting for browser interaction…',
   passkeyPreparing: 'Preparing passkey…',
   passkeyVerifying: 'Verifying passkey…',
   passkeyPasswordInvalid: "Incorrect administrator password.",

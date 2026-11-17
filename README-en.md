@@ -447,7 +447,7 @@ Use the Worker's own HTTPS admin URL to register and sign in. Passkeys are bound
 
 Adding or deleting a passkey requires an authenticated admin session and the current password. Select **Add Passkey**, then choose your device or security key in the system prompt. The server stores public keys, never private keys. Keep a strong independent admin password and at least one backup credential.
 
-Login challenges are stored briefly in D1. Enable login Turnstile and, where appropriate, Cloudflare security rules or rate limiting on `/admin/api` to reduce abuse and quota consumption.
+Login challenges are stored briefly in D1. Each source IP can create up to five login challenges per minute, and up to 100 unexpired login challenges can exist at once. Clients sharing an IP share the per-source limit. Retry later if a limit is reached. Enable login Turnstile and, where appropriate, Cloudflare security rules or rate limiting on `/admin/api` for additional protection against abuse and quota consumption.
 
 ### Turnstile
 

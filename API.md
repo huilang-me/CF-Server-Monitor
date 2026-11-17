@@ -1171,6 +1171,8 @@ https://github.com/<owner>/<theme-repo>/tree/<commit-or-branch>[/theme-subdir]
 
 挑战有效期为 5 分钟，只能使用一次。注册和登录均要求验证器完成用户验证，例如设备 PIN 或生物识别；后端保存公钥，不保存私钥。认证选项与响应应交由 WebAuthn 客户端处理。
 
+`passkey_login_options` 的挑战创建限制为每个来源在每个固定分钟最多 5 次，且最多保留 100 个未过期的登录挑战；超限返回 HTTP 429 和 `Retry-After`。来源使用 Cloudflare 提供的 `CF-Connecting-IP`，缺失时共用一个来源桶；共享 IP 也会共用限额。统计与挑战消费相互独立，验证失败或消费挑战不会重置限额。边缘限流和 Turnstile 可进一步限制到达 Worker 的恶意请求。
+
 ***
 
 ### 3.2 `action: login` - 登录

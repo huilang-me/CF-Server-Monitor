@@ -18,7 +18,7 @@ test('concurrent requests do not share pending database initialization I/O', asy
       };
     },
     async batch(statements) {
-      assert.equal(statements.length, 2, 'both schema statements share one D1 round trip');
+      assert.equal(statements.length, 6, 'schema and indexes share one D1 round trip');
       started++;
       await gate;
       return statements.map(() => ({ success: true }));

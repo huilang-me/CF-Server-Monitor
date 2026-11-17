@@ -1,4 +1,6 @@
 export default {
+  passkeyRateLimited: 'Terlalu banyak percobaan. Tunggu sebentar dan coba lagi.',
+  passkeyBrowserPrompt: 'Menunggu interaksi di browser…',
   passkeyPreparing: 'Menyiapkan passkey…',
   passkeyVerifying: 'Memverifikasi passkey…',
   passkeyPasswordInvalid: "Kata sandi administrator salah.",

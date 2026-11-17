@@ -1,4 +1,6 @@
 export default {
+  passkeyRateLimited: '尝试次数过多，请稍后再试。',
+  passkeyBrowserPrompt: '等待浏览器交互，请在弹窗中完成验证…',
   passkeyPreparing: '正在准备 Passkey…',
   passkeyVerifying: '正在验证 Passkey…',
   passkeyPasswordInvalid: "管理员密码不正确。",

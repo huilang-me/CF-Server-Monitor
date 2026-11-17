@@ -26,6 +26,11 @@ export function passkeyOrigin(request) {
 
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const CEREMONY_TIMEOUT_MS = 60000;
+// Per-source limits are shared across Worker instances through D1.
+export const LOGIN_CHALLENGE_IP_RATE_LIMIT = 5;
+export const LOGIN_CHALLENGE_WINDOW_MS = 60_000;
+export const LOGIN_CHALLENGE_CAPACITY = 100;
+const EXPIRED_CHALLENGE_CLEANUP_LIMIT = 100;
 const toB64 = bytes => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const fromB64 = value => Uint8Array.from(atob(value.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
 
@@ -62,8 +67,44 @@ async function ensureTables(db) {
       session_hash TEXT NOT NULL,
       expires_at INTEGER NOT NULL
     )
+  `), db.prepare(`
+    CREATE INDEX IF NOT EXISTS idx_passkey_challenges_expires_at
+    ON passkey_challenges(expires_at)
+  `), db.prepare(`
+    CREATE INDEX IF NOT EXISTS idx_passkey_login_challenges_expires_at
+    ON passkey_challenges(expires_at) WHERE kind = 'login'
+  `), db.prepare(`
+    CREATE TABLE IF NOT EXISTS passkey_login_rate (
+      scope TEXT PRIMARY KEY,
+      window_start INTEGER NOT NULL,
+      issued INTEGER NOT NULL
+    )
+  `), db.prepare(`
+    CREATE INDEX IF NOT EXISTS idx_passkey_login_rate_window
+    ON passkey_login_rate(window_start)
   `)]);
   initializedDatabases.add(db);
+}
+
+async function loginRateScope(request, env, windowStart) {
+  // CF-Connecting-IP is set by the Cloudflare edge; it can be shared or
+  // altered by Worker subrequests, so it is not a guarantee against
+  // distributed or same-zone Worker traffic.
+  const candidate = (request.headers.get('CF-Connecting-IP') || '').trim();
+  let ip = 'unknown';
+  if (candidate.length <= 45 && /^[0-9a-fA-F:.]+$/.test(candidate)) {
+    if (candidate.includes(':')) {
+      try { ip = new URL(`http://[${candidate}]/`).hostname.slice(1, -1); } catch (_) { /* malformed IPv6 */ }
+    } else {
+      const parts = candidate.split('.');
+      if (parts.length === 4 && parts.every(part => /^\d{1,3}$/.test(part) && Number(part) <= 255)) {
+        ip = parts.map(Number).join('.');
+      }
+    }
+  }
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(env.API_SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const digest = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${windowStart}:${ip}`));
+  return `ip:${toB64(new Uint8Array(digest))}`;
 }
 
 function adminUsername(env, sys) {
@@ -85,13 +126,22 @@ function prepareChallenge(db, challenge, kind, origin, session = '') {
   return {
     id,
     statements: [
-      db.prepare('DELETE FROM passkey_challenges WHERE expires_at < ?').bind(now),
+      cleanupExpiredChallenges(db, now),
       db.prepare(`
         INSERT INTO passkey_challenges (id, challenge, kind, origin, session_hash, expires_at)
         VALUES (?, ?, ?, ?, ?, ?)
       `).bind(id, challenge, kind, origin, session, now + CHALLENGE_TTL_MS)
     ]
   };
+}
+
+function cleanupExpiredChallenges(db, now) {
+  // Bound work per request even on installations with a large old backlog.
+  return db.prepare(`
+    DELETE FROM passkey_challenges WHERE id IN (
+      SELECT id FROM passkey_challenges WHERE expires_at < ? LIMIT ?
+    )
+  `).bind(now, EXPIRED_CHALLENGE_CLEANUP_LIMIT);
 }
 
 async function saveChallenge(db, options, kind, origin, session = '') {
@@ -154,14 +204,41 @@ async function dispatchPasskeyAction({ request, env, sys, data }) {
     // Prepare a fresh challenge locally, then persist it and fetch the allowed
     // credentials in one D1 round trip before opening the device prompt.
     const challenge = crypto.getRandomValues(new Uint8Array(32));
-    const { id, statements } = prepareChallenge(db, toB64(challenge), 'login', origin);
-    const results = await db.batch([...statements, credentialDescriptorsQuery(db, rpID)]);
+    const now = Date.now();
+    const windowStart = Math.floor(now / LOGIN_CHALLENGE_WINDOW_MS) * LOGIN_CHALLENGE_WINDOW_MS;
+    const id = toB64(crypto.getRandomValues(new Uint8Array(32)));
+    const ipScope = await loginRateScope(request, env, windowStart);
+    // D1 batches execute transactionally. The conditional insert and the
+    // counter update must stay together so concurrent requests cannot exceed
+    // the limits. The counter remains after a challenge is consumed.
+    const results = await db.batch([
+      cleanupExpiredChallenges(db, now),
+      db.prepare('DELETE FROM passkey_login_rate WHERE window_start < ?').bind(windowStart - LOGIN_CHALLENGE_WINDOW_MS),
+      db.prepare(`
+        INSERT INTO passkey_challenges (id, challenge, kind, origin, session_hash, expires_at)
+        SELECT ?, ?, 'login', ?, '', ?
+        WHERE (SELECT COUNT(*) FROM passkey_challenges WHERE kind = 'login' AND expires_at >= ?) < ?
+          AND COALESCE((SELECT issued FROM passkey_login_rate WHERE scope = ? AND window_start = ?), 0) < ?
+      `).bind(id, toB64(challenge), origin, now + CHALLENGE_TTL_MS, now, LOGIN_CHALLENGE_CAPACITY, ipScope, windowStart, LOGIN_CHALLENGE_IP_RATE_LIMIT),
+      db.prepare(`
+        INSERT INTO passkey_login_rate (scope, window_start, issued)
+        SELECT ?, ?, 1 WHERE EXISTS (SELECT 1 FROM passkey_challenges WHERE id = ?)
+        ON CONFLICT(scope) DO UPDATE SET issued = issued + 1
+      `).bind(ipScope, windowStart, id),
+      credentialDescriptorsQuery(db, rpID)
+    ]);
+    if (!results[2].meta?.changes) {
+      return new Response(JSON.stringify({ error: 'passkeyRateLimited', code: 429 }), {
+        status: 429,
+        headers: { 'Content-Type': 'application/json', 'Retry-After': '60' }
+      });
+    }
     const options = await generateAuthenticationOptions({
       rpID,
       challenge,
       userVerification: 'required',
       timeout: CEREMONY_TIMEOUT_MS,
-      allowCredentials: credentialDescriptorsFromResult(results[2])
+      allowCredentials: credentialDescriptorsFromResult(results[4])
     });
     return createSuccessResponse({ options, challengeId: id });
   }

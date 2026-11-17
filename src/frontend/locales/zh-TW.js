@@ -1,4 +1,6 @@
 export default {
+  passkeyRateLimited: '嘗試次數過多，請稍後再試。',
+  passkeyBrowserPrompt: '等待瀏覽器互動，請在彈出視窗中完成驗證…',
   passkeyPreparing: '正在準備 Passkey…',
   passkeyVerifying: '正在驗證 Passkey…',
   passkeyPasswordInvalid: "管理員密碼不正確。",

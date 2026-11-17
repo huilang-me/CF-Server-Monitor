@@ -1,4 +1,6 @@
 export default {
+  passkeyRateLimited: '試行回数が多すぎます。しばらくしてからもう一度お試しください。',
+  passkeyBrowserPrompt: 'ブラウザーの画面で認証を完了してください…',
   passkeyPreparing: 'パスキーを準備中…',
   passkeyVerifying: 'パスキーを確認中…',
   passkeyPasswordInvalid: "管理者パスワードが正しくありません。",

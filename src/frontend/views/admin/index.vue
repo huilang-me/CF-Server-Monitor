@@ -1068,6 +1068,7 @@ const fetchPasskeyLoginOptions = async (apiIndex, includeTurnstile = true) => {
   const result = await http.postByIndex('/admin/api', { action: 'passkey_login_options' }, apiIndex, {
     autoRedirect: false, includeAuth: false, includeTurnstile, includeTurnstileVerified: false, timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS
   })
+  if (result.status === 429) throw new Error('passkeyRateLimited')
   if (result.error || !result.data?.options || !result.data?.challengeId) throw new Error(result.error || 'options')
   return result.data
 }
@@ -1369,11 +1370,12 @@ const handlePasskeyLogin = async () => {
     }
     if (context !== passkeyLoginContext) return
     if (!prepared) throw new Error('options')
-    passkeyLoginStage.value = 'verifying'
+    passkeyLoginStage.value = 'browser'
     passkeyPromptActive = true
     const credential = await startAuthentication({ optionsJSON: prepared.options })
     if (context !== passkeyLoginContext) return
     passkeyPromptActive = false
+    passkeyLoginStage.value = 'verifying'
     const result = await http.postByIndex('/admin/api', {
       action: 'passkey_login_verify', challengeId: prepared.challengeId, credential
     }, apiIndex, { autoRedirect: false, timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS })
@@ -1381,9 +1383,9 @@ const handlePasskeyLogin = async () => {
     if (result.error || !result.data?.token) throw new Error(result.error || 'authentication')
     localStorage.setItem(STORAGE.JWT_TOKEN, result.data.token)
     await completeLogin()
-  } catch (_) {
+  } catch (error) {
     if (context !== passkeyLoginContext) return
-    loginError.value = trans.value.passkeyFailed
+    loginError.value = error?.message === 'passkeyRateLimited' ? trans.value.passkeyRateLimited : trans.value.passkeyFailed
     clearTurnstile()
     resetTurnstile('#admin-turnstile-container')
   } finally {

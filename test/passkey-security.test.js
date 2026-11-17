@@ -16,12 +16,13 @@ test('Passkey registration and authentication enforce WebAuthn security', { skip
   const token = await generateToken(env, sys);
   const auth = createAuthenticator();
   const backup = createAuthenticator();
+  let requestNumber = 0;
 
   async function request(action, fields = {}, { authenticated = false, authToken = token, origin = 'https://example.com', url = 'https://example.com/admin/api', headers = {} } = {}) {
     const request = new Request(url, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json', Origin: origin,
+        'Content-Type': 'application/json', Origin: origin, 'CF-Connecting-IP': `198.51.100.${++requestNumber}`,
         ...(authenticated ? { Authorization: `Bearer ${authToken}` } : {}), ...headers
       },
       body: JSON.stringify({ action, ...fields })
@@ -170,7 +171,6 @@ test('Passkey registration and authentication enforce WebAuthn security', { skip
     let directQueries = 0;
     db.batch = async function(statements) {
       batches++;
-      assert.equal(statements.length, 3);
       return originalBatch.call(this, statements);
     };
     db.prepare = function(sql) {

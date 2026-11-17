@@ -1,4 +1,6 @@
 export default {
+  passkeyRateLimited: 'Demasiados intentos. Espera un momento y vuelve a intentarlo.',
+  passkeyBrowserPrompt: 'Esperando la interacción en el navegador…',
   passkeyPreparing: 'Preparando clave de acceso…',
   passkeyVerifying: 'Verificando clave de acceso…',
   passkeyPasswordInvalid: "Contraseña de administrador incorrecta.",
