@@ -41,7 +41,7 @@ const renderMikusStartupLoading = (siteTitle) => {
   const loading = document.getElementById('loading')
   if (!loading || loading.dataset.mikusRendered === '1') return
 
-  const title = escapeHtml(String(siteTitle || 'Komari').trim() || 'Komari')
+  const title = escapeHtml(String(siteTitle || 'CF Server Monitor').trim() || 'CF Server Monitor')
   const loliUrl = getMikusAssetUrl('loli.gif')
   const logoUrl = getMikusAssetUrl('miku.png')
   loading.dataset.mikusRendered = '1'

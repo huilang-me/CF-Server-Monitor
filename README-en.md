@@ -333,6 +333,14 @@ If the site is not public, or the widget should show hidden servers, put the adm
 
 To watch several servers at once, use [scripts/ios-scriptable-widget-multi.js](scripts/ios-scriptable-widget-multi.js): leave the Parameter empty to show all public servers, set `server-a,server-b` to show only those, or set a single server to get the detail view (with three-net latency bars). Servers are paged automatically (1 per page on small/medium widgets, 2 per page on large ones), and `page:2` (also `p2`, `2`, or `第2页`) selects a page for smart stacks. It requests `/api/servers` (the full list), so it costs more D1 reads than the single-server widget when you have many servers.
 
+### Third-party App
+
+A community-developed third-party mobile app is available for Android and iOS:
+
+- Project URL: <https://github.com/chaos-zhu/cf_monitor_app>
+
+> **Third-party risk notice**: This app is maintained by a third-party developer and is not an official part of this project. The maintainers of this project are not responsible for its code, security, or data behavior.
+
 ## Notifications and Alerts
 
 Configure notifications in Admin -> Global Settings -> Notifications. Notification delivery has three channel modes: built-in channels, SMTP email, and custom Webhook. When custom Webhook is selected, the backend sends only the Webhook request and does not call the built-in channel.

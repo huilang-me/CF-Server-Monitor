@@ -332,6 +332,14 @@ npm run build:github-page
 
 需要一次看多台时用 [scripts/ios-scriptable-widget-multi.js](scripts/ios-scriptable-widget-multi.js)：Parameter 留空显示面板上所有公开服务器，填 `server-a,server-b` 只显示这几台，只填一台时显示详细视图（带三网延迟柱状图）。服务器会自动分页（小、中尺寸每页 1 台，大尺寸每页 2 台），Parameter 填 `page:2`（也支持 `p2`、`2`、`第2页`）可指定页码，适合智能叠放。它请求的是 `/api/servers`（全站列表），服务器较多时会比单机版产生更多 D1 查询。
 
+### 第三方 App
+
+社区开发者提供了第三方移动端 App，支持 Android 和 iOS：
+
+- 项目地址：<https://github.com/chaos-zhu/cf_monitor_app>
+
+> **第三方风险提醒**：该 App 由第三方开发者维护，并非本项目官方出品，本项目维护者不对其代码、安全性和数据行为负责。
+
 ## 通知与告警
 
 在管理后台 -> 全局设置 -> 通知 中配置。通知分为“内置渠道”、“SMTP 邮件”和“自定义 Webhook”三种渠道；选择自定义 Webhook 后，后端只会发送 Webhook，不会再调用内置渠道。
