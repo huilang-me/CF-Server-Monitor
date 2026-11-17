@@ -116,7 +116,17 @@ export async function handlePasskeyAction({ request, env, sys, data }) {
   if (data.action === 'passkey_register_options') {
     if (!await verifyCurrentPassword(data, env, sys)) return createBadRequestResponse('invalidCredentials');
     const rows = await credentialsForRp(db, rpID);
-    const options = await generateRegistrationOptions({ rpName: 'CF Server Monitor', rpID, userID: new TextEncoder().encode('cfsm-admin'), userName: sys?.username || env.API_USER_NAME || 'admin', timeout: 60000, attestationType: 'none', authenticatorSelection: { residentKey: 'preferred', userVerification: 'required' }, excludeCredentials: rows.map(row => ({ id: row.id, transports: JSON.parse(row.transports) })) });
+    const userName = sys?.username || env.API_USER_NAME || 'admin';
+    const options = await generateRegistrationOptions({
+      rpName: 'CF Server Monitor', rpID, userID: new TextEncoder().encode('cfsm-admin'),
+      userName, userDisplayName: userName,
+      timeout: 60000, attestationType: 'none',
+      authenticatorSelection: { residentKey: 'preferred', userVerification: 'required' },
+      // Give iOS an explicit external-key path, without restricting normal
+      // iCloud/Windows Hello registrations to an external authenticator.
+      ...(data.authenticatorType === 'security-key' ? { preferredAuthenticatorType: 'securityKey' } : {}),
+      excludeCredentials: rows.map(row => ({ id: row.id, transports: JSON.parse(row.transports) }))
+    });
     return createSuccessResponse({ options, challengeId: await saveChallenge(db, options, 'register', origin, await sessionHash(request)) });
   }
 

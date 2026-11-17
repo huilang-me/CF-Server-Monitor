@@ -1,4 +1,12 @@
 export default {
+  passkeyAddSecurityKey: "Add security key",
+  passkeySecurityKeyHint: "For a FIDO2 key such as YubiKey, set a security key PIN. On iPhone, choose security key and insert or tap it when prompted.",
+  passkeyPasswordInvalid: "Incorrect administrator password.",
+  passkeyOptionsFailed: "Could not start registration. Check your connection and login.",
+  passkeyVerifyFailed: "The browser returned a credential, but server verification failed. Try again.",
+  passkeyAlreadyRegistered: "This security key is already registered for this site.",
+  passkeyUserVerificationRequired: "The security key must support user verification. Set its FIDO2 PIN and try again.",
+  passkeyDeviceFailed: "Verification did not complete: it may have been cancelled, timed out, or the key did not meet the requirements. Check the connection and PIN.",
   passkeyLogin: 'Sign in with a passkey',
   passkeyTitle: 'Passkeys',
   passkeyDescription: 'Use a security key, iCloud Keychain or Windows Hello. Add a backup key to avoid losing access.',

@@ -1162,7 +1162,7 @@ https://github.com/<owner>/<theme-repo>/tree/<commit-or-branch>[/theme-subdir]
 
 | action | 身份要求 | 主要字段及结果 |
 | --- | --- | --- |
-| `passkey_register_options` | 管理员会话和当前密码 | 请求 `password`；返回 `options`、`challengeId` |
+| `passkey_register_options` | 管理员会话和当前密码 | 请求 `password`；可选 `authenticatorType: "security-key"` 优先选择外接安全密钥；返回 `options`、`challengeId` |
 | `passkey_register_verify` | 与发起注册相同的管理员会话 | 请求 `challengeId`、WebAuthn `credential`，可选 `name` |
 | `passkey_list` | 管理员会话 | 返回当前域名的 `credentials` 列表 |
 | `passkey_delete` | 管理员会话和当前密码 | 请求 `id`、`password` |

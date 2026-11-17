@@ -1,4 +1,12 @@
 export default {
+  passkeyAddSecurityKey: "Tambah kunci fisik",
+  passkeySecurityKeyHint: "Untuk kunci FIDO2 seperti YubiKey, atur PIN kunci. Di iPhone, pilih kunci keamanan lalu sambungkan atau tempelkan saat diminta.",
+  passkeyPasswordInvalid: "Kata sandi administrator salah.",
+  passkeyOptionsFailed: "Tidak dapat memulai pendaftaran. Periksa koneksi dan sesi masuk.",
+  passkeyVerifyFailed: "Browser mengembalikan kredensial, tetapi verifikasi server gagal.",
+  passkeyAlreadyRegistered: "Kunci keamanan ini sudah terdaftar di situs ini.",
+  passkeyUserVerificationRequired: "Kunci harus mendukung verifikasi pengguna. Atur PIN FIDO2 lalu coba lagi.",
+  passkeyDeviceFailed: "Verifikasi tidak selesai: mungkin dibatalkan, habis waktu, atau kunci tidak memenuhi persyaratan. Periksa koneksi dan PIN.",
   passkeyLogin: 'Masuk dengan passkey',
   passkeyTitle: 'Passkey',
   passkeyDescription: 'Gunakan kunci keamanan, Rantai Kunci iCloud, atau Windows Hello. Tambahkan kunci cadangan.',

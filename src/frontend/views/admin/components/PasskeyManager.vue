@@ -20,7 +20,11 @@
         <input id="passkey-password" v-model="password" class="form-input" type="password" autocomplete="current-password" :placeholder="trans.passkeyPassword">
       </div>
       <p class="passkey-hint">{{ trans.passkeyPasswordHint }}</p>
-      <button type="button" class="btn btn-primary" :disabled="busy || !password" @click="add">{{ busy ? '⏳' : '+' }} {{ trans.passkeyAdd }}</button>
+      <div class="passkey-actions">
+        <button type="button" class="btn btn-primary" :disabled="busy || !password" @click="add()">{{ busy ? '⏳' : '+' }} {{ trans.passkeyAdd }}</button>
+        <button type="button" class="btn" :disabled="busy || !password" @click="add('security-key')">{{ trans.passkeyAddSecurityKey }}</button>
+      </div>
+      <p class="passkey-hint">{{ trans.passkeySecurityKeyHint }}</p>
       <p v-if="message" role="status" class="passkey-message">{{ message }}</p>
     </template>
   </div>
@@ -30,6 +34,7 @@
 import { ref, watch } from 'vue'
 import { startRegistration } from '@simplewebauthn/browser'
 import { http } from '../../../utils/http.js'
+import { passkeyErrorKey } from '../../../utils/passkeyErrors.js'
 
 const props = defineProps({
   trans: { type: Object, required: true },
@@ -74,24 +79,29 @@ watch(() => [props.active, props.available, props.apiIndex], () => {
   load()
 }, { immediate: true })
 
-const add = async () => {
+const add = async (authenticatorType = '') => {
   if (busy.value || !password.value || !props.available) return
   busy.value = true
   message.value = ''
   const index = props.apiIndex
+  let stage = 'options'
   try {
-    const result = await request({ action: 'passkey_register_options', password: password.value }, index)
+    const data = { action: 'passkey_register_options', password: password.value }
+    if (authenticatorType === 'security-key') data.authenticatorType = authenticatorType
+    const result = await request(data, index)
     password.value = ''
     if (result.error || !result.data?.options || !result.data?.challengeId) throw new Error(result.error || 'options')
+    stage = 'device'
     const credential = await startRegistration({ optionsJSON: result.data.options })
     if (index !== props.apiIndex || !props.available) throw new Error('siteChanged')
+    stage = 'verify'
     const verified = await request({ action: 'passkey_register_verify', challengeId: result.data.challengeId, credential, name: name.value }, index)
     if (verified.error) throw new Error(verified.error)
     name.value = ''
     await load()
     message.value = props.trans.passkeyAdded
-  } catch (_) {
-    message.value = props.trans.passkeyFailed
+  } catch (error) {
+    message.value = props.trans[passkeyErrorKey(error, stage)] || props.trans.passkeyFailed
   } finally {
     password.value = ''
     busy.value = false
@@ -123,6 +133,7 @@ const remove = async (key) => {
 
 <style scoped>
 .passkey-hint { margin: 0 0 12px; font-size: 0.86em; opacity: 0.75; line-height: 1.5; }
+.passkey-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
 .passkey-list { list-style: none; padding: 0; margin: 0 0 16px; }
 .passkey-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border-color, #444); }
 .passkey-row small { display: block; opacity: 0.7; margin-top: 3px; }

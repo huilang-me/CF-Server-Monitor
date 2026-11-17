@@ -1,4 +1,12 @@
 export default {
+  passkeyAddSecurityKey: "Añadir llave física",
+  passkeySecurityKeyHint: "Para una llave FIDO2 como YubiKey, configura su PIN. En iPhone, selecciona la llave y conéctala o acércala cuando se indique.",
+  passkeyPasswordInvalid: "Contraseña de administrador incorrecta.",
+  passkeyOptionsFailed: "No se pudo iniciar el registro. Comprueba la conexión y la sesión.",
+  passkeyVerifyFailed: "El navegador devolvió una credencial, pero el servidor no pudo verificarla.",
+  passkeyAlreadyRegistered: "Esta llave ya está registrada en este sitio.",
+  passkeyUserVerificationRequired: "La llave debe admitir verificación de usuario. Configura su PIN FIDO2 e inténtalo de nuevo.",
+  passkeyDeviceFailed: "La verificación no terminó: pudo cancelarse, agotar el tiempo o no cumplir los requisitos. Comprueba la conexión y el PIN.",
   passkeyLogin: 'Iniciar sesión con una clave de acceso',
   passkeyTitle: 'Claves de acceso',
   passkeyDescription: 'Usa una llave de seguridad, el llavero de iCloud o Windows Hello. Añade una clave de respaldo.',

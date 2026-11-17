@@ -1,4 +1,12 @@
 export default {
+  passkeyAddSecurityKey: "新增實體安全金鑰",
+  passkeySecurityKeyHint: "使用 YubiKey 等 FIDO2 金鑰時，請設定安全金鑰 PIN；在 iPhone 選擇安全金鑰並依提示插入或輕觸。",
+  passkeyPasswordInvalid: "管理員密碼不正確。",
+  passkeyOptionsFailed: "無法開始註冊，請檢查網路和登入狀態。",
+  passkeyVerifyFailed: "瀏覽器已返回憑證，但伺服器驗證失敗，請重試。",
+  passkeyAlreadyRegistered: "此安全金鑰已綁定目前網站。",
+  passkeyUserVerificationRequired: "安全金鑰需支援使用者驗證，請先設定 FIDO2 PIN 後重試。",
+  passkeyDeviceFailed: "驗證未完成：可能已取消、逾時或金鑰不符合要求。請檢查連線、PIN 並重試。",
   passkeyLogin: '使用 Passkey 登入',
   passkeyTitle: 'Passkey 通行密鑰',
   passkeyDescription: '支援安全金鑰、iCloud 鑰匙圈及 Windows Hello。建議新增備用金鑰，以免無法登入。',

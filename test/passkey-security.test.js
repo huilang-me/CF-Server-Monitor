@@ -36,6 +36,21 @@ test('Passkey registration and authentication enforce WebAuthn security', { skip
     denied(await request('passkey_register_options', { password: 'wrong' }, { authenticated: true }));
   });
 
+  await t.test('external security key is selectable without restricting the normal passkey flow', async () => {
+    const normal = await request('passkey_register_options', { password: env.API_SECRET }, { authenticated: true });
+    const external = await request('passkey_register_options', { password: env.API_SECRET, authenticatorType: 'security-key' }, { authenticated: true });
+    assert.equal(normal.status, 200, JSON.stringify(normal));
+    assert.equal(external.status, 200, JSON.stringify(external));
+    assert.equal(normal.body.options.authenticatorSelection.authenticatorAttachment, undefined);
+    assert.equal(external.body.options.authenticatorSelection.authenticatorAttachment, 'cross-platform');
+    assert.ok(external.body.options.hints.includes('security-key'));
+    for (const { body: { options } } of [normal, external]) {
+      assert.equal(options.authenticatorSelection.userVerification, 'required');
+      assert.equal(options.user.name, 'admin');
+      assert.equal(options.user.displayName, options.user.name);
+    }
+  });
+
   await t.test('cross-origin requests cannot start or manage a credential', async () => {
     denied(await request('passkey_register_options', { password: env.API_SECRET }, { authenticated: true, origin: 'https://evil.example' }));
     denied(await request('passkey_login_options', {}, { origin: 'https://evil.example' }));

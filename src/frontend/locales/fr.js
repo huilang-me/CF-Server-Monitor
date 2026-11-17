@@ -1,4 +1,12 @@
 export default {
+  passkeyAddSecurityKey: "Ajouter une clé physique",
+  passkeySecurityKeyHint: "Pour une clé FIDO2 comme YubiKey, définissez son code PIN. Sur iPhone, sélectionnez la clé et insérez-la ou approchez-la lorsque demandé.",
+  passkeyPasswordInvalid: "Mot de passe administrateur incorrect.",
+  passkeyOptionsFailed: "Impossible de commencer l’enregistrement. Vérifiez la connexion et la session.",
+  passkeyVerifyFailed: "Le navigateur a renvoyé un identifiant, mais sa vérification par le serveur a échoué.",
+  passkeyAlreadyRegistered: "Cette clé est déjà enregistrée sur ce site.",
+  passkeyUserVerificationRequired: "La clé doit prendre en charge la vérification de l’utilisateur. Définissez son PIN FIDO2 puis réessayez.",
+  passkeyDeviceFailed: "La vérification n’a pas abouti : elle a pu être annulée, expirer ou la clé ne répond pas aux exigences. Vérifiez la connexion et le PIN.",
   passkeyLogin: 'Se connecter avec une clé d’accès',
   passkeyTitle: 'Clés d’accès',
   passkeyDescription: 'Utilisez une clé de sécurité, le trousseau iCloud ou Windows Hello. Ajoutez une clé de secours.',
