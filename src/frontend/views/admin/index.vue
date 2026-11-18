@@ -10,11 +10,14 @@
       :password-visible="passwordVisible"
       :login-error="loginError"
       :login-loading="loginLoading"
+      :passkey-available="passkeyAvailable"
+      :passkey-status="passkeyLoginStage"
       :turnstile-site-key="turnstileSiteKey"
       :turnstile-login-enabled="turnstileLoginEnabled"
       :turnstile-enabled="turnstileEnabled"
       :turnstile-verified="turnstileVerified"
       @login="handleLogin"
+      @passkey-login="handlePasskeyLogin"
       @toggle-password="togglePassword"
       @api-index-change="handleApiIndexChange"
     />
@@ -143,6 +146,8 @@
           :password-visible="passwordVisible"
           :active-tab="activeTab"
           :selected-api-base="selectedApiBase"
+          :selected-api-index="selectedApiIndex"
+          :passkey-available="passkeyAvailable"
           :current-origin="currentOrigin"
           :saving="saving"
           :change-admin-password="changeAdminPassword"
@@ -595,7 +600,8 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch, nextTick, inject } from 'vue'
+import { ref, computed, onMounted, onScopeDispose, watch, nextTick, inject } from 'vue'
+import { startAuthentication, WebAuthnAbortService } from '@simplewebauthn/browser'
 import { useRoute, useRouter } from 'vue-router'
 import TerminalHeader from '../../components/TerminalHeader.vue'
 import Footer from '../../components/Footer.vue'
@@ -612,6 +618,8 @@ import DeleteServerModal from './components/DeleteServerModal.vue'
 import CopyCommandModal from './components/CopyCommandModal.vue'
 import AutoDiscoveryCommandModal from './components/AutoDiscoveryCommandModal.vue'
 import { adminApi, login, logout as apiLogout, upgradeDatabase, clearHistory, fetchConfig } from '../../utils/api'
+import { http, DEFAULT_REQUEST_TIMEOUT_MS } from '../../utils/http.js'
+import { createPasskeyLoginOptions } from '../../utils/passkeyLogin.js'
 import { hasMultipleApiBases, getApiBases } from '../../utils/config.js'
 import { copyTextToClipboard } from '../../utils/clipboard.js'
 import { normalizeLanguagePreference, normalizeNotificationLanguagePreference, t, useTranslation } from '../../utils/i18n'
@@ -919,6 +927,13 @@ const normalizeApiIndex = (value) => {
 const selectedApiIndex = ref(normalizeApiIndex(route.query.apiIndex))
 const selectedApiBase = computed(() => apiBases[selectedApiIndex.value] || apiBases[0])
 const currentOrigin = computed(() => window.location.origin)
+const passkeyAvailable = computed(() => {
+  try {
+    return window.isSecureContext && !!window.PublicKeyCredential && new URL(selectedApiBase.value, window.location.href).origin === window.location.origin
+  } catch (_) {
+    return false
+  }
+})
 
 const syncApiIndexQuery = () => {
   if (!isMultipleMode.value) return
@@ -1043,6 +1058,37 @@ const {
   hasSharedTurnstileVerified, loadTurnstileConfig: loadTurnstileConfigBase,
   renderTurnstile, resetTurnstile, clearTurnstile
 } = useTurnstile()
+
+const loginConfigReady = ref(false)
+let loginConfigRequestVersion = 0
+const passkeyLoginStage = ref('')
+let passkeyLoginContext = 0
+let passkeyPromptActive = false
+const fetchPasskeyLoginOptions = async (apiIndex, includeTurnstile = true) => {
+  const result = await http.postByIndex('/admin/api', { action: 'passkey_login_options' }, apiIndex, {
+    autoRedirect: false, includeAuth: false, includeTurnstile, includeTurnstileVerified: false, timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS
+  })
+  if (result.status === 429) throw new Error('passkeyRateLimited')
+  if (result.error || !result.data?.options || !result.data?.challengeId) throw new Error(result.error || 'options')
+  return result.data
+}
+const preparedPasskeyOptions = createPasskeyLoginOptions(() => fetchPasskeyLoginOptions(selectedApiIndex.value, false))
+const canPreparePasskey = computed(() => loginConfigReady.value && !isLoggedIn.value && passkeyAvailable.value && !turnstileEnabled.value && !turnstileLoginEnabled.value)
+watch(selectedApiIndex, () => { loginConfigReady.value = false }, { flush: 'sync' })
+watch(() => [selectedApiIndex.value, isLoggedIn.value, passkeyAvailable.value, loginConfigReady.value, turnstileEnabled.value, turnstileLoginEnabled.value], () => {
+  passkeyLoginContext++
+  preparedPasskeyOptions.clear()
+  if (passkeyPromptActive) WebAuthnAbortService.cancelCeremony()
+  passkeyPromptActive = false
+  // Turnstile tokens are single use. Never consume one speculatively: the user
+  // may choose password login instead. There is no polling or automatic retry.
+  if (canPreparePasskey.value) preparedPasskeyOptions.prepare().catch(() => {})
+}, { flush: 'sync' })
+onScopeDispose(() => {
+  passkeyLoginContext++
+  preparedPasskeyOptions.clear()
+  if (passkeyPromptActive) WebAuthnAbortService.cancelCeremony()
+})
 
 const showEditModal = ref(false)
 const showBatchEditModal = ref(false)
@@ -1261,7 +1307,18 @@ const copyServerSpec = async ({ key, text } = {}) => {
   }
 }
 
+const completeLogin = async () => {
+  loginForm.value.password = ''
+  isLoggedIn.value = true
+  syncApiIndexQuery()
+  clearTurnstile()
+  turnstileVerified.value = hasSharedTurnstileVerified()
+  await Promise.all([loadSettings(), loadServers(), loadLatestAgentVersion()])
+}
+
 const handleLogin = async () => {
+  if (loginLoading.value) return
+  preparedPasskeyOptions.clear()
   loginError.value = ''
   loginLoading.value = true
 
@@ -1279,15 +1336,7 @@ const handleLogin = async () => {
 
   const result = await login(loginForm.value.username, loginForm.value.password, turnstileToken.value, selectedApiIndex.value)
   if (!result.error) {
-    isLoggedIn.value = true
-    syncApiIndexQuery()
-    clearTurnstile()
-    turnstileVerified.value = hasSharedTurnstileVerified()
-    await Promise.all([
-      loadSettings(),
-      loadServers(),
-      loadLatestAgentVersion()
-    ])
+    await completeLogin()
   } else {
     loginError.value = result.status === 403 ? 'Please complete the verification' : trans.value.errorInvalidUsername
     loginForm.value.password = ''
@@ -1295,6 +1344,56 @@ const handleLogin = async () => {
     resetTurnstile('#admin-turnstile-container')
   }
   loginLoading.value = false
+}
+
+const handlePasskeyLogin = async () => {
+  if (loginLoading.value || !passkeyAvailable.value) return
+  loginError.value = ''
+  if ((turnstileLoginEnabled.value || (turnstileEnabled.value && !turnstileVerified.value)) && !turnstileToken.value) {
+    loginError.value = 'Please complete the verification'
+    return
+  }
+  loginLoading.value = true
+  const apiIndex = selectedApiIndex.value
+  const context = passkeyLoginContext
+  try {
+    let prepared = canPreparePasskey.value ? preparedPasskeyOptions.take() : null
+    if (!prepared) {
+      passkeyLoginStage.value = 'preparing'
+      if (turnstileToken.value) localStorage.setItem(STORAGE.TURNSTILE_TOKEN, turnstileToken.value)
+      if (canPreparePasskey.value) {
+        await preparedPasskeyOptions.prepare()
+        prepared = preparedPasskeyOptions.take()
+      } else {
+        prepared = await fetchPasskeyLoginOptions(apiIndex)
+      }
+    }
+    if (context !== passkeyLoginContext) return
+    if (!prepared) throw new Error('options')
+    passkeyLoginStage.value = 'browser'
+    passkeyPromptActive = true
+    const credential = await startAuthentication({ optionsJSON: prepared.options })
+    if (context !== passkeyLoginContext) return
+    passkeyPromptActive = false
+    passkeyLoginStage.value = 'verifying'
+    const result = await http.postByIndex('/admin/api', {
+      action: 'passkey_login_verify', challengeId: prepared.challengeId, credential
+    }, apiIndex, { autoRedirect: false, timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS })
+    if (context !== passkeyLoginContext) return
+    if (result.error || !result.data?.token) throw new Error(result.error || 'authentication')
+    localStorage.setItem(STORAGE.JWT_TOKEN, result.data.token)
+    await completeLogin()
+  } catch (error) {
+    if (context !== passkeyLoginContext) return
+    loginError.value = error?.message === 'passkeyRateLimited' ? trans.value.passkeyRateLimited : trans.value.passkeyFailed
+    clearTurnstile()
+    resetTurnstile('#admin-turnstile-container')
+  } finally {
+    preparedPasskeyOptions.clear()
+    passkeyPromptActive = false
+    passkeyLoginStage.value = ''
+    loginLoading.value = false
+  }
 }
 
 const logout = async () => {
@@ -1335,7 +1434,12 @@ const initAdmin = async () => {
 }
 
 const loadTurnstileConfig = async () => {
-  await loadTurnstileConfigBase(selectedApiIndex.value, isMultipleMode.value, loginError)
+  const version = ++loginConfigRequestVersion
+  const apiIndex = selectedApiIndex.value
+  loginConfigReady.value = false
+  const ready = await loadTurnstileConfigBase(apiIndex, isMultipleMode.value, loginError)
+  if (version !== loginConfigRequestVersion || apiIndex !== selectedApiIndex.value) return
+  loginConfigReady.value = ready
   if (turnstileSiteKey.value && (turnstileLoginEnabled.value || (turnstileEnabled.value && !turnstileVerified.value))) {
     await nextTick()
     renderTurnstile('#admin-turnstile-container', turnstileSiteKey.value)

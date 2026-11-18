@@ -1137,7 +1137,7 @@ https://github.com/<owner>/<theme-repo>/tree/<commit-or-branch>[/theme-subdir]
 
 - Method：`POST`
 - Path：`/admin/api`
-- Headers（除 `login` 外必填）：
+- Headers（登录及 Passkey 登录 action 不要求 JWT）：
   ```
   Content-Type: application/json
   Authorization: Bearer <jwt>
@@ -1149,10 +1149,29 @@ https://github.com/<owner>/<theme-repo>/tree/<commit-or-branch>[/theme-subdir]
 
 **Turnstile**：
 
-- 仅 `action: login` 启用 Turnstile 验证（请求头 `X-Turnstile-Token`）；当 `turnstile_enabled` **或** `turnstile_login_enabled` 为 `true` 时要求 token
-- 其他 action：**不**走 Turnstile 流程（白名单 bypass）
+- `action: login` 和 `action: passkey_login_options` 在 `turnstile_enabled` **或** `turnstile_login_enabled` 为 `true` 时要求请求头 `X-Turnstile-Token`；其他 action 不单独重复验证。
+- 与现有登录流程一致，正确的 App 访问口令可绕过此人机验证，但不能替代密码或 Passkey 凭据。
 
 **Response**：~~所有响应统一为 `200 OK`。~~ **2026-07-26 修订**：成功响应通常为 `200`；参数、鉴权、Turnstile 或未捕获异常分别使用实际的 `4xx/5xx` 状态码。具体结构见下文各小节。
+
+***
+
+### 3.1.1 Passkey 登录与管理
+
+以下 action 均使用同一个 `POST /admin/api` 入口，要求请求的 `Origin` 与 Worker HTTPS 地址完全一致（本地开发允许 `http://localhost`）。Passkey 只可用于绑定时的域名。
+
+| action | 身份要求 | 主要字段及结果 |
+| --- | --- | --- |
+| `passkey_register_options` | 管理员会话和当前密码 | 请求 `password`；返回 `options`、`challengeId`，由浏览器选择设备或安全密钥 |
+| `passkey_register_verify` | 与发起注册相同的管理员会话 | 请求 `challengeId`、WebAuthn `credential`，可选 `name` |
+| `passkey_list` | 管理员会话 | 返回当前域名的 `credentials` 列表 |
+| `passkey_delete` | 管理员会话和当前密码 | 请求 `id`、`password` |
+| `passkey_login_options` | 无需管理员会话；按站点配置验证 Turnstile | 返回 `options`、`challengeId` |
+| `passkey_login_verify` | 无需管理员会话 | 请求 `challengeId`、WebAuthn `credential`；成功返回 JWT 并设置登录 Cookie |
+
+挑战有效期为 5 分钟，只能使用一次。注册和登录均要求验证器完成用户验证，例如设备 PIN 或生物识别；后端保存公钥，不保存私钥。认证选项与响应应交由 WebAuthn 客户端处理。
+
+`passkey_login_options` 的挑战创建限制为每个来源在每个固定分钟最多 5 次，且最多保留 100 个未过期的登录挑战；超限返回 HTTP 429 和 `Retry-After`。来源使用 Cloudflare 提供的 `CF-Connecting-IP`，缺失时共用一个来源桶；共享 IP 也会共用限额。统计与挑战消费相互独立，验证失败或消费挑战不会重置限额。边缘限流和 Turnstile 可进一步限制到达 Worker 的恶意请求。
 
 ***
 

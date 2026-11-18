@@ -447,6 +447,16 @@ Send a test notification before saving.
 - Tokens in query parameters may appear in access logs; only use HTTPS and avoid sharing WebSocket URLs that contain a token.
 - The admin panel can configure the frontend WSS timeout in minutes: the default `0` never disconnects based on connection age; a positive value closes the built-in frontend subscription at the limit and prompts the user to close or continue.
 
+### Passkey Login
+
+Administrators can add multiple passkeys in the admin settings and sign in using the Passkey button. Password login remains available. Supported authenticators include iCloud Keychain, Windows Hello, and FIDO2 security keys such as compatible YubiKeys. Security keys must support user verification and may need a FIDO2 PIN.
+
+Use the Worker's own HTTPS admin URL to register and sign in. Passkeys are bound to the login domain; a different domain requires a new registration. Cross-origin frontends such as GitHub Pages cannot use the Worker's passkeys directly.
+
+Adding or deleting a passkey requires an authenticated admin session and the current password. Select **Add Passkey**, then choose your device or security key in the system prompt. The server stores public keys, never private keys. Keep a strong independent admin password and at least one backup credential.
+
+Login challenges are stored briefly in D1. Each source IP can create up to five login challenges per minute, and up to 100 unexpired login challenges can exist at once. Clients sharing an IP share the per-source limit. Retry later if a limit is reached. Enable login Turnstile and, where appropriate, Cloudflare security rules or rate limiting on `/admin/api` for additional protection against abuse and quota consumption.
+
 ### Turnstile
 
 Cloudflare Turnstile can be enabled from the admin panel to reduce abuse of public APIs and login endpoints. In multi-site mode, use the same Site Key across sites when Turnstile is enabled.
@@ -603,7 +613,7 @@ After upgrading from older versions to versions with GPU, disk IO, packet loss, 
 
 ### Requirements
 
-- Node.js 18+
+- Node.js 20+
 - npm
 - Wrangler 4
 
