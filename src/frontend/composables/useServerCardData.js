@@ -153,7 +153,7 @@ export function useServerCardData(props) {
     if (trafficLimitSummary.value){
       return `${formatBytes(trafficLimitSummary.value.usedBytes)} / ${formatBytes(trafficLimitSummary.value.limitBytes)}`
     }else{
-      return `↓ ${totalRxMonthly.value} ↑ ${totalTxMonthly.value}`
+      return `↑ ${totalTxMonthly.value} ↓ ${totalRxMonthly.value}`
     }
   })
 
