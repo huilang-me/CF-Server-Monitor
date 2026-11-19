@@ -281,6 +281,16 @@ docker rm -f cf-probe && docker volume rm cf-probe-data
 | `API_SECRET`           | 是  | Agent 上报密钥；也是首次登录后台的默认密码 |
 | `API_BASE`             | 否  | 前端请求的 Worker API 地址，多个用英文逗号分隔；用于多 Worker 聚合或前后端分离 |
 | `CORS_ALLOWED_ORIGINS` | 否  | 允许跨域访问 API 的来源，多个用英文逗号分隔 |
+| `AGENT_WS_MODE`        | 否  | Agent 上报连接的接入方式：`hibernation`（默认）/ `standard`，见下 |
+
+`AGENT_WS_MODE` 决定 `MetricsBroadcaster` 如何接收 Agent 的 WSS 上报，两种方式的总花费结构不同，按账号额度宽裕程度选：
+
+| 取值 | duration | 请求数 | 适用场景 |
+| -- | -- | -- | -- |
+| `hibernation`（默认） | 空闲时 DO 可休眠，按实际唤醒时间计费 | 入站消息按 20:1 折算，随「机器数 × 上报频率」增长 | 机器数量不大、duration 额度紧张时更省 |
+| `standard` | 连接期间整段计 duration，单实例约 11,000 GB-s/天 | 同样按 20:1 折算，且长期连接不产生唤醒开销 | duration 额度充裕、希望成本与机器规模无关时 |
+
+两种模式的入站 WebSocket 消息计费口径相同（均为 20:1），差别只在 duration。切换后 Agent 无需改动，Worker 重新部署、连接自动重建即可生效。
 
 ### GitHub Pages 静态前台
 

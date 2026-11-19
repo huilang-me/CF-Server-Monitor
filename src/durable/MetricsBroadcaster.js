@@ -8,10 +8,22 @@
 // - 后端 /update WSS 由本 DO 接收 Agent 指标，并向所有订阅者广播。
 // - 兼容旧 POST 上报，/update 处理器在成功写入 DB 后会调用 /__do_push/<id>。
 //
-// - 前端订阅连接与 Agent 上报连接都使用 DO WebSocket Hibernation API，
-//   闲置时整个 DO 可以休眠，避免长连接把实例钉在内存里持续产生 duration。
+// - 前端订阅连接固定使用 DO WebSocket Hibernation API，
 //   通过 setWebSocketAutoResponse 自动响应 ping，无需唤醒 DO。
-// - 两类连接用 acceptWebSocket 的 tag 区分：前端无 tag，Agent 为 'agent-report'。
+//   以 tag 区分：前端无 tag，Agent 为 'agent-report'。
+//
+// - Agent 上报连接有两种模式，由环境变量 AGENT_WS_MODE 选择：
+//
+//   'hibernation'（默认）
+//     用 state.acceptWebSocket() 接入 Hibernation API。无人上报时 DO 可以休眠，
+//     duration 随空闲时间下降；代价是每条上报帧都会唤醒对象（计费仍按入站
+//     WebSocket 消息 20:1 折算，与标准模式一致）。
+//
+//   'standard'（旧行为）
+//     用 server.accept() 建立标准 WebSocket。消息不触发唤醒，但 accept() 期间的
+//     整段时间都计 duration——哪怕没有任何上报，单实例也会持续产生
+//     ≈11,000 GB-s/天（等于 128MB 实例连跑 24 小时）。适合"duration 额度充裕、
+//     但担心请求数随机器规模增长"的部署场景。
 
 import { saveMetricsHistory } from '../database/schema.js';
 import { evaluateTrafficAlert } from '../services/notification.js';
@@ -307,6 +319,9 @@ export class MetricsBroadcaster {
     this.resourceAlertCacheActiveUntil = 0;
     this.agentServerDetails = new Map();
     this.agentHistoryWrites = new Map();
+    // 仅 AGENT_WS_MODE=standard 时使用：标准 WebSocket 不在 state.getWebSockets() 里，
+    // 只能自己记一份内存集合。
+    this.standardAgentWebSockets = new Set();
     this.lastAgentRealtimeHintAt = 0;
     this.pendingFrontendBroadcasts = new Map();
     this.frontendBroadcastTimer = null;
@@ -465,17 +480,27 @@ export class MetricsBroadcaster {
     }).length;
   }
 
+  // Agent 上报连接的接入方式：'hibernation'（默认）| 'standard'
+  _getAgentWsMode() {
+    const raw = String(this.env?.AGENT_WS_MODE || '').trim().toLowerCase();
+    return raw === 'standard' || raw === 'legacy' ? 'standard' : 'hibernation';
+  }
+
   _getAgentReportWebSockets() {
-    if (typeof this.state.getWebSockets !== 'function') return [];
+    const sockets = new Set(this.standardAgentWebSockets || []);
+    if (typeof this.state.getWebSockets !== 'function') return Array.from(sockets);
     const tagged = this.state.getWebSockets(AGENT_REPORT_TAG);
-    if (Array.isArray(tagged) && tagged.length > 0) return tagged;
-    // 兜底：按 attachment.kind 过滤，兼容未打 tag 的连接（如部署前建立的标准 WebSocket）。
-    return this.state.getWebSockets().filter(ws => {
-      const attachment = typeof ws.deserializeAttachment === 'function'
-        ? ws.deserializeAttachment()
-        : null;
-      return attachment?.kind === AGENT_REPORT_KIND;
-    });
+    const candidates = Array.isArray(tagged) && tagged.length > 0
+      ? tagged
+      // 兜底：按 attachment.kind 过滤，兼容未打 tag 的连接（如部署前建立的标准 WebSocket）。
+      : this.state.getWebSockets().filter(ws => {
+        const attachment = typeof ws.deserializeAttachment === 'function'
+          ? ws.deserializeAttachment()
+          : null;
+        return attachment?.kind === AGENT_REPORT_KIND;
+      });
+    for (const ws of candidates) sockets.add(ws);
+    return Array.from(sockets);
   }
 
   _isWebSocketUpgrade(request) {
@@ -490,15 +515,52 @@ export class MetricsBroadcaster {
   }
 
   _acceptAgentWebSocket(server, initialAttachment) {
-    // Agent 上报连接改用 Hibernation API：连接存在期间 DO 仍可休眠，
-    // 只有真正收到上报帧时才被唤醒。
-    // 旧实现用 server.accept()，只要 Agent 长连接不断，整个 DO 就无法休眠，
-    // 单实例 24 小时常驻会持续产生 duration（实测约 11,000 GB-s/天）。
+    if (this._getAgentWsMode() === 'standard') {
+      return this._acceptStandardAgentWebSocket(server, initialAttachment);
+    }
+    // Hibernation API：连接存在期间 DO 仍可休眠，只有真正收到上报帧时才被唤醒。
     this.state.acceptWebSocket(server, [AGENT_REPORT_TAG]);
     server.serializeAttachment(initialAttachment || {});
     // Hibernation 的 WebSocket 自带 send/close/serializeAttachment，
-    // 与旧 wrapper 接口一致，调用方无需改动。
+    // 与 standard wrapper 接口一致，调用方无需改动。
     return server;
+  }
+
+  _acceptStandardAgentWebSocket(server, initialAttachment) {
+    // 旧行为（AGENT_WS_MODE=standard）：消息不唤醒对象，但 accept() 期间整段计 duration。
+    server.accept();
+
+    const session = { attachment: initialAttachment || {} };
+    const ws = {
+      send: data => server.send(data),
+      close: (code, reason) => server.close(code, reason),
+      serializeAttachment(value) {
+        session.attachment = value || {};
+      },
+      deserializeAttachment() {
+        return session.attachment;
+      }
+    };
+
+    this.standardAgentWebSockets.add(ws);
+    let cleaned = false;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      this.standardAgentWebSockets.delete(ws);
+    };
+
+    server.addEventListener('message', event => {
+      this._handleAgentReportMessage(ws, event.data, ws.deserializeAttachment())
+        .catch(error => {
+          console.warn('[update-ws] Agent standard WebSocket message failed:', error?.message || error);
+          this._closeWsWithError(ws, 'Internal error', 500);
+        });
+    });
+    server.addEventListener('close', cleanup);
+    server.addEventListener('error', cleanup);
+
+    return ws;
   }
 
   _closeWsWithError(ws, message, code = 400, extra = {}, closeCode = WS_POLICY_VIOLATION, closeReason = message) {
@@ -1747,10 +1809,16 @@ export class MetricsBroadcaster {
     // ── 3) 健康检查 ────────────────────────────────────
     if (method === 'GET' && (path === '/health' || path.endsWith('/health'))) {
       const subscribers = this._getFrontendSubscriberCount();
-      // Agent 连接现在也挂在 state.getWebSockets() 上，不能再额外相加。
       const agentSockets = this._getAgentReportWebSockets().length;
-      const sockets = this.state.getWebSockets().length;
-      return new Response(JSON.stringify({ ok: true, subscribers, sockets, agentSockets }), {
+      // standard 模式下 Agent 连接不在 state.getWebSockets() 里，统一用两个 getter 相加。
+      const sockets = subscribers + agentSockets;
+      return new Response(JSON.stringify({
+        ok: true,
+        mode: this._getAgentWsMode(),
+        subscribers,
+        sockets,
+        agentSockets
+      }), {
         headers: { 'Content-Type': 'application/json' }
       });
     }

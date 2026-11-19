@@ -343,6 +343,60 @@ test('WSS agent hibernation adapter keeps attachment state and lets DO sleep', a
   assert.deepEqual(sent, ['ok']);
 });
 
+test('AGENT_WS_MODE defaults to hibernation and accepts explicit standard', () => {
+  assert.equal(makeBroadcaster()._getAgentWsMode(), 'hibernation');
+  assert.equal(makeBroadcaster([], { DB: {}, AGENT_WS_MODE: '' })._getAgentWsMode(), 'hibernation');
+  assert.equal(makeBroadcaster([], { DB: {}, AGENT_WS_MODE: 'hibernation' })._getAgentWsMode(), 'hibernation');
+  assert.equal(makeBroadcaster([], { DB: {}, AGENT_WS_MODE: 'nonsense' })._getAgentWsMode(), 'hibernation');
+  assert.equal(makeBroadcaster([], { DB: {}, AGENT_WS_MODE: 'standard' })._getAgentWsMode(), 'standard');
+  assert.equal(makeBroadcaster([], { DB: {}, AGENT_WS_MODE: ' Standard ' })._getAgentWsMode(), 'standard');
+});
+
+test('AGENT_WS_MODE=standard keeps the legacy accept() path working', async () => {
+  const broadcaster = makeBroadcaster([], { DB: {}, AGENT_WS_MODE: 'standard' });
+  const listeners = {};
+  const sent = [];
+  let accepted = false;
+  const server = {
+    accept() {
+      accepted = true;
+    },
+    send(message) {
+      sent.push(message);
+    },
+    close() {},
+    addEventListener(type, handler) {
+      listeners[type] = handler;
+    }
+  };
+
+  const ws = broadcaster._acceptAgentWebSocket(server, { kind: 'agent-report' });
+  assert.equal(accepted, true);
+  assert.equal(server.__tags, undefined, 'standard 模式不应走 acceptWebSocket');
+  assert.equal(broadcaster._getAgentReportWebSockets().length, 1);
+
+  let finish;
+  const handled = new Promise(resolve => {
+    finish = resolve;
+  });
+  broadcaster._handleAgentReportMessage = async (socket, rawMessage, attachment) => {
+    assert.equal(rawMessage, '{"metrics":{}}');
+    assert.equal(attachment.kind, 'agent-report');
+    socket.serializeAttachment({ ...attachment, authenticated: true, serverId: 'server-1' });
+    socket.send('ok');
+    finish();
+  };
+
+  listeners.message({ data: '{"metrics":{}}' });
+  await handled;
+
+  assert.equal(ws.deserializeAttachment().serverId, 'server-1');
+  assert.deepEqual(sent, ['ok']);
+
+  listeners.close();
+  assert.equal(broadcaster._getAgentReportWebSockets().length, 0);
+});
+
 test('WSS agent ack suggests configured realtime or idle report interval', () => {
   const broadcaster = makeBroadcaster();
   assert.equal(broadcaster._getAgentNextWssReportAfterMs(4000, 60000, true), 4000);
