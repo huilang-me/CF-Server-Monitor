@@ -3886,20 +3886,6 @@ body.server-row-drag-active * {
     margin-bottom: 12px;
 }
 
-.login-title {
-    color: var(--accent-green);
-    margin: 0;
-    font-size: 18px;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-}
-
-.login-subtitle {
-    color: var(--text-muted);
-    font-size: 12px;
-    margin-top: 8px;
-}
-
 .login-form-group {
     margin-bottom: 16px;
 }

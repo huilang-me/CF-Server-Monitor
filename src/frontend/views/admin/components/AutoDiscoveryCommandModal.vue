@@ -75,6 +75,24 @@
           >
         </div>
 
+        <div class="form-group flex-1">
+          <label class="form-label">
+            {{ trans.installInstance }}
+            <HelpTooltip :text="trans.installInstanceTip" />
+          </label>
+          <input
+            type="text"
+            :value="instance"
+            class="form-input"
+            maxlength="32"
+            :placeholder="trans.installInstancePlaceholder"
+            @input="$emit('update:instance', $event.target.value)"
+          >
+          <p v-if="instanceHasInvalidChars" class="text-red text-sm">{{ trans.instanceNameInvalid }}</p>
+        </div>
+      </div>
+
+      <div class="form-row">
         <div class="form-group">
           <label class="form-label">&nbsp;</label>
           <div class="checkbox-item no-margin">
@@ -108,6 +126,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import HelpTooltip from '../../../components/HelpTooltip.vue'
+import { hasInvalidInstanceChars } from '../../../utils/instance-command.js'
 
 const props = defineProps({
   trans: { type: Object, required: true },
@@ -115,6 +134,7 @@ const props = defineProps({
   targetOs: { type: String, default: 'linux' },
   name: { type: String, default: '' },
   installMode: { type: String, default: 'current-user' },
+  instance: { type: String, default: '' },
   version: { type: String, default: '' },
   autoUpdate: { type: Boolean, default: false },
   ghProxy: { type: String, default: '' },
@@ -128,6 +148,7 @@ const emit = defineEmits([
   'update:target-os',
   'update:name',
   'update:install-mode',
+  'update:instance',
   'update:version',
   'update:auto-update',
   'update:gh-proxy'
@@ -167,6 +188,7 @@ const selectedGhProxy = computed({
 })
 
 const showCustomGhProxy = computed(() => selectedGhProxy.value === CUSTOM_GH_PROXY_VALUE)
+const instanceHasInvalidChars = computed(() => hasInvalidInstanceChars(props.instance))
 
 watch(
   () => props.show,

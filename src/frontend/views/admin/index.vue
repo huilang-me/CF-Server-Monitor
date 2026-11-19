@@ -246,6 +246,8 @@
         :delete-version="deleteVersion"
         :delete-install-mode="deleteInstallMode"
         :delete-gh-proxy="deleteGhProxy"
+        :delete-instance="deleteInstance"
+        :delete-all-instances="deleteAllInstances"
         :uninstall-command="getUninstallCommand()"
         :uninstall-copied="uninstallCopied"
         @close="closeDeleteModal"
@@ -255,6 +257,8 @@
         @update:delete-version="deleteVersion = $event"
         @update:delete-install-mode="deleteInstallMode = $event"
         @update:delete-gh-proxy="deleteGhProxy = $event"
+        @update:delete-instance="deleteInstance = $event"
+        @update:delete-all-instances="deleteAllInstances = $event"
       />
 
       <CopyCommandModal
@@ -266,6 +270,7 @@
         :install-mode="installMode"
         :install-gh-proxy="installGhProxy"
         :install-version="installVersion"
+        :install-instance="installInstance"
         :collect-interval="collectInterval"
         :report-interval="reportInterval"
         :wss-report-interval="wssReportInterval"
@@ -292,6 +297,7 @@
         @update:install-mode="installMode = $event"
         @update:install-gh-proxy="installGhProxy = $event"
         @update:install-version="installVersion = $event"
+        @update:install-instance="installInstance = $event"
         @open-edit-from-copy="openEditModalFromCopy"
       />
 
@@ -301,6 +307,7 @@
         :target-os="autoDiscoveryTargetOs"
         :install-mode="autoDiscoveryInstallMode"
         :name="autoDiscoveryName"
+        :instance="autoDiscoveryInstance"
         :version="autoDiscoveryVersion"
         :auto-update="autoDiscoveryAutoUpdate"
         :gh-proxy="autoDiscoveryGhProxy"
@@ -311,6 +318,7 @@
         @update:target-os="autoDiscoveryTargetOs = $event"
         @update:install-mode="autoDiscoveryInstallMode = $event"
         @update:name="autoDiscoveryName = $event"
+        @update:instance="autoDiscoveryInstance = $event"
         @update:version="autoDiscoveryVersion = $event"
         @update:auto-update="autoDiscoveryAutoUpdate = $event"
         @update:gh-proxy="autoDiscoveryGhProxy = $event"
@@ -622,6 +630,11 @@ import { http, DEFAULT_REQUEST_TIMEOUT_MS } from '../../utils/http.js'
 import { createPasskeyLoginOptions } from '../../utils/passkeyLogin.js'
 import { hasMultipleApiBases, getApiBases } from '../../utils/config.js'
 import { copyTextToClipboard } from '../../utils/clipboard.js'
+import {
+  buildAutoDiscoveryInstallCommand,
+  buildCustomInstallCommand,
+  buildUninstallCommand
+} from '../../utils/install-command.js'
 import { normalizeLanguagePreference, normalizeNotificationLanguagePreference, t, useTranslation } from '../../utils/i18n'
 import { PING_NODE_FIELDS, validatePingNode } from '../../utils/pingNode.js'
 import { normalizeDisplayMode, resolveDisplayMode } from '../../utils/displayMode.js'
@@ -1171,6 +1184,8 @@ const deleteTargetOs = ref('linux')
 const deleteVersion = ref('go')
 const deleteInstallMode = ref('current-user')
 const deleteGhProxy = ref('')
+const deleteInstance = ref('')
+const deleteAllInstances = ref(false)
 const uninstallCopied = ref(false)
 const saving = ref(false)
 
@@ -1199,6 +1214,7 @@ const targetOs = ref('linux')
 const installMode = ref('current-user')
 const installGhProxy = ref('')
 const installVersion = ref('')
+const installInstance = ref('')
 const collectInterval = ref(0)
 const reportInterval = ref(60)
 const wssReportInterval = ref(2)
@@ -1223,6 +1239,7 @@ const showAutoDiscoveryModal = ref(false)
 const autoDiscoveryTargetOs = ref('linux')
 const autoDiscoveryInstallMode = ref('current-user')
 const autoDiscoveryName = ref('')
+const autoDiscoveryInstance = ref('')
 const autoDiscoveryVersion = ref('')
 const autoDiscoveryAutoUpdate = ref(false)
 const autoDiscoveryGhProxy = ref('')
@@ -1876,30 +1893,16 @@ const resolveServerPingNode = (server, field) => {
   }
 }
 
-const getUninstallCommand = () => {
-  const HOST = selectedApiBase.value
-  const isGo = deleteVersion.value === 'go'
-  const proxy = isGo ? deleteGhProxy.value.trim() : ''
-  if (isGo) {
-    if (deleteTargetOs.value === 'windows') {
-      const ghUrl = buildGhRawUrl(proxy, '/huilang-me/cfsm-agent/main/install.ps1')
-      const proxyParam = proxy ? ` --install-ghproxy=${quotePowerShellArg(proxy)}` : ''
-      return `$script = "$env:TEMP\\install-cf-probe.ps1"; Invoke-WebRequest -Uri ${quotePowerShellArg(ghUrl)} -OutFile $script -UseBasicParsing; PowerShell -ExecutionPolicy Bypass -File $script uninstall${proxyParam}`
-    }
-    const sudoPrefix = deleteTargetOs.value === 'mac' ? 'sudo ' : ''
-    const ghUrl = buildGhRawUrl(proxy, '/huilang-me/cfsm-agent/main/install.sh')
-    const proxyParam = proxy ? ` --install-ghproxy=${quotePosixShellArg(proxy)}` : ''
-    const uninstallCommand = `curl -fsSL ${quotePosixShellArg(ghUrl)} | ${sudoPrefix}sh -s -- uninstall${proxyParam}`
-    if (deleteTargetOs.value === 'linux' && deleteInstallMode.value === 'cfsm-user') {
-      return buildUninstallAsCfsmCommand(uninstallCommand)
-    }
-    return uninstallCommand
-  }
-  if (deleteTargetOs.value === 'windows') {
-    return `$script = Join-Path (Get-Location) 'uninstall-cf-probe.ps1'; Invoke-WebRequest -Uri '${HOST}/uninstall.ps1' -OutFile $script -UseBasicParsing; PowerShell -ExecutionPolicy Bypass -File $script`
-  }
-  return `curl -fsSL '${HOST}/uninstall.sh' | sh -s`
-}
+const getUninstallCommand = () => buildUninstallCommand({
+  host: selectedApiBase.value,
+  targetOs: deleteTargetOs.value,
+  version: deleteVersion.value,
+  ghProxy: deleteGhProxy.value,
+  installMode: deleteInstallMode.value,
+  instance: deleteInstance.value,
+  all: deleteAllInstances.value,
+  trans: trans.value
+})
 
 const copyCmd = (serverId) => {
   const server = servers.value.find(s => s.id === serverId)
@@ -1909,6 +1912,7 @@ const copyCmd = (serverId) => {
   installMode.value = 'current-user'
   installGhProxy.value = ''
   installVersion.value = ''
+  installInstance.value = ''
   collectInterval.value = server?.collect_interval ?? 0
   reportInterval.value = server?.report_interval || 60
   wssReportInterval.value = server?.wss_report_interval || 2
@@ -1945,74 +1949,6 @@ const copyCmd = (serverId) => {
   showCopyModal.value = true
 }
 
-const buildGhRawUrl = (proxy, path) => {
-  const base = 'https://raw.githubusercontent.com'
-  if (!proxy) return `${base}${path}`
-  const cleanProxy = proxy.replace(/\/$/, '')
-  return `${cleanProxy}/${base}${path}`
-}
-
-const quotePosixShellArg = (value) => `'${String(value).replaceAll("'", `'"'"'`)}'`
-
-const quotePowerShellArg = (value) => `'${String(value).replaceAll("'", "''")}'`
-
-const quotePosixDoubleShellArg = (value) => `"${String(value)
-  .replaceAll('\\', '\\\\')
-  .replaceAll('"', '\\"')
-  .replaceAll('$', '\\$')
-  .replaceAll('`', '\\`')}"`
-
-const buildUninstallAsCfsmCommand = (command) => {
-  const runuserCommand = `runuser -u cfsm -- env HOME="\${CFSM_HOME}" XDG_RUNTIME_DIR="/run/user/\${CFSM_UID}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/\${CFSM_UID}/bus" sh -c ${quotePosixDoubleShellArg(command)}`
-  return [
-    '(',
-    'set -e',
-    `if ! command -v runuser >/dev/null 2>&1; then echo ${quotePosixDoubleShellArg(trans.value.dedicatedUserUninstallUnsupported)} >&2; exit 1; fi`,
-    `id cfsm >/dev/null 2>&1 || { echo ${quotePosixDoubleShellArg(trans.value.nonRootUninstallUserMissing)} >&2; exit 1; }`,
-    'CFSM_UID=$(id -u cfsm)',
-    'CFSM_HOME=$(getent passwd cfsm | cut -d: -f6); [ -n "${CFSM_HOME}" ] || CFSM_HOME=/home/cfsm',
-    'if [ "$(id -u)" -eq 0 ]; then',
-    `  ${runuserCommand}`,
-    'elif command -v sudo >/dev/null 2>&1; then',
-    `  sudo ${runuserCommand}`,
-    'else',
-    `  echo ${quotePosixDoubleShellArg(trans.value.nonRootInstallSudoRequired)} >&2; exit 1`,
-    'fi',
-    ')'
-  ].join('\n')
-}
-
-const buildInstallAsCfsmCommand = (command, runStep) => {
-  const lines = [
-    '(',
-    'set -e',
-    `if [ ! -d /run/systemd/system ] || ! command -v systemctl >/dev/null 2>&1 || ! command -v loginctl >/dev/null 2>&1 || ! command -v useradd >/dev/null 2>&1 || ! command -v runuser >/dev/null 2>&1; then echo ${quotePosixDoubleShellArg(trans.value.dedicatedUserSystemdRequired)} >&2; exit 1; fi`,
-    'if [ "$(id -u)" -eq 0 ]; then',
-    '  as_root() { "$@"; }',
-    'elif command -v sudo >/dev/null 2>&1; then',
-    '  as_root() { sudo "$@"; }',
-    'else',
-    `  echo ${quotePosixDoubleShellArg(trans.value.nonRootInstallSudoRequired)} >&2; exit 1`,
-    'fi'
-  ]
-
-  lines.push(
-    'id cfsm >/dev/null 2>&1 || as_root useradd -m -s /bin/sh cfsm',
-    'as_root loginctl enable-linger cfsm'
-  )
-
-  lines.push(
-    'CFSM_UID=$(id -u cfsm)',
-    'as_root systemctl start user@${CFSM_UID}.service',
-    'if command -v getent >/dev/null 2>&1; then CFSM_HOME=$(getent passwd cfsm | cut -d: -f6); else CFSM_HOME=/home/cfsm; fi; [ -n "${CFSM_HOME}" ] || CFSM_HOME=/home/cfsm',
-    '',
-    `# ${runStep}`,
-    `as_root runuser -u cfsm -- env HOME="\${CFSM_HOME}" XDG_RUNTIME_DIR="/run/user/\${CFSM_UID}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/\${CFSM_UID}/bus" sh -c ${quotePosixDoubleShellArg(command)}`,
-    ')'
-  )
-  return lines.join('\n')
-}
-
 // 站点 UA 不是默认值时，安装命令必须带上：否则首次上报就会被 /update 的防火墙规则拦截，
 // 连自动发现都无法完成。
 const installUserAgent = () => {
@@ -2020,117 +1956,32 @@ const installUserAgent = () => {
   return ua && ua !== 'cfsm' ? ua : ''
 }
 
-const getCustomInstallCommand = () => {
-  const HOST = selectedApiBase.value
-  const autoUpdateFlag = autoUpdate.value ? 1 : 0
-  const proxy = installGhProxy.value.trim()
-  const version = installVersion.value.trim()
-  const isDedicatedUserInstall = targetOs.value === 'linux' && installMode.value === 'cfsm-user'
-  // 安装命令只保留必须写入本地的参数：id / secret / url / auto_update，
-  // 以及站点 UA 非默认值时的 -ua（否则首次上报就会被 /update 的防火墙规则拦下）。
-  // collect_interval、interval、connection_mode、ping_mode、reset_day、ct/cu/cm/bd、node_1..4、interface、rx/tx_correction
-  // 等属于后端 /api 动态下发的配置（见 agentConfig.buildAgentConfig），Agent 启动后会自动拉取，无需写进安装命令。
-  if (targetOs.value === 'windows') {
-    const params = [
-      'install'
-    ]
-    if (proxy) params.push(`--install-ghproxy=${quotePowerShellArg(proxy)}`)
-    if (version) params.push(`--install-version=${quotePowerShellArg(version)}`)
-    params.push(
-      `-id='${copyServerId.value}'`,
-      `-secret=${quotePowerShellArg(apiSecret.value)}`,
-      `-url='${HOST}/update'`,
-      `-auto_update='${autoUpdateFlag}'`
-    )
-    const ua = installUserAgent()
-    if (ua) params.push(`-ua=${quotePowerShellArg(ua)}`)
-    const ghUrl = buildGhRawUrl(proxy, '/huilang-me/cfsm-agent/main/install.ps1')
-    return `$script = "$env:TEMP\\install-cf-probe.ps1"; Invoke-WebRequest -Uri ${quotePowerShellArg(ghUrl)} -OutFile $script -UseBasicParsing; PowerShell -ExecutionPolicy Bypass -File $script ${params.join(' ')}`
-  }
-  if (targetOs.value === 'docker') {
-    const safeTag = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/.test(version) ? version : 'latest'
-    const image = `ghcr.io/huilang-me/cfsm-agent:${safeTag}`
-    const ua = installUserAgent()
-    const uaEnv = ua ? ` -e UA=${quotePosixShellArg(ua)}` : ''
-    return [
-      'docker run -d --name cf-probe --restart=unless-stopped --network=host --pid=host --cap-drop=ALL --cap-add=NET_RAW \\',
-      '  -v cf-probe-data:/data \\',
-      '  -v /etc/os-release:/etc/os-release:ro \\',
-      `  -e SERVER_ID=${quotePosixShellArg(copyServerId.value)} -e SECRET=${quotePosixShellArg(apiSecret.value)} -e WORKER_URL=${quotePosixShellArg(`${HOST}/update`)}${uaEnv} \\`,
-      `  ${image}`
-    ].join('\n')
-  }
-  const params = ['install']
-  if (proxy) params.push(`--install-ghproxy=${quotePosixShellArg(proxy)}`)
-  if (version) params.push(`--install-version=${quotePosixShellArg(version)}`)
-  params.push(
-    `-id=${copyServerId.value}`,
-    `-secret=${quotePosixShellArg(apiSecret.value)}`,
-    `-url=${HOST}/update`,
-    `-auto_update=${autoUpdateFlag}`
-  )
-  const ua = installUserAgent()
-  if (ua) params.push(`-ua=${quotePosixShellArg(ua)}`)
-  const ghUrl = buildGhRawUrl(proxy, '/huilang-me/cfsm-agent/main/install.sh')
-  const installCommand = `curl -fsSL ${quotePosixShellArg(ghUrl)} | sh -s -- ${params.join(' ')}`
-  if (!isDedicatedUserInstall) return installCommand
+const getCustomInstallCommand = () => buildCustomInstallCommand({
+  host: selectedApiBase.value,
+  targetOs: targetOs.value,
+  installMode: installMode.value,
+  ghProxy: installGhProxy.value,
+  version: installVersion.value,
+  instance: installInstance.value,
+  autoUpdate: autoUpdate.value,
+  serverId: copyServerId.value,
+  secret: apiSecret.value,
+  ua: installUserAgent(),
+  trans: trans.value
+})
 
-  return buildInstallAsCfsmCommand(installCommand, trans.value.nonRootInstallRunStep)
-}
-
-// 自动发现模式下安装命令不带 -id：Agent 首次上报时由服务端自动创建服务器。
-// name 留空时服务端回退到请求来源 IP；安装用户、代理、版本、名称与自动更新仅影响本次生成的命令。
-const buildAutoDiscoveryCommand = ({ targetOs: os = 'linux', installMode: mode = 'current-user', ghProxy = '', name = '', version = '', autoUpdate = false } = {}) => {
-  const HOST = selectedApiBase.value
-  const proxy = String(ghProxy || '').trim()
-  const agentVersion = String(version || '').trim()
-  const autoUpdateFlag = autoUpdate ? 1 : 0
-  const serverName = String(name || '')
-    .replace(/[\u0000-\u001f\u007f]/g, '')
-    .trim()
-    .slice(0, 100)
-
-  if (os === 'windows') {
-    const params = ['install']
-    if (proxy) params.push(`--install-ghproxy=${quotePowerShellArg(proxy)}`)
-    if (agentVersion) params.push(`--install-version=${quotePowerShellArg(agentVersion)}`)
-    params.push(
-      `-secret=${quotePowerShellArg(apiSecret.value)}`,
-      `-url='${HOST}/update'`,
-      `-auto_update='${autoUpdateFlag}'`
-    )
-    if (serverName) params.push(`-name=${quotePowerShellArg(serverName)}`)
-    const ua = installUserAgent()
-    if (ua) params.push(`-ua=${quotePowerShellArg(ua)}`)
-    const ghUrl = buildGhRawUrl(proxy, '/huilang-me/cfsm-agent/main/install.ps1')
-    return `$script = "$env:TEMP\\install-cf-probe.ps1"; Invoke-WebRequest -Uri ${quotePowerShellArg(ghUrl)} -OutFile $script -UseBasicParsing; PowerShell -ExecutionPolicy Bypass -File $script ${params.join(' ')}`
-  }
-
-  const params = ['install']
-  if (proxy) params.push(`--install-ghproxy=${quotePosixShellArg(proxy)}`)
-  if (agentVersion) params.push(`--install-version=${quotePosixShellArg(agentVersion)}`)
-  params.push(
-    `-secret=${quotePosixShellArg(apiSecret.value)}`,
-    `-url=${HOST}/update`,
-    `-auto_update=${autoUpdateFlag}`
-  )
-  if (serverName) params.push(`-name=${quotePosixShellArg(serverName)}`)
-  const ua = installUserAgent()
-  if (ua) params.push(`-ua=${quotePosixShellArg(ua)}`)
-  const ghUrl = buildGhRawUrl(proxy, '/huilang-me/cfsm-agent/main/install.sh')
-  const installCommand = `curl -fsSL ${quotePosixShellArg(ghUrl)} | sh -s -- ${params.join(' ')}`
-  if (os !== 'linux' || mode !== 'cfsm-user') return installCommand
-
-  return buildInstallAsCfsmCommand(installCommand, trans.value.nonRootInstallRunStep)
-}
-
-const getAutoDiscoveryInstallCommand = () => buildAutoDiscoveryCommand({
+const getAutoDiscoveryInstallCommand = () => buildAutoDiscoveryInstallCommand({
+  host: selectedApiBase.value,
   targetOs: autoDiscoveryTargetOs.value,
   installMode: autoDiscoveryInstallMode.value,
   ghProxy: autoDiscoveryGhProxy.value,
   name: autoDiscoveryName.value,
+  instance: autoDiscoveryInstance.value,
   version: autoDiscoveryVersion.value,
-  autoUpdate: autoDiscoveryAutoUpdate.value
+  autoUpdate: autoDiscoveryAutoUpdate.value,
+  secret: apiSecret.value,
+  ua: installUserAgent(),
+  trans: trans.value
 })
 
 const openAutoDiscoveryModal = () => {
@@ -2418,6 +2269,8 @@ const openDeleteModal = (id) => {
   deleteVersion.value = 'go'
   deleteInstallMode.value = 'current-user'
   deleteGhProxy.value = ''
+  deleteInstance.value = ''
+  deleteAllInstances.value = false
   uninstallCopied.value = false
   showDeleteModal.value = true
 }

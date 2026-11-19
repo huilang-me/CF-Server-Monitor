@@ -98,8 +98,8 @@
       <div class="server-card-network-row">
         <span class="server-card-network-label">{{ trans.totalTraffic }}</span>
         <span class="server-card-network-values server-card-total-values">
-          <span>↑ {{ totalTx }}</span>
           <span>↓ {{ totalRx }}</span>
+          <span>↑ {{ totalTx }}</span>
         </span>
       </div>
       <div v-if="sysConfig.show_tf" class="server-card-limit-section">

@@ -3,8 +3,6 @@
     <div class="login-container">
       <div class="login-header">
         <div class="login-icon">🔐</div>
-        <h2 class="login-title">{{ trans.adminLogin }}</h2>
-        <p class="login-subtitle">{{ trans.enterCredentials }}</p>
       </div>
       <form @submit.prevent="$emit('login')">
         <div v-if="isMultipleMode" class="login-form-group">
@@ -39,7 +37,6 @@
         <button type="submit" class="login-btn" :disabled="loginLoading">{{ loginLoading ? '⏳' : trans.login }}</button>
         <button type="button" class="login-btn passkey-login-btn" :aria-busy="!!passkeyStatus" :disabled="loginLoading || !passkeyAvailable" @click="$emit('passkey-login')">{{ passkeyStatus === 'preparing' ? trans.passkeyPreparing : passkeyStatus ? trans.passkeyVerifying : trans.passkeyLogin }}</button>
         <p v-if="passkeyStatus === 'browser'" class="passkey-login-hint" role="status" aria-live="polite">{{ trans.passkeyBrowserPrompt }}</p>
-        <p v-if="!passkeyAvailable" class="passkey-login-hint">{{ trans.passkeySameOrigin }}</p>
       </form>
     </div>
     <Footer />

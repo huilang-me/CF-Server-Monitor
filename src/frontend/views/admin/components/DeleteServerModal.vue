@@ -70,6 +70,39 @@
         </div>
       </div>
 
+      <div v-if="deleteVersion === 'go'" class="form-row">
+        <div class="form-group flex-1 mb-3">
+          <label class="form-label">
+            {{ trans.installInstance }}
+            <HelpTooltip :text="trans.installInstanceTip" />
+          </label>
+          <input
+            type="text"
+            :value="deleteInstance"
+            class="form-input"
+            maxlength="32"
+            :disabled="deleteAllInstances"
+            :placeholder="trans.installInstancePlaceholder"
+            @input="$emit('update:delete-instance', $event.target.value)"
+          >
+          <p v-if="instanceHasInvalidChars && !deleteAllInstances" class="text-red text-sm">{{ trans.instanceNameInvalid }}</p>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">&nbsp;</label>
+          <div class="checkbox-item no-margin">
+            <input
+              id="cfg_delete_all_instances"
+              type="checkbox"
+              :checked="deleteAllInstances"
+              @change="$emit('update:delete-all-instances', $event.target.checked)"
+            >
+            <label for="cfg_delete_all_instances"><b>{{ trans.uninstallAllInstances }}</b></label>
+            <HelpTooltip :text="trans.uninstallAllInstancesTip" />
+          </div>
+        </div>
+      </div>
+
       <div class="cmd-input-wrapper mb-3" :class="{ copied: uninstallCopied }">
         <span class="cmd-prompt">{{ deleteTargetOs === 'windows' ? 'PS' : '$' }}</span>
         <textarea
@@ -94,6 +127,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import HelpTooltip from '../../../components/HelpTooltip.vue'
+import { hasInvalidInstanceChars } from '../../../utils/instance-command.js'
 
 const props = defineProps({
   trans: { type: Object, required: true },
@@ -104,6 +138,8 @@ const props = defineProps({
   deleteVersion: { type: String, default: 'go' },
   deleteInstallMode: { type: String, default: 'current-user' },
   deleteGhProxy: { type: String, default: '' },
+  deleteInstance: { type: String, default: '' },
+  deleteAllInstances: { type: Boolean, default: false },
   uninstallCommand: { type: String, default: '' },
   uninstallCopied: { type: Boolean, default: false }
 })
@@ -115,7 +151,9 @@ const emit = defineEmits([
   'update:delete-target-os',
   'update:delete-version',
   'update:delete-install-mode',
-  'update:delete-gh-proxy'
+  'update:delete-gh-proxy',
+  'update:delete-instance',
+  'update:delete-all-instances'
 ])
 
 const CUSTOM_GH_PROXY_VALUE = '__custom__'
@@ -152,6 +190,7 @@ const selectedGhProxy = computed({
 })
 
 const showCustomGhProxy = computed(() => selectedGhProxy.value === CUSTOM_GH_PROXY_VALUE)
+const instanceHasInvalidChars = computed(() => hasInvalidInstanceChars(props.deleteInstance))
 
 watch(
   () => props.show,

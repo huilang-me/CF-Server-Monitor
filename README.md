@@ -10,7 +10,7 @@
   <a href="README-en.md">English</a>
 </p>
 
-[![Workers](https://img.shields.io/badge/Workers-2.8.8%20Beta1-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
+[![Workers](https://img.shields.io/badge/Workers-2.8.8%20Beta2-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
 [![GitHub Stars](https://img.shields.io/github/stars/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/forks)
 [![License](https://img.shields.io/badge/License-MIT-16a34a?style=flat-square)](#许可证)
@@ -99,7 +99,7 @@ flowchart LR
 
 近期变化：
 
-- `2.8.8`：登录下发 cfsm_ua Cookie 供 Cloudflare 安全规则放行；新增APP Password用于第三方 App / iOS 小组件获得更多权限，同时绕过Turnstile。
+- `2.8.8`：登录下发 `cfsm_ua` Cookie 供 Cloudflare 安全规则放行；新增 APP Password，用于第三方 App / iOS 小组件获得更多权限并绕过 Turnstile；新增 Passkey 登录；新增实例名参数，支持在同一台机器安装多个独立实例（agent >= 1.1.4）。
 - `2.8.7`：优化定时任务逻辑，降低CPU负载，避免超出免费额度限制；`/update` 增加 512KB 请求体上限，超限直接返回 413；服务器被删除后，其 Agent 的 WSS 连接会在 2 分钟内自动断开；WSS 上报增加帧大小校验，D1 抖动时不再中断已认证会话；批量样本只保留最新 300 条。新增服务端自动发现机制自动绑定服务器ID。新增自定义UA；导入导出包含设置选项；资源负载告警新增 TCP/UDP 连接数监控。上报未探到公网 IP 时用请求头来源地址补位。
 - `2.8.6`：WSS前端订阅采用250毫秒批量上报，新增SMTP通知渠道，新增月度流量阈值告警，移除旧版数据库兼容性，新增Docker安装方式。
 - `2.8.5`：支持自定义 Ping 节点名称；增加ICMP模式；优化WSS响应逻辑；API接口优化；原皮前端优化；新增4个ping节点。
@@ -231,6 +231,7 @@ V2.8.3 起默认使用独立项目 [cfsm-agent](https://github.com/huilang-me/cf
 | `-name`                       | 自动建号时的服务器名称                   | 连接来源 IP（`CF-Connecting-IP`） |
 | `-secret`                     | Agent 上报密钥，需要等于 `API_SECRET` | 必填   |
 | `-url`                        | Worker 上报地址                  | 必填   |
+| `-instance`                   | 实例名；填写后可在同一台机器安装多个独立实例      | 空（默认实例） |
 | `-collect_interval`           | 本机采集间隔；`0` 表示不额外采样           | `0`  |
 | `-interval`                   | 上报间隔，单位秒                     | `60` |
 | `-ct` / `-cu` / `-cm` / `-bd` | 自定义网络质量测试节点，支持 `host[:port]` | 内置节点 |
@@ -239,6 +240,33 @@ V2.8.3 起默认使用独立项目 [cfsm-agent](https://github.com/huilang-me/cf
 | `-tx_correction`              | 上行月流量校正，单位 GB                | 空    |
 
 `-collect_interval` 控制本机额外采集频率，`-interval` 控制上报频率。上报越频繁，Workers 请求和 D1 写入越多。
+
+### 多实例安装与管理
+
+管理后台的复制安装命令和自动发现命令均提供“实例名”输入框。填写名称（仅支持字母、数字、下划线和短横线，最多 32 个字符）即可在同一台机器上安装多个互不干扰的 Probe 实例；留空则使用默认实例，与旧版本行为一致。
+
+```bash
+# 安装名为 alpha 的独立实例
+curl -fsSL https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sh -s -- install -id=<服务器ID> -secret='<API_SECRET>' -url=https://<你的后台地址>/update -instance=alpha
+```
+
+实例名会作为后缀用于服务名以及配置、流量数据路径（例如 `cf-probe-alpha`），各实例的进程、配置和流量数据彼此独立。Windows 命令与自动发现命令同样支持该参数。
+
+卸载时可按实例卸载，或一次卸载本机全部实例：
+
+```bash
+# 只卸载 alpha 实例
+curl -fsSL https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sh -s -- uninstall -instance=alpha
+
+# 卸载本机全部 Probe 实例
+curl -fsSL https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sh -s -- uninstall --all
+```
+
+Windows PowerShell 中把 `uninstall` 后加上 `-instance=alpha` 或 `--all` 即可，例如：
+
+```powershell
+PowerShell -ExecutionPolicy Bypass -File $script uninstall -instance=alpha
+```
 
 ### 非 root 安装（推荐）
 
@@ -547,7 +575,7 @@ smtp://<用户名>:<密码>@<host>:<port>?from=<发件人>&to=<收件人1,收件
 
 ### 升级 Agent
 
-Go 版本 Agent 会保留原配置，直接执行安装命令即可升级。
+Go 版本 Agent 会保留原配置，直接执行安装命令即可升级。多实例场景请对每个实例分别重新执行带相同 `-instance` 的安装命令。
 
 Linux / OpenWrt / Synology DSM / FreeBSD / macOS：
 
@@ -570,6 +598,8 @@ Go 版本：
 ```bash
 curl -fsSL https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sh -s -- uninstall
 ```
+
+按实例卸载或一次卸载全部实例的命令见上文「多实例安装与管理」（`-instance=NAME` / `--all`），管理后台的删除服务器弹窗也可直接生成并复制对应命令。
 
 旧 Shell / PowerShell 版本已不再维护，下面命令仅用于清理历史 Shell / PowerShell 安装。请按当初安装时使用的系统脚本选择对应卸载命令；如果当前运行的是 Go Agent，请使用上面的 Go 卸载命令。
 
@@ -805,10 +835,6 @@ echo <CF_CDN_IP> <你的探针域名> | sudo tee -a /etc/hosts
 
 - 微信赞赏：扫码支持
 
-### 合作与推荐
-
-如果你需要粤港澳大湾区的机场接送、商务用车或私人包车服务，可参考 [Hong Kong Chauffeur](https://hkchauffeur.com/)，覆盖香港、深圳、广州、珠海、澳门等地区。
-
 ## 致谢
 
 - [CF-Server-Monitor-Pro](https://github.com/a63414262/CF-Server-Monitor-Pro)
@@ -818,6 +844,7 @@ echo <CF_CDN_IP> <你的探针域名> | sudo tee -a /etc/hosts
 - [Chart.js](https://www.chartjs.org/)
 - [Leaflet](https://leafletjs.com/)
 - 感谢 [NodeSeek](https://www.nodeseek.com/post-763025-1) 和 [LINUX DO](https://linux.do/) 社区的支持与推广
+- [Hong Kong Chauffeur](https://hkchauffeur.com/)
 
 ## 许可证
 
