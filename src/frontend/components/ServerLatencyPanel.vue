@@ -38,7 +38,7 @@
       </div>
     </div>
   </div>
-  <div v-else-if="hasPingData" :class="variant === 'ring' ? 'server-card-ping-row' : 'ping-panel'">
+  <div v-else-if="showPingFallback && hasPingData" :class="variant === 'ring' ? 'server-card-ping-row' : 'ping-panel'">
     <template v-if="variant === 'ring'">
       <span class="server-card-ping-chip" v-for="p in pingList.filter(x => x.value !== 0).slice(0, 4)" :key="p.label">
         <span class="server-card-ping-label">{{ p.label }}</span>
@@ -68,6 +68,10 @@ defineProps({
   hasThreeNetDetails: {
     type: Boolean,
     default: false
+  },
+  showPingFallback: {
+    type: Boolean,
+    default: true
   },
   threeNetDetails: {
     type: Array,

@@ -354,7 +354,7 @@
               <select v-model="smtpConfig.secure" @change="validateSmtpField('port')" class="form-select">
                 <option value="auto">{{ trans.smtpSecureAuto || 'Auto (by port)' }}</option>
                 <option value="tls">{{ trans.smtpSecureTls || 'Implicit TLS (465)' }}</option>
-                <option value="starttls">{{ trans.smtpSecureStarttls || 'STARTTLS (587)' }}</option>
+                <option value="starttls">STARTTLS (587)</option>
               </select>
             </div>
           </div>
@@ -694,7 +694,7 @@
                 data-form-type="other"
                 maxlength="100"
                 :class="['form-input', { 'secret-input-masked': !passwordVisible.ua, 'input-invalid': userAgentInvalid }]"
-                :placeholder="trans.customUserAgentPlaceholder"
+                placeholder="cfsm"
               >
               <button type="button" class="password-toggle" @click="$emit('toggle-password', 'ua')">
                 {{ passwordVisible.ua ? '🙈' : '👁️' }}
@@ -738,7 +738,7 @@
 
         <div class="form-row">
           <div class="form-group flex-1">
-            <label class="form-label">{{ trans.cloudflareAccountId }}</label>
+            <label class="form-label">Cloudflare Account ID</label>
             <input type="text" name="cloudflare_account_id" autocomplete="off" v-model="settings.cloudflare_account_id" class="form-input" :placeholder="trans.cloudflareAccountIdPlaceholder">
           </div>
 
@@ -779,7 +779,7 @@
             data-form-type="other"
             v-model="settings.username"
             class="form-input"
-            :placeholder="trans.usernamePlaceholder"
+            placeholder="admin"
           >
         </div>
 
@@ -1361,13 +1361,13 @@ const setResourceAlertRuleNameInput = (ruleId, input) => {
 }
 
 const resourceAlertMetricOptions = computed(() => [
-  { value: 'cpu', label: props.trans.resourceAlertMetricCpu || 'CPU (%)' },
-  { value: 'ram', label: props.trans.resourceAlertMetricRam || 'RAM (%)' },
-  { value: 'disk', label: props.trans.resourceAlertMetricDisk || 'DISK (%)' },
-  { value: 'netIn', label: props.trans.resourceAlertMetricNetIn || 'NET In (Mbps)' },
-  { value: 'netOut', label: props.trans.resourceAlertMetricNetOut || 'NET Out (Mbps)' },
-  { value: 'tcpConn', label: props.trans.resourceAlertMetricTcp || 'TCP Conn' },
-  { value: 'udpConn', label: props.trans.resourceAlertMetricUdp || 'UDP Conn' }
+  { value: 'cpu', label: 'CPU (%)' },
+  { value: 'ram', label: 'RAM (%)' },
+  { value: 'disk', label: 'DISK (%)' },
+  { value: 'netIn', label: 'NET In (Mbps)' },
+  { value: 'netOut', label: 'NET Out (Mbps)' },
+  { value: 'tcpConn', label: 'TCP Conn' },
+  { value: 'udpConn', label: 'UDP Conn' }
 ])
 
 const resourceAlertIntervalOptions = computed(() => (

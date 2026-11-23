@@ -381,6 +381,11 @@ body::before {
     border-color: var(--border-active);
 }
 
+.theme-config-btn {
+    padding: 6px 10px;
+    color: var(--accent-cyan);
+}
+
 /* --------------------------------------------------------------------------
    User Menu Components
    -------------------------------------------------------------------------- */
@@ -3044,6 +3049,184 @@ body::before {
     border-top: 1px solid var(--border-color);
 }
 
+.theme-config-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    pointer-events: none;
+}
+
+.theme-config-drawer {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    flex-direction: column;
+    width: 420px;
+    max-width: 100%;
+    height: 100%;
+    pointer-events: auto;
+    background: var(--bg-card-solid);
+    border-left: 1px solid var(--border-active);
+    box-shadow: -20px 0 60px rgba(0, 0, 0, 0.5);
+}
+
+.container {
+    transition: transform 0.28s ease;
+}
+
+body.theme-config-open .container {
+    transform: translateX(-420px);
+}
+
+@media (max-width: 900px) {
+    body.theme-config-open .container {
+        transform: none;
+    }
+}
+
+.theme-config-drawer-enter-active,
+.theme-config-drawer-leave-active {
+    transition: opacity 0.25s ease;
+}
+
+.theme-config-drawer-enter-from,
+.theme-config-drawer-leave-to {
+    opacity: 0;
+}
+
+.theme-config-drawer-enter-active .theme-config-drawer,
+.theme-config-drawer-leave-active .theme-config-drawer {
+    transition: transform 0.28s ease;
+}
+
+.theme-config-drawer-enter-from .theme-config-drawer,
+.theme-config-drawer-leave-to .theme-config-drawer {
+    transform: translateX(100%);
+}
+
+.drawer-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.drawer-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 20px;
+}
+
+.drawer-footer {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+    padding: 16px 20px;
+    border-top: 1px solid var(--border-color);
+}
+
+.drawer-section {
+    margin-bottom: 24px;
+}
+
+.drawer-section-title {
+    margin: 0 0 12px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent-green);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.theme-config-label {
+    display: block;
+    margin-bottom: 10px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.theme-config-stepper {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.theme-config-stepper .btn {
+    min-width: 40px;
+    padding: 6px 10px;
+}
+
+.theme-config-input {
+    width: 90px;
+    text-align: center;
+}
+
+.preset-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.preset-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 8px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-secondary);
+    font-family: var(--terminal-font);
+    font-size: 11px;
+    text-align: left;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.preset-card:hover {
+    background: var(--bg-hover);
+    border-color: var(--border-active);
+}
+
+.preset-card.active {
+    border-color: var(--accent-green);
+    color: var(--text-primary);
+}
+
+.preset-swatches {
+    display: flex;
+    height: 12px;
+    overflow: hidden;
+    border-radius: 2px;
+}
+
+.preset-swatches span {
+    flex: 1;
+}
+
+.preset-name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.theme-config-error {
+    margin: 0;
+    font-size: 12px;
+    color: var(--accent-red);
+}
+
+.theme-config-saved {
+    margin: 0;
+    font-size: 12px;
+    color: var(--accent-green);
+}
+
 .live-timeout-dialog {
     width: 520px;
 }
@@ -3884,20 +4067,6 @@ body.server-row-drag-active * {
 .login-icon {
     font-size: 40px;
     margin-bottom: 12px;
-}
-
-.login-title {
-    color: var(--accent-green);
-    margin: 0;
-    font-size: 18px;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-}
-
-.login-subtitle {
-    color: var(--text-muted);
-    font-size: 12px;
-    margin-top: 8px;
 }
 
 .login-form-group {

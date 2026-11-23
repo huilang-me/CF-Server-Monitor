@@ -198,7 +198,7 @@
         </div>
         <div class="form-group flex-1">
           <label class="form-label">
-            {{ settings.custom_bd_name || trans.customBd }}
+            {{ settings.custom_bd_name || 'BGP' }}
             <HelpTooltip :text="trans.pingNodeTip" />
           </label>
           <input type="text" name="edit_custom_bd" autocomplete="off" v-model.trim="editForm.custom_bd" :class="['form-input', { 'input-invalid': pingNodeErrors.custom_bd }]" :placeholder="settings.custom_bd || 'ip.zstaticcdn.com'">

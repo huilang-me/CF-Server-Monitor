@@ -45,7 +45,7 @@
           </select>
         </div>
 
-        <div class="form-group flex-1">
+        <div v-if="targetOs !== 'docker'" class="form-group flex-1">
           <label class="form-label">
             {{ trans.ghProxy }}
             <HelpTooltip :text="trans.ghProxyTip" />
@@ -62,6 +62,22 @@
             :placeholder="trans.ghProxyPlaceholder"
             @input="$emit('update:install-gh-proxy', $event.target.value)"
           >
+        </div>
+
+        <div class="form-group flex-1">
+          <label class="form-label">
+            {{ trans.installInstance }}
+            <HelpTooltip :text="trans.installInstanceTip" />
+          </label>
+          <input
+            type="text"
+            :value="installInstance"
+            class="form-input"
+            maxlength="32"
+            :placeholder="trans.installInstancePlaceholder"
+            @input="$emit('update:install-instance', $event.target.value)"
+          >
+          <p v-if="instanceHasInvalidChars" class="text-red text-sm">{{ trans.instanceNameInvalid }}</p>
         </div>
       </div>
 
@@ -123,7 +139,7 @@
           <span class="config-value">{{ isBlank(customCm) ? '-' : customCm }}</span>
         </div>
         <div class="config-row">
-          <span class="config-label">{{ settings.custom_bd_name || trans.customBd }}</span>
+          <span class="config-label">{{ settings.custom_bd_name || 'BGP' }}</span>
           <span class="config-value">{{ isBlank(customBd) ? '-' : customBd }}</span>
         </div>
         <div v-for="(node, index) in [node1, node2, node3, node4]" :key="index" class="config-row">
@@ -151,6 +167,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import HelpTooltip from '../../../components/HelpTooltip.vue'
+import { hasInvalidInstanceChars } from '../../../utils/instance-command.js'
 
 const props = defineProps({
   trans: { type: Object, required: true },
@@ -161,6 +178,7 @@ const props = defineProps({
   installMode: { type: String, default: 'current-user' },
   installGhProxy: { type: String, default: '' },
   installVersion: { type: String, default: '' },
+  installInstance: { type: String, default: '' },
   collectInterval: { type: [Number, String], default: 0 },
   reportInterval: { type: [Number, String], default: 60 },
   wssReportInterval: { type: [Number, String], default: 2 },
@@ -187,7 +205,8 @@ const emit = defineEmits([
   'update:target-os',
   'update:install-mode',
   'update:install-gh-proxy',
-  'update:install-version'
+  'update:install-version',
+  'update:install-instance'
 ])
 
 const CUSTOM_GH_PROXY_VALUE = '__custom__'
@@ -224,6 +243,7 @@ const selectedGhProxy = computed({
 })
 
 const showCustomGhProxy = computed(() => selectedGhProxy.value === CUSTOM_GH_PROXY_VALUE)
+const instanceHasInvalidChars = computed(() => hasInvalidInstanceChars(props.installInstance))
 const effectivePingMode = computed(() => (
   props.targetOs === 'linux' && props.installMode === 'cfsm-user'
     ? 'tcp'

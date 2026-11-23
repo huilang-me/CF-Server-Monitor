@@ -491,16 +491,16 @@ const ChartExpandButton = {
 }
 
 const PING_FIELD_DEFS = [
-  { field: 'ping_ct', lossField: 'loss_ct', labelKey: 'pingCt', className: 'ping-ct', datasetIndex: 0 },
-  { field: 'ping_cu', lossField: 'loss_cu', labelKey: 'pingCu', className: 'ping-cu', datasetIndex: 1 },
-  { field: 'ping_cm', lossField: 'loss_cm', labelKey: 'pingCm', className: 'ping-cm', datasetIndex: 2 },
-  { field: 'ping_bd', lossField: 'loss_bd', labelKey: 'pingBd', className: 'ping-bd', datasetIndex: 3 },
-  { field: 'ping_node_1', lossField: 'loss_node_1', labelKey: 'node1', className: 'ping-node-1', datasetIndex: 4 },
-  { field: 'ping_node_2', lossField: 'loss_node_2', labelKey: 'node2', className: 'ping-node-2', datasetIndex: 5 },
-  { field: 'ping_node_3', lossField: 'loss_node_3', labelKey: 'node3', className: 'ping-node-3', datasetIndex: 6 },
-  { field: 'ping_node_4', lossField: 'loss_node_4', labelKey: 'node4', className: 'ping-node-4', datasetIndex: 7 }
+  { field: 'ping_ct', lossField: 'loss_ct', className: 'ping-ct', datasetIndex: 0 },
+  { field: 'ping_cu', lossField: 'loss_cu', className: 'ping-cu', datasetIndex: 1 },
+  { field: 'ping_cm', lossField: 'loss_cm', className: 'ping-cm', datasetIndex: 2 },
+  { field: 'ping_bd', lossField: 'loss_bd', className: 'ping-bd', datasetIndex: 3 },
+  { field: 'ping_node_1', lossField: 'loss_node_1', className: 'ping-node-1', datasetIndex: 4 },
+  { field: 'ping_node_2', lossField: 'loss_node_2', className: 'ping-node-2', datasetIndex: 5 },
+  { field: 'ping_node_3', lossField: 'loss_node_3', className: 'ping-node-3', datasetIndex: 6 },
+  { field: 'ping_node_4', lossField: 'loss_node_4', className: 'ping-node-4', datasetIndex: 7 }
 ]
-const pingLabel = (key) => String(appConfig?.[key.startsWith('node_') ? `${key}_name` : `custom_${key}_name`] || trans.value[`ping${key.toUpperCase().charAt(0)}${key.slice(1)}`] || key.toUpperCase())
+const pingLabel = (key) => String(appConfig?.[key.startsWith('node_') ? `${key}_name` : `custom_${key}_name`] || (key === 'bd' ? 'BGP' : trans.value[`custom${key.toUpperCase().charAt(0)}${key.slice(1)}`]) || key.toUpperCase())
 
 const DISK_IO_FIELDS = ['read_bps', 'write_bps', 'read_iops', 'write_iops', 'await_ms', 'util']
 const EMPTY_DISK_IO = Object.freeze(Object.fromEntries(DISK_IO_FIELDS.map(field => [field, 0])))

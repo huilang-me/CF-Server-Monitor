@@ -10,7 +10,7 @@ import { http, DEFAULT_REQUEST_TIMEOUT_MS } from './utils/http'
 import { initConfig, hasMultipleApiBases } from './utils/config'
 import { LAST_AGENT_VERSION, LAST_WORKERS_VERSION, VERSION, normalizeLiveSocketTimeoutMinutes } from './utils/api'
 import { resolveDisplayMode } from './utils/displayMode'
-import { getMikusAssetUrl, isMikusThemeEnabled, normalizeThemeOptions, setMikusThemeClass } from './utils/themeOptions'
+import { applyCustomColors, getMikusAssetUrl, isMikusThemeEnabled, normalizeThemeOptions, setMikusThemeClass } from './utils/themeOptions'
 import { applyDefaultTheme } from './composables/useTheme'
 import {
   clearTurnstileToken,
@@ -64,6 +64,11 @@ const renderMikusStartupLoading = (siteTitle) => {
 const applyStartupThemeOptions = (config) => {
   const enabled = isMikusThemeEnabled(config?.theme_options)
   setMikusThemeClass(enabled)
+  try {
+    applyCustomColors(config?.theme_options)
+  } catch (error) {
+    console.error('Failed to apply custom colors:', error)
+  }
   if (enabled) {
     renderMikusStartupLoading(config?.site_title)
   }

@@ -58,6 +58,10 @@ body.light .modal-dialog {
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
 }
 
+body.light .theme-config-drawer {
+  box-shadow: -20px 0 60px rgba(0, 0, 0, 0.15);
+}
+
 /* Card Hover - 浅色主题使用更淡的阴影 */
 body.light .server-card:hover {
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);

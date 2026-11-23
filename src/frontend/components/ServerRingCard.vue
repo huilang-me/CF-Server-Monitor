@@ -98,8 +98,8 @@
       <div class="server-card-network-row">
         <span class="server-card-network-label">{{ trans.totalTraffic }}</span>
         <span class="server-card-network-values server-card-total-values">
-          <span>↑ {{ totalTx }}</span>
           <span>↓ {{ totalRx }}</span>
+          <span>↑ {{ totalTx }}</span>
         </span>
       </div>
       <div v-if="sysConfig.show_tf" class="server-card-limit-section">
@@ -117,6 +117,7 @@
         :show-three-net-details="sysConfig.show_three_net_details"
         :has-three-net-details="hasThreeNetDetails"
         :three-net-details="threeNetDetails"
+        :show-ping-fallback="threeNetPanelCount > 0"
         :has-ping-data="hasPingData"
         :ping-list="pingList"
         :timeout-text="trans.timeout"
@@ -187,6 +188,7 @@ const {
   hasPingData,
   threeNetDetails,
   hasThreeNetDetails,
+  threeNetPanelCount,
   getPublicAssetUrl,
   tagList,
   tagColorClass,
