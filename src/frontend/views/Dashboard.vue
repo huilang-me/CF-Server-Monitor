@@ -384,6 +384,7 @@ import { getTitle, hasMultipleApiBases, getApiBases, getPublicAssetUrl } from '.
 import { currentLang, useTranslation } from '../utils/i18n.js'
 import { TIME, DEFAULT_SITE_TITLE, STORAGE, LATENCY_WINDOW } from '../utils/constants'
 import { normalizeTimestamp as normalizeMetricTimestamp } from '../utils/time.js'
+import { getLatencyRefreshMs, mergeLatencyWindows } from '../utils/latencyRefresh.js'
 import { normalizeDashboardView, normalizeDisplayMode, resolveDisplayMode } from '../utils/displayMode.js'
 import { getPlaybackElapsedMs, resolvePlaybackCursor } from '../utils/playback.js'
 import { getMikusAssetUrl, isMikusThemeEnabled, normalizeThemeOptions, setMikusThemeClass } from '../utils/themeOptions.js'
@@ -1088,6 +1089,26 @@ let liveSockets = []
 let liveConnectionClosedByUser = false
 let themeObserver = null
 let timeUpdateInterval = null
+let latencyRefreshInterval = null
+let latencyRefreshedAt = 0
+
+const refreshLatencyWindows = async () => {
+  if (!sysConfig.value.show_three_net_details || document.hidden) return
+  latencyRefreshedAt = Date.now()
+  try {
+    const data = await fetchServersAll()
+    if (!Array.isArray(data?.servers)) return
+    servers.value = mergeLatencyWindows(servers.value, data.servers)
+  } catch (e) {
+    console.log('[INFO] Latency refresh pending...', e)
+  }
+}
+
+const startLatencyRefresh = () => {
+  if (latencyRefreshInterval) clearInterval(latencyRefreshInterval)
+  latencyRefreshedAt = Date.now()
+  latencyRefreshInterval = setInterval(refreshLatencyWindows, getLatencyRefreshMs(sysConfig.value.latency_window))
+}
 
 const stopLiveSockets = () => {
   if (liveSockets.length === 0) return
@@ -1170,6 +1191,9 @@ const continueLiveConnection = () => {
 }
 
 const handleVisibility = () => {
+  if (!document.hidden && Date.now() - latencyRefreshedAt >= getLatencyRefreshMs(sysConfig.value.latency_window)) {
+    refreshLatencyWindows()
+  }
   if (document.hidden) {
     stopLiveSockets()
   } else if (showLiveTimeoutModal.value || liveConnectionClosedByUser) {
@@ -1344,6 +1368,7 @@ onMounted(async () => {
   document.addEventListener('click', closeFilterMoreOnOutsideClick)
   window.addEventListener('theme-options-changed', handleThemeOptionsChanged)
   startLiveSocket()
+  startLatencyRefresh()
   document.addEventListener('visibilitychange', handleVisibility)
 
   // 每秒更新 now 变量，使相对时间实时刷新
@@ -1373,6 +1398,7 @@ onUnmounted(() => {
   if (filterMeasureTimer) clearTimeout(filterMeasureTimer)
   if (filterResizeObserver) filterResizeObserver.disconnect()
   if (timeUpdateInterval) clearInterval(timeUpdateInterval)
+  if (latencyRefreshInterval) clearInterval(latencyRefreshInterval)
   stopLiveSockets()
   if (themeObserver) themeObserver.disconnect()
 })
