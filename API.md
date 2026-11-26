@@ -5,7 +5,7 @@
 >
 > **Base URL**：`https://<your-worker-domain>`（部署后由 Cloudflare Workers 提供）
 >
-> **最后核对源码日期**：`2026-09-07`
+> **最后核对源码日期**：`2026-11-26`
 >
 > **修订标记约定**：自 `2026-07-26` 起，已过期但有迁移参考价值的说明使用删除线保留，紧随其后给出当前实现。
 >
@@ -1940,6 +1940,10 @@ UUID 缺失或格式非法时返回 `400 { "error": "invalidServerId", "code": 4
 | `kernel_version`                              | string             | 内核版本                    |
 | `agent_version`                               | string             | 最新一次上报的探针版本号              |
 | `region`                                      | string             | `request.cf.country` 或 `cf-ipcountry` 的原始值；通常为大写两字母国家/地区代码 |
+| `egress_city`                                 | string             | Cloudflare 根据探针连接出口 IP 估算的城市；无法定位时为空字符串 |
+| `egress_region` / `egress_region_code`        | string             | Cloudflare 估算的出口行政区名称 / 代码；无法定位时为空字符串 |
+| `egress_country`                              | string             | Cloudflare 估算的出口国家/地区代码；无法定位时为空字符串 |
+| `egress_latitude` / `egress_longitude`        | number\|null       | 出口 IP 的近似坐标（保留两位小数）；只在有效坐标对可用时返回数值。位置表示 Worker 观察到的探针连接出口，不代表服务器或机房实际位置；原始 IP 不公开 |
 | `ip_v4`                                       | string `"0"`/`"1"` | 公共 REST 接口仅返回 IPv4 可达性，不暴露公网地址 |
 | `ip_v6`                                       | string `"0"`/`"1"` | 公共 REST 接口仅返回 IPv6 可达性，不暴露公网地址 |
 | `boot_time`                                   | string             | 启动时间（毫秒）                  |
@@ -1956,7 +1960,7 @@ UUID 缺失或格式非法时返回 `400 { "error": "invalidServerId", "code": 4
 | 字段          | 类型             | 说明 |
 | ----------- | -------------- | ---- |
 | `timestamp` | number (ms)    | 采样时间 |
-| 其余字段        | number\|string\|null | 当前 `/api/history/all` 固定返回：`cpu, gpu_info, ram_total, ram_used, disk_total, disk_used, disk_read_bps, disk_write_bps, disk_read_iops, disk_write_iops, disk_await_ms, disk_util, processes, net_in_speed, net_out_speed, tcp_conn, udp_conn, ping_ct, ping_cu, ping_cm, ping_bd, ping_node_1, ping_node_2, ping_node_3, ping_node_4, loss_ct, loss_cu, loss_cm, loss_bd, loss_node_1, loss_node_2, loss_node_3, loss_node_4, swap_total, swap_used, load_avg, region, kernel_version`；其中 `gpu_info` 通常是 JSON 数组字符串，`disk` 仅在 `disk_*` 历史列存在有效数据时由服务端还原 |
+| 其余字段        | number\|string\|null | 当前 `/api/history/all` 固定返回：`cpu, gpu_info, ram_total, ram_used, disk_total, disk_used, disk_read_bps, disk_write_bps, disk_read_iops, disk_write_iops, disk_await_ms, disk_util, processes, net_in_speed, net_out_speed, tcp_conn, udp_conn, ping_ct, ping_cu, ping_cm, ping_bd, ping_node_1, ping_node_2, ping_node_3, ping_node_4, loss_ct, loss_cu, loss_cm, loss_bd, loss_node_1, loss_node_2, loss_node_3, loss_node_4, swap_total, swap_used, load_avg, region, kernel_version, egress_city, egress_region, egress_region_code, egress_country, egress_latitude, egress_longitude`；其中 `gpu_info` 通常是 JSON 数组字符串，`disk` 仅在 `disk_*` 历史列存在有效数据时由服务端还原；出口位置是 Cloudflare 对连接出口 IP 的近似定位，不代表服务器或机房实际位置 |
 
 历史行不包含单独的 `gpu` 字段，只包含 `gpu_info`。
 

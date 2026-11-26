@@ -9,7 +9,8 @@ export const NUMERIC_METRIC_FIELDS = Object.freeze([
   'ram_total', 'ram_used', 'swap_total', 'swap_used',
   'disk_total', 'disk_used', 'cpu_cores',
   'disk_read_bps', 'disk_write_bps', 'disk_read_iops',
-  'disk_write_iops', 'disk_await_ms', 'disk_util'
+  'disk_write_iops', 'disk_await_ms', 'disk_util',
+  'egress_latitude', 'egress_longitude'
 ]);
 
 export const HISTORY_ALL_QUERY_COLUMNS = Object.freeze([
@@ -44,7 +45,13 @@ export const HISTORY_ALL_QUERY_COLUMNS = Object.freeze([
   'swap_used',
   'load_avg',
   'region',
-  'kernel_version'
+  'kernel_version',
+  'egress_city',
+  'egress_region',
+  'egress_region_code',
+  'egress_country',
+  'egress_latitude',
+  'egress_longitude'
 ]);
 
 const HISTORY_AGGREGATION_MAX_FIELDS = Object.freeze([
@@ -138,7 +145,13 @@ export const HISTORY_TABLE_COLUMNS = Object.freeze([
   ['ip_v6', "TEXT DEFAULT '0'"],
   ['boot_time', "TEXT DEFAULT ''"],
   ['net_rx_monthly', 'REAL DEFAULT 0'],
-  ['net_tx_monthly', 'REAL DEFAULT 0']
+  ['net_tx_monthly', 'REAL DEFAULT 0'],
+  ['egress_city', "TEXT DEFAULT ''"],
+  ['egress_region', "TEXT DEFAULT ''"],
+  ['egress_region_code', "TEXT DEFAULT ''"],
+  ['egress_country', "TEXT DEFAULT ''"],
+  ['egress_latitude', 'REAL DEFAULT NULL'],
+  ['egress_longitude', 'REAL DEFAULT NULL']
 ]);
 
 export const HISTORY_INSERT_COLUMNS = Object.freeze(

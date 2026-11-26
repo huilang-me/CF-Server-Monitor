@@ -42,6 +42,7 @@ import {
   applyClientIpFallback,
   resolveClientIpFromRequest
 } from '../utils/metrics.js';
+import { applyEgressLocation, egressLocationFromHeaders } from '../utils/egressLocation.js';
 import {
   AGENT_DEFAULT_HISTORY_WRITE_INTERVAL_MS,
   AGENT_MIN_IDLE_WSS_REPORT_INTERVAL_MS,
@@ -1296,9 +1297,12 @@ export class MetricsBroadcaster {
     try {
       // 探针没探到公网 IP 时用握手连接的来源 IP 按地址族补位。
       // 只在真正落库的这一帧执行，避免每帧上报都做判空/正则。
-      const metrics = applyClientIpFallback(
-        applyHistoryMetricAggregates(payload.metrics, aggregateForWrite),
-        attachment.clientIp
+      const metrics = applyEgressLocation(
+        applyClientIpFallback(
+          applyHistoryMetricAggregates(payload.metrics, aggregateForWrite),
+          attachment.clientIp
+        ),
+        attachment.egressLocation
       );
       await saveMetricsHistory(
         this.env.DB,
@@ -1418,14 +1422,18 @@ export class MetricsBroadcaster {
     }
 
     const latestSample = samples[samples.length - 1];
-    const latestMetrics = getReportMetrics(data, latestSample);
+    const latestMetrics = applyEgressLocation(
+      getReportMetrics(data, latestSample),
+      context.attachment.egressLocation
+    );
     const historyAggregate = collectHistoryMetricAggregates(samples);
     const broadcastSamples = toBroadcastSamples(
       context.serverId,
       samples,
       context.regionCode,
       context.agentVersion,
-      latestMetrics
+      latestMetrics,
+      context.attachment.egressLocation
     );
     const reportTs = Date.now();
     const normalizedUpdates = [{
@@ -1499,6 +1507,7 @@ export class MetricsBroadcaster {
       // 握手请求头里的来源 IP 随连接保存：后续帧上报无法再拿到握手头，
       // 探针公网 IP 为空时用它按地址族补位。
       clientIp: resolveClientIpFromRequest(request),
+      egressLocation: egressLocationFromHeaders(request.headers),
       reportIntervalMs: AGENT_DEFAULT_HISTORY_WRITE_INTERVAL_MS,
       wssReportIntervalMs: DEFAULT_WSS_REPORT_INTERVAL * 1000,
       wssScheduleCheckAfter: nextHour.getTime(),

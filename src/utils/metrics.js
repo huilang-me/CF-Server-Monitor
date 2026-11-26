@@ -295,6 +295,16 @@ export function mergeMetricsIntoServer(server, metrics) {
   server.region = server.region || metrics.region || '';
   server.ip_v4 = metrics.ip_v4 || '0';
   server.ip_v6 = metrics.ip_v6 || '0';
+  server.egress_city = metrics.egress_city || '';
+  server.egress_region = metrics.egress_region || '';
+  server.egress_region_code = metrics.egress_region_code || '';
+  server.egress_country = metrics.egress_country || '';
+  const egressLatitude = metrics.egress_latitude;
+  const egressLongitude = metrics.egress_longitude;
+  server.egress_latitude = egressLatitude !== null && egressLatitude !== undefined && egressLatitude !== ''
+    && Number.isFinite(Number(egressLatitude)) ? Number(egressLatitude) : null;
+  server.egress_longitude = egressLongitude !== null && egressLongitude !== undefined && egressLongitude !== ''
+    && Number.isFinite(Number(egressLongitude)) ? Number(egressLongitude) : null;
   server.boot_time = metrics.boot_time || '';
   server.last_updated = metrics.timestamp || 0;
 }

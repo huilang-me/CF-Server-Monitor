@@ -667,7 +667,15 @@ export async function saveMetricsHistory(db, serverId, historyPartitionId, metri
     metrics.ip_v6 || '0',
     metrics.boot_time || '',
     parseFloat(metrics.net_rx_monthly) || 0,
-    parseFloat(metrics.net_tx_monthly) || 0
+    parseFloat(metrics.net_tx_monthly) || 0,
+    metrics.egress_city || '',
+    metrics.egress_region || '',
+    metrics.egress_region_code || '',
+    metrics.egress_country || '',
+    metrics.egress_latitude !== null && metrics.egress_latitude !== undefined && metrics.egress_latitude !== ''
+      && Number.isFinite(Number(metrics.egress_latitude)) ? Number(metrics.egress_latitude) : null,
+    metrics.egress_longitude !== null && metrics.egress_longitude !== undefined && metrics.egress_longitude !== ''
+      && Number.isFinite(Number(metrics.egress_longitude)) ? Number(metrics.egress_longitude) : null
     ).run();
   };
 

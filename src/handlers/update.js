@@ -12,6 +12,7 @@ import { createErrorResponse, createUnauthorizedResponse, createBadRequestRespon
 import { ensureServerOptimization } from '../database/indexOptimization.js';
 import { getResourceAlertConfig, getWssReportScheduleState, isWssReportConfigured, loadSiteSettings, normalizeBooleanSetting } from '../utils/settings.js';
 import { cacheLatestReportUpdate } from '../utils/latestReportCache.js';
+import { applyEgressLocation, egressLocationFromCf, writeEgressLocationHeaders } from '../utils/egressLocation.js';
 import {
   hasRecentFrontendRealtimeActivity,
   markFrontendRealtimeActive
@@ -329,12 +330,13 @@ function buildSamplePayloadForBroadcast(metrics = {}, timestamp = Date.now()) {
   return coerceNumericMetricFields(payload);
 }
 
-export function toBroadcastSamples(id, samples, regionCode, agentVersion = '', reportMetrics = null) {
+export function toBroadcastSamples(id, samples, regionCode, agentVersion = '', reportMetrics = null, egressLocation = null) {
   const lastIndex = samples.length - 1;
   return samples.map((sample, index) => {
-    const metrics = reportMetrics && typeof reportMetrics === 'object' && index === lastIndex
+    const sourceMetrics = reportMetrics && typeof reportMetrics === 'object' && index === lastIndex
       ? { ...reportMetrics, ...(sample.metrics || {}) }
-      : (sample.metrics || {});
+      : { ...(sample.metrics || {}) };
+    const metrics = applyEgressLocation(sourceMetrics, egressLocation);
     if (index !== lastIndex) {
       return { ts: sample.ts, payload: buildSamplePayloadForBroadcast(metrics, sample.ts) };
     }
@@ -744,10 +746,14 @@ async function handleUpdateCore(request, env, ctx, discovery, authState = null) 
 
     // 获取最后一条插入（如果是批量数据，取最后一个样本）
     const latestSample = samples[samples.length - 1];
-    const latestMetrics = getReportMetrics(data, latestSample);
+    const egressLocation = egressLocationFromCf(request.cf);
+    const latestMetrics = applyEgressLocation(getReportMetrics(data, latestSample), egressLocation);
     // 探针没探到公网 IP（ip_v4/ip_v6 均为空或 "0"）时，用本次连接的来源 IP 补位，
     // 按地址族写入对应字段；只作用于落库的指标，广播 payload 本就不含 ip 字段。
-    const historyMetrics = applyRequestIpFallback(getHistoryMetrics(data, samples, latestSample), request);
+    const historyMetrics = applyEgressLocation(
+      applyRequestIpFallback(getHistoryMetrics(data, samples, latestSample), request),
+      egressLocation
+    );
     await saveMetricsHistory(
       env.DB,
       id,
@@ -758,7 +764,7 @@ async function handleUpdateCore(request, env, ctx, discovery, authState = null) 
       agentVersion
     );
 
-    const broadcastSamples = toBroadcastSamples(id, samples, regionCode, agentVersion, latestMetrics);
+    const broadcastSamples = toBroadcastSamples(id, samples, regionCode, agentVersion, latestMetrics, egressLocation);
     cacheLatestReportUpdate(id, broadcastSamples, Date.now());
     // 加入批量队列，由后台定时任务统一推送到 DO
     queueBroadcastSamples(id, broadcastSamples);
@@ -845,6 +851,7 @@ async function forwardWebSocketUpgrade(request, env, internalPath, logPrefix) {
     const realOrigin = new URL(request.url).origin;
     const headers = new Headers(request.headers);
     headers.set('X-Real-Origin', realOrigin);
+    writeEgressLocationHeaders(headers, egressLocationFromCf(request.cf));
     if (request.cf?.country && !headers.get('cf-ipcountry')) {
       headers.set('cf-ipcountry', request.cf.country);
     }
