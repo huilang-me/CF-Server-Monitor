@@ -34,6 +34,7 @@
   - [2.2](#22-get-apiservers---获取服务器列表首页) [`GET /api/servers`](#22-get-apiservers---获取服务器列表首页) [- 获取服务器列表（首页）](#22-get-apiservers---获取服务器列表首页)
   - [2.3](#23-get-apiserver---获取单台服务器详情) [`GET /api/server`](#23-get-apiserver---获取单台服务器详情) [- 获取单台服务器详情](#23-get-apiserver---获取单台服务器详情)
   - [2.4](#24-get-apihistoryall---获取历史指标) [`GET /api/history/all`](#24-get-apihistoryall---获取历史指标) [- 获取历史指标](#24-get-apihistoryall---获取历史指标)
+  - [2.4.1](#241-get-apihistorystatus---获取最近七日状态变更) [`GET /api/history/status`](#241-get-apihistorystatus---获取最近七日状态变更) [- 获取最近七日状态变更](#241-get-apihistorystatus---获取最近七日状态变更)
   - [2.5](#25-get-apiws---websocket-实时推送) [`GET /api/ws`](#25-get-apiws---websocket-实时推送) [- WebSocket 实时推送](#25-get-apiws---websocket-实时推送)
   - [2.6](#26-get-theme---获取主题商店数据) [`GET /theme`](#26-get-theme---获取主题商店数据) [- 获取主题商店数据](#26-get-theme---获取主题商店数据)
   - [2.7](#27-前端与主题代理) [前端与主题代理](#27-前端与主题代理)
@@ -128,7 +129,7 @@
 
 #### E. App 访问口令（第三方 App / iOS 小组件）
 
-- **使用位置**：`GET /api/servers`、`GET /api/server`、`GET /api/history/all`、`GET /api/ws` 的只读可见范围
+- **使用位置**：`GET /api/servers`、`GET /api/server`、`GET /api/history/all`、`GET /api/history/status`、`GET /api/ws` 的只读可见范围
 - **方式**：`X-App-Password: <app_password>` Header
 - **配置**：后台 → 安全设置 → App 访问口令，16-32 位可见 ASCII（不含空格），留空表示不启用
 - **效果**：通过后等同于登录用户的只读权限——可访问私有站点（`is_public !== 'true'`）数据、可看到 `is_hidden` 服务器、可拉取超过 24 小时的历史；**不参与** `/admin/api` 等管理鉴权
@@ -898,6 +899,34 @@ Content-Type: application/json
 ```
 
 此时应先调用 [`POST /updateDatabase`](#41-post-updatedatabase---数据库迁移)。
+
+### 2.4.1 `GET /api/history/status` - 获取最近七日状态变更
+
+此接口返回实际观测到的在线/离线状态快照与转换，不会把资源指标样本当作故障事件。
+
+**Request**
+
+- Method：`GET`
+- Path：`/api/history/status`
+- Query：`ids`（**必填**）：逗号分隔的服务器 ID，最多 100 个
+- 私有站点需要登录 JWT 或 App 访问口令；公开站点只返回当前公开可见服务器的记录，隐藏服务器不会因传入 ID 而泄露。
+
+**Response** `200 OK`（直接返回对象）
+
+```json
+{
+  "generated_at": 1795694400,
+  "window_start": 1795089600,
+  "records": [
+    { "server_id": "<server-id>", "t": 1795089000, "is_online": 1, "event_type": "baseline" },
+    { "server_id": "<server-id>", "t": 1795093200, "is_online": 0, "event_type": "transition" }
+  ]
+}
+```
+
+`records` 包含七日窗口前的最近一条状态锚点（若存在）及窗口内的记录。`event_type: "baseline"` 只建立首次状态基线，不代表故障；只有 `transition` 才表示状态发生变化。`t` 是 Unix 秒。
+
+状态由每分钟定时任务按与服务器列表相同的五分钟上报新鲜度阈值判定（每周日 UTC 00:00–00:04 的表轮换维护窗口除外）。离线事件时间代表后端首次观测到离线，并非可推断的精确故障开始时间；恢复时间代表后端首次观测到重新在线。跟踪从升级后第一次成功检查开始，不回填此前故障；覆盖不足完整统计区间时，可用率应为 `null`。接口只返回七日内转换和一条旧状态锚点，数据库中的多余过期行在每周清理时回收；`POST /clearHistory` 会一并清除状态历史。
 
 ***
 
@@ -1840,7 +1869,7 @@ UUID 缺失或格式非法时返回 `400 { "error": "invalidServerId", "code": 4
 
 ### 4.2 `POST /clearHistory` - 清空历史数据
 
-> **危险操作**：会删除 `metrics_history` / `metrics_history_old` 全部数据后重建。
+> **危险操作**：会删除 `metrics_history` / `metrics_history_old` 与 `server_status_history` 中的全部记录后重建；状态变更记录会从后续定时检查重新积累。
 
 **Request**
 

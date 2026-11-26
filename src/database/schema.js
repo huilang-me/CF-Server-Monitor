@@ -3,6 +3,7 @@ import { saveSiteOptions, debug, normalizeLongHistoryPoints, DEFAULT_LONG_HISTOR
 import { attachDiskMetricsObject, flattenDiskMetrics, isDisabledProbeMetric, normalizeProbeMetricRow } from '../utils/metrics.js';
 import { ensureServerOptimization, buildHistoryId, getServerHistoryInfo, getHistoryIdRange } from './indexOptimization.js';
 import { addHistoryColumns } from './updateDatabase.js';
+import { ensureStatusHistoryTable, pruneServerStatusHistory } from './statusHistory.js';
 import {
   buildSparseHistoryQuery,
   shouldUseSparseHistorySampling
@@ -119,6 +120,7 @@ export async function initDatabase(db) {
 
     // 确保 metrics_history 表存在（主键 id 已编码分区与时间，无需二级索引）
     await db.prepare(createHistoryTableSql('metrics_history')).run();
+    await ensureStatusHistoryTable(db);
 
     debug('✅ 数据库初始化完成');
     dbInitialized = true;
@@ -136,6 +138,8 @@ export async function clearHistory(db) {
 
     await db.prepare(`DROP TABLE IF EXISTS metrics_history_old`).run();
     debug('✅ 已删除 metrics_history_old 表');
+    await db.prepare(`DROP TABLE IF EXISTS server_status_history`).run();
+    debug('✅ 已删除 server_status_history 表');
     
     dbInitialized = false;
     
@@ -570,6 +574,7 @@ export async function weeklyCleanup(db) {
     // 3. 重新初始化数据库以创建新的 metrics_history 表
     dbInitialized = false;
     await initDatabase(db);
+    await pruneServerStatusHistory(db);
 
     debug('[Cleanup] 已创建新的 metrics_history 表');
     

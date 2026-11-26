@@ -34,9 +34,11 @@ function makeDb(settings, servers = [makeServer(1)]) {
   const db = {
     stats, settings, servers,
     timestamps: new Map(servers.map(server => [server.id, NOW])),
+    statusRows: new Map(),
     offlineState: {}, resourceState: null, failHistory: false, failSettings: false, failLegacy: false,
     prepare(sql) {
       return {
+        sql,
         args: [],
         bind(...args) { this.args = args; return this; },
         async first() {
@@ -64,6 +66,7 @@ function makeDb(settings, servers = [makeServer(1)]) {
           return { results: [] };
         },
         async run() {
+          if (sql.includes('server_status_history')) return { success: true, meta: { changes: 0 } };
           stats.writes++;
           if (sql.startsWith('DELETE')) {
             assert.equal(this.args[0], 'resource_alert_state');
@@ -79,6 +82,15 @@ function makeDb(settings, servers = [makeServer(1)]) {
       };
     },
     async batch(statements) {
+      if (statements.some(statement => statement.sql?.includes('INSERT INTO server_status_history'))) {
+        return statements.map(statement => {
+          const [serverId, status, changedAt] = statement.args;
+          const previous = db.statusRows.get(serverId);
+          const changed = !previous || previous.status !== status;
+          if (changed) db.statusRows.set(serverId, { status, changedAt });
+          return { meta: { changes: Number(changed) } };
+        });
+      }
       stats.batches++;
       stats.history += statements.length;
       if (db.failHistory) throw new Error('simulated D1 failure');
@@ -148,12 +160,14 @@ function seedSamples(broadcaster, serverId, values, now = Date.now()) {
   });
 }
 
-test('minute cron shares one settings read, preserves refresh cadence and adds no requests or writes', async t => {
+test('minute cron shares one settings read, preserves refresh cadence and records status baselines', async t => {
   const messages = setup(t);
   const db = makeDb(makeSettings(), [makeServer(1), makeServer(2, { offline_notify_disabled: '1' })]);
   const { env, calls, storage } = makeEnv(db);
   await worker.scheduled({ cron: '*/1 * * * *' }, env, {});
-  assert.deepEqual(db.stats, { settings: 1, legacy: 0, servers: 1, history: 1, batches: 1, offline: 1, resource: 1, writes: 0 });
+  assert.deepEqual(db.stats, { settings: 1, legacy: 0, servers: 1, history: 3, batches: 2, offline: 1, resource: 1, writes: 0 });
+  assert.equal(db.statusRows.get('server-1').status, 1);
+  assert.equal(db.statusRows.get('server-2').status, 1, 'status history is independent of offline-alert opt-outs');
   assert.equal(calls.length, 1);
   assert.equal(calls[0].resultFormat, RESOURCE_ALERT_COMPACT_RESULT_FORMAT);
   assert.deepEqual(storage, { reads: 1, writes: 0 });
@@ -182,7 +196,7 @@ test('cold odd/even cron only loads disabled settings once, including legacy fal
       const db = makeDb(settings);
       const { env, calls } = makeEnv(db);
       await worker.scheduled({ cron: '*/1 * * * *' }, env, {});
-      assert.deepEqual(db.stats, { settings: 1, legacy: Number(missingField), servers: 0, history: 0, batches: 0, offline: 0, resource: 0, writes: 0 });
+      assert.deepEqual(db.stats, { settings: 1, legacy: Number(missingField), servers: 1, history: 1, batches: 1, offline: 0, resource: 0, writes: 0 });
       assert.equal(calls.length, 0);
     }
   }
@@ -216,9 +230,10 @@ test('minute cron keeps offline and resource alerts working when settings refres
   db.failSettings = false;
   db.settings.tg_notify = '0';
   db.settings.resource_alert_rules = [];
+  const historyBeforeDisabledAlerts = db.stats.history;
   await worker.scheduled({ cron: '*/1 * * * *' }, env, {});
   assert.equal(db.stats.settings, 3, 'next even minute reads the recovered database once');
-  assert.equal(db.stats.history, 2, 'newly disabled offline alerts stop querying history');
+  assert.equal(db.stats.history, historyBeforeDisabledAlerts + 1, 'only the independent status poll still queries metrics history');
   assert.equal(calls.length, 2, 'newly disabled resource alerts stop querying the DO');
   assert.equal(db.resourceState, null);
   assert.equal(messages.length, 2);

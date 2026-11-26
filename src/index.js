@@ -1,5 +1,6 @@
 import { initDatabase, weeklyCleanup, getMetricsHistory, clearHistory } from './database/schema.js';
 import { checkOfflineNodes, checkExpiringServers, checkResourceAlerts } from './services/notification.js';
+import { checkAndRecordServerStatusHistory, fetchServerStatusHistory } from './services/statusHistory.js';
 import { updateDatabase } from './database/updateDatabase.js';
 import { handleAdminAPI } from './handlers/admin.js';
 import { serveFrontend } from './handlers/frontend.js';
@@ -9,7 +10,7 @@ import { handleTheme } from './handlers/theme.js';
 import { isValidThemeOptions, loadSettings, loadSiteSettings, loadAppearanceOptions, normalizeFrontendWsTimeoutMinutes, normalizeLongHistoryPoints, saveThemeOptions, setDebug, debug } from './utils/settings.js';
 import { omitNullLossProbeFields } from './handlers/dashboard.js';
 import { checkAuth, hasAppPasswordAccess, simpleAuthResponse } from './middleware/auth.js';
-import { getServerDetail, getMetricsHistoryCache, setMetricsHistoryCache, getCacheDuration } from './utils/cache.js';
+import { getAllServers, getServerDetail, getMetricsHistoryCache, setMetricsHistoryCache, getCacheDuration } from './utils/cache.js';
 import { AppError, createSuccessResponse, createUnauthorizedResponse, createBadRequestResponse, createNotFoundResponse, createErrorResponse } from './utils/errors.js';
 import { verifyTurnstileToken } from './utils/common.js';
 import { getCorsAllowedOrigins, createOptionsResponse, applyCors } from './utils/cors.js';
@@ -228,7 +229,7 @@ export default {
     ];
 
     const isApiRequest = path.startsWith('/api/') || path.startsWith('/admin/api');
-    if (path === '/api/config' || path === '/api/theme_options' || path === '/clearHistory') {
+    if (path === '/api/config' || path === '/api/theme_options' || path === '/clearHistory' || path === '/api/history/status') {
       await initDatabase(env.DB);
     }
 
@@ -411,6 +412,25 @@ export default {
         // 后续版本可以删掉region 字段，用于升级数据库提示
         return fetchHistoryData(env, request, id, hours, allColumns, sys);
       }},
+      { method: 'GET', path: '/api/history/status', handler: async () => {
+        await ensureSiteSettings();
+        const rawIds = url.searchParams.get('ids') || '';
+        const ids = [...new Set(rawIds.split(',').map((id) => id.trim()).filter(Boolean))];
+        if (!ids.length || ids.length > 100 || ids.some((id) => !/^[A-Za-z0-9._:-]{1,64}$/.test(id))) {
+          return createBadRequestResponse('Invalid server IDs');
+        }
+
+        const isLoggedIn = await checkAuth(request, env, sys);
+        const canViewPrivate = isLoggedIn || hasAppPasswordAccess(request, sys);
+        if (sys.is_public !== 'true' && !canViewPrivate) {
+          return simpleAuthResponse();
+        }
+
+        const visibleIds = new Set((await getAllServers(env.DB, canViewPrivate)).map((server) => String(server.id)));
+        const allowedIds = ids.filter((id) => visibleIds.has(id));
+        const history = await fetchServerStatusHistory(env.DB, allowedIds);
+        return createSuccessResponse(history);
+      }},
       { method: 'POST', path: '/admin/api', handler: async () => {
         await ensureSiteSettings();
         return handleAdminAPI(request, env, sys, ensureFullSettings, ctx);
@@ -481,6 +501,12 @@ export default {
         const siteSettings = await loadSiteSettings(env.DB, {
           forceRefresh: !!env.METRICS_BROADCASTER && minute % 2 === 0
         });
+        try {
+          const statusHistory = await checkAndRecordServerStatusHistory(env.DB);
+          if (!statusHistory.success) debug('[Cron] 跳过状态历史记录:', statusHistory.reason);
+        } catch (e) {
+          console.error('[Cron] 状态历史记录失败:', e);
+        }
         debug('[Cron] 开始执行离线节点检测');
         await checkOfflineNodes(env.DB, { siteSettings });
         debug('[Cron] 离线节点检测完成');
